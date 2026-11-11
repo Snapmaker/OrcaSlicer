@@ -25,6 +25,7 @@ namespace Slic3r { namespace GUI {
 
 // Forward declarations (only pointers are stored)
 class MixedGradientSelector;
+class MixedGradientStops;
 class MixedColorMatchPanel;
 class MatchRangeSlider;
 
@@ -43,6 +44,8 @@ private:
     void rebuild_filament_rows();
     void on_mode_changed(int mode_index);
     void update_preview();
+    MixedFilament       gradient_editor_entry() const;
+    MixedGradientStops* m_gradient_stops{nullptr};
     void update_gradient_selector_colors();
     void build_swatch_grid();
     void rebuild_swatch_sizer();

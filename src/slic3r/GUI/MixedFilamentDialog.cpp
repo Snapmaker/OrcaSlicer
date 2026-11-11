@@ -1,3 +1,4 @@
+#include "MixedGradientStops.hpp"
 #include "MixedFilamentDialog.hpp"
 #include "GUI_App.hpp"
 #include "I18N.hpp"
@@ -235,7 +236,8 @@ wxBitmap MixedFilamentDialog::make_color_bitmap(const wxColour& c, int size)
 int MixedFilamentDialog::max_filaments_for_mode(int mode) const
 {
     if (mode == MODE_RATIO)    return 3;
-    if (mode == MODE_GRADIENT) return 2;
+    if (mode == MODE_GRADIENT)
+        return std::min(4, int(m_filament_colours.size()));
     return 4;
 }
 
@@ -245,6 +247,7 @@ int MixedFilamentDialog::max_filaments_for_mode(int mode) const
 
 void MixedFilamentDialog::build_ui()
 {
+    build_mixed_filament_display_context(m_filament_colours);
     m_mode_btn_selected = m_current_mode;
     SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#F8F7F7")));
 
@@ -897,42 +900,72 @@ void MixedFilamentDialog::build_ui()
         m_gradient_effect_card->SetBorderColorNormal(wxColour("#F0F0F0"));
         m_gradient_effect_card_sizer = new wxBoxSizer(wxVERTICAL);
 
-        // Mix Effect title (same font as Blended Color)
-        auto* effect_title = new wxStaticText(m_gradient_effect_card, wxID_ANY, _L("Mix Effect"));
+        // Use the FS gradient selector title and styling.
+        auto* effect_title = new wxStaticText(m_gradient_effect_card, wxID_ANY, _L("Select Gradient"));
         effect_title->SetFont(Label::Body_14);
         effect_title->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         effect_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_gradient_effect_card_sizer->Add(effect_title, 0, wxTOP | wxLEFT | wxRIGHT, FromDIP(16));
         m_gradient_effect_card_sizer->AddSpacer(FromDIP(8));
 
+        m_gradient_stops = new MixedGradientStops(
+            m_gradient_effect_card, [this] { return gradient_editor_entry(); }, build_mixed_filament_display_context(m_filament_colours),
+            [this](const std::vector<float>& positions) {
+                m_result.gradient_stop_positions = positions;
+                if (m_preview_panel)
+                    m_preview_panel->Refresh();
+            }, [this](const std::vector<float>& widths) {
+                m_result.gradient_solid_widths = widths;
+                if (m_preview_panel)
+                    m_preview_panel->Refresh();
+            });
+        m_gradient_effect_card_sizer->Add(m_gradient_stops, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
+
+        auto *preview_labels = new wxBoxSizer(wxHORIZONTAL);
+        for (const auto& text : {_L("Layered"), _L("Blended")}) {
+            auto* label = new wxStaticText(m_gradient_effect_card, wxID_ANY, text);
+            label->SetFont(Label::Body_14);
+            MFDTheme::apply_text(label);
+            preview_labels->Add(label, 1);
+        }
+        m_gradient_effect_card_sizer->Add(preview_labels, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
+
         // Gradient preview panel
         m_preview_panel = new wxPanel(m_gradient_effect_card, wxID_ANY, wxDefaultPosition,
-                                      wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
-        m_preview_panel->SetMinSize(wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
+                                      wxSize(FromDIP(2 * PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
+        m_preview_panel->SetMinSize(wxSize(FromDIP(2 * PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
         m_preview_panel->SetBackgroundStyle(wxBG_STYLE_PAINT);
         m_preview_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_preview_panel->Bind(wxEVT_PAINT, [this](wxPaintEvent&) {
             wxAutoBufferedPaintDC dc(m_preview_panel);
             if (m_current_mode == MODE_GRADIENT && m_filament_rows.size() >= 2) {
                 wxSize sz = m_preview_panel->GetClientSize();
-                int ia = std::max(0, std::min(get_filament_index(0), (int)m_filament_colours.size()-1));
-                int ib = std::max(0, std::min(get_filament_index(1), (int)m_filament_colours.size()-1));
-                wxColour ca = parse_mixed_color(m_filament_colours[ia]);
-                wxColour cb = parse_mixed_color(m_filament_colours[ib]);
-                if (m_gradient_direction != 0)
-                    std::swap(ca, cb);
+                const auto     entry   = gradient_editor_entry();
+                const auto     context = build_mixed_filament_display_context(m_filament_colours);
                 wxImage img(sz.GetWidth(), sz.GetHeight());
                 unsigned char* data = img.GetData();
                 // Vertical gradient: top = cb-last, bottom = ca-first
                 // (t=1.0 at top→pure cb, t=0 at bottom→pure ca, matching gradient_start/end direction 0)
                 for (int y = 0; y < sz.GetHeight(); ++y) {
                     float t = (sz.GetHeight() > 1) ? 1.0f - float(y) / float(sz.GetHeight() - 1) : 0.5f;
-                    wxColour c = blend_pair_filament_mixer(ca, cb, t);
+                    wxColour c(mixed_gradient_display_color(entry, context, t));
+                    const auto pair = sample_mixed_gradient(entry, context.num_physical, t, context.preview_settings.gradient_middle_window);
+                    const auto   heights = mixed_filament_local_z_pair_heights(std::max(context.preview_settings.gradient_cycle_height,
+                                                                                        2.0 * context.preview_settings.mixed_lower_bound),
+                                                                               context.preview_settings.mixed_lower_bound,
+                                                                               pair.mix_b_percent);
+                    const double cycle   = heights.first + heights.second;
+                    const unsigned int layer_id = std::fmod(double(sz.GetHeight() - y - 1), 12.0) / 12.0 < heights.first / cycle ?
+                                                      pair.component_a :
+                                                      pair.component_b;
+                    const wxColour layer_color(layer_id > 0 && layer_id <= m_filament_colours.size() ? m_filament_colours[layer_id - 1] :
+                                                                                                       "#26A69A");
                     for (int x = 0; x < sz.GetWidth(); ++x) {
                         int idx = (y * sz.GetWidth() + x) * 3;
-                        data[idx]   = c.Red();
-                        data[idx+1] = c.Green();
-                        data[idx+2] = c.Blue();
+                        const wxColour& pixel = x < sz.GetWidth() / 2 ? layer_color : c;
+                        data[idx]             = pixel.Red();
+                        data[idx + 1]         = pixel.Green();
+                        data[idx + 2]         = pixel.Blue();
                     }
                 }
                 dc.DrawBitmap(wxBitmap(img), 0, 0, false);
@@ -1713,10 +1746,7 @@ void MixedFilamentDialog::rebuild_filament_rows()
     }
 
     int count = (int)sels.size();
-    if (m_current_mode == MODE_GRADIENT)
-        count = 2;
-    else
-        count = std::max(2, std::min(count, max_filaments_for_mode(m_current_mode)));
+    count     = std::max(2, std::min(count, max_filaments_for_mode(m_current_mode)));
 
     for (int i = 0; i < count; ++i) {
         auto* row = new wxBoxSizer(wxHORIZONTAL);
@@ -1843,6 +1873,7 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
         auto [v0, v1, v2] = get_verts();
 
         wxColour c0 = safe_col(0), c1 = safe_col(1), c2 = safe_col(2);
+        std::vector<wxColour> predicted_colors(101 * 101);
 
         int min_y = (int)std::min({v0.y, v1.y, v2.y});
         int max_y = (int)std::max({v0.y, v1.y, v2.y});
@@ -1871,9 +1902,14 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
                 if (px < 0 || px >= img_w || py < 0 || py >= img_h) continue;
 
                 const int idx = (py * img_w + px) * 3;
-                data[idx]     = (unsigned char)std::clamp((int)(c0.Red()   * w0 + c1.Red()   * w1 + c2.Red()   * w2), 0, 255);
-                data[idx + 1] = (unsigned char)std::clamp((int)(c0.Green() * w0 + c1.Green() * w1 + c2.Green() * w2), 0, 255);
-                data[idx + 2] = (unsigned char)std::clamp((int)(c0.Blue()  * w0 + c1.Blue()  * w1 + c2.Blue()  * w2), 0, 255);
+                const int wa        = std::clamp(int(std::lround(w0 * 100.0)), 0, 100);
+                const int wb        = std::clamp(int(std::lround(w1 * 100.0)), 0, 100 - wa);
+                wxColour& predicted = predicted_colors[wa * 101 + wb];
+                if (!predicted.IsOk())
+                    predicted = blend_preview_colors({c0, c1, c2}, {double(wa), double(wb), double(100 - wa - wb)});
+                data[idx]     = predicted.Red();
+                data[idx + 1] = predicted.Green();
+                data[idx + 2] = predicted.Blue();
             }
         }
 
@@ -1977,6 +2013,7 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
         wxSize sz = m_match_tri_picker->GetClientSize();
         auto [v0, v1, v2] = get_verts();
         wxColour c0 = safe_col(0), c1 = safe_col(1), c2 = safe_col(2);
+        std::vector<wxColour> predicted_colors(101 * 101);
 
         int min_y = (int)std::min({v0.y, v1.y, v2.y});
         int max_y = (int)std::max({v0.y, v1.y, v2.y});
@@ -1998,9 +2035,14 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
                 if (w0 < -EPSILON || w1 < -EPSILON || w2 < -EPSILON) continue;
                 if (px < 0 || px >= img_w || py < 0 || py >= img_h) continue;
                 const int idx = (py * img_w + px) * 3;
-                data[idx]     = (unsigned char)std::clamp((int)(c0.Red()   * w0 + c1.Red()   * w1 + c2.Red()   * w2), 0, 255);
-                data[idx + 1] = (unsigned char)std::clamp((int)(c0.Green() * w0 + c1.Green() * w1 + c2.Green() * w2), 0, 255);
-                data[idx + 2] = (unsigned char)std::clamp((int)(c0.Blue()  * w0 + c1.Blue()  * w1 + c2.Blue()  * w2), 0, 255);
+                const int wa        = std::clamp(int(std::lround(w0 * 100.0)), 0, 100);
+                const int wb        = std::clamp(int(std::lround(w1 * 100.0)), 0, 100 - wa);
+                wxColour& predicted = predicted_colors[wa * 101 + wb];
+                if (!predicted.IsOk())
+                    predicted = blend_preview_colors({c0, c1, c2}, {double(wa), double(wb), double(100 - wa - wb)});
+                data[idx]     = predicted.Red();
+                data[idx + 1] = predicted.Green();
+                data[idx + 2] = predicted.Blue();
             }
         }
         wxBitmap bmp(img);
@@ -2121,8 +2163,8 @@ void MixedFilamentDialog::update_ratio_or_tri_visibility()
     if (m_swatch_card) m_swatch_card->Show(show_swatches);
 
     // Update add/remove button visibility
-    bool can_remove = !is_match_mode && !is_gradient_mode && !is_cycle_mode && (n > 2);
-    bool show_add = !is_match_mode && !is_gradient_mode && !is_cycle_mode && n < max_filaments_for_mode(m_current_mode);
+    bool can_remove = !is_match_mode && !is_cycle_mode && (n > 2);
+    bool show_add   = !is_match_mode && !is_cycle_mode && n < max_filaments_for_mode(m_current_mode);
     bool can_add = n < (int)m_filament_colours.size();
     if (m_btn_remove_filament) m_btn_remove_filament->Show(can_remove);
     if (m_btn_add_filament) {
@@ -2384,6 +2426,37 @@ std::string MixedFilamentDialog::compute_preview_color()
 {
     if (m_filament_colours.empty()) return "#808080";
     if (m_filament_rows.empty() && m_current_mode != MODE_MATCH) return "#808080";
+
+    const auto context = build_mixed_filament_display_context(m_filament_colours);
+    if (m_current_mode == MODE_GRADIENT)
+        return mixed_gradient_display_color(gradient_editor_entry(), context, 0.5);
+    if (m_current_mode == MODE_RATIO || (m_current_mode == MODE_MATCH && !m_match_tri_indices.empty())) {
+        std::vector<unsigned int> ids;
+        const bool                matching = m_current_mode == MODE_MATCH;
+        if (matching) {
+            for (int id : m_match_tri_indices)
+                ids.push_back(unsigned(std::max(0, id) + 1));
+        } else {
+            for (size_t i = 0; i < m_filament_rows.size(); ++i)
+                ids.push_back(unsigned(std::max(0, get_filament_index(int(i))) + 1));
+        }
+        if (ids.size() == 2) {
+            MixedFilament entry;
+            entry.component_a   = ids[0];
+            entry.component_b   = ids[1];
+            entry.mix_b_percent = matching ? (m_match_gradient_selector ? m_match_gradient_selector->value() : 50) :
+                                             (m_gradient_selector ? m_gradient_selector->value() : 50);
+            return compute_mixed_filament_display_color(entry, context);
+        }
+        if (ids.size() == 3) {
+            const auto weights = matching ?
+                                     std::vector<int>{int(std::lround(10000 * m_match_tri_wx)), int(std::lround(10000 * m_match_tri_wy)),
+                                                      int(std::lround(10000 * m_match_tri_wz))} :
+                                     std::vector<int>{int(std::lround(10000 * m_tri_wx)), int(std::lround(10000 * m_tri_wy)),
+                                                      int(std::lround(10000 * m_tri_wz))};
+            return blend_mixed_components(ids, weights, context);
+        }
+    }
 
     // Match mode: compute from current tri/gradient weights (during drag or no recipe)
     if (m_current_mode == MODE_MATCH && !m_match_tri_indices.empty()) {
@@ -3256,8 +3329,42 @@ void MixedFilamentDialog::validate_cycle_pattern()
     }
 }
 
+MixedFilament MixedFilamentDialog::gradient_editor_entry() const
+{
+    MixedFilament             entry = m_result;
+    std::vector<unsigned int> ids;
+    for (size_t i = 0; i < m_filament_rows.size(); ++i)
+        ids.push_back(unsigned(std::max(0, get_filament_index(int(i))) + 1));
+    entry.gradient_component_ids = MixedFilamentManager::encode_gradient_component_ids(ids);
+    if (ids.size() >= 2) {
+        entry.component_a = ids[0];
+        entry.component_b = ids[1];
+    }
+    // New recipes use 3%; old gradients inherit their saved process width until
+    // edited, then store their effective per-color widths with the recipe.
+    if (entry.gradient_solid_widths.empty()) {
+        const auto context = build_mixed_filament_display_context(m_filament_colours);
+        const float fallback = m_result.gradient_enabled ? float(context.preview_settings.gradient_middle_window) : 0.03f;
+        entry.gradient_solid_widths.assign(ids.size(), fallback);
+    } else {
+        if (entry.gradient_solid_widths.size() < ids.size())
+            entry.gradient_solid_widths.back() = 0.03f;
+        entry.gradient_solid_widths.resize(ids.size(), 0.03f);
+    }
+    if (!entry.gradient_solid_widths.empty()) {
+        entry.gradient_solid_widths.front() = 0.f;
+        entry.gradient_solid_widths.back() = 0.f;
+    }
+    entry.gradient_enabled = true;
+    entry.gradient_start   = m_gradient_direction == 0 ? 1.f : 0.f;
+    entry.gradient_end     = 1.f - entry.gradient_start;
+    return entry;
+}
+
 void MixedFilamentDialog::update_preview()
 {
+    if (m_gradient_stops)
+        m_gradient_stops->refresh_recipe();
     if ((int)m_filament_rows.size() == 2)
         update_gradient_selector_colors();
     update_legend_text();
@@ -3279,6 +3386,8 @@ void MixedFilamentDialog::collect_result()
     m_result.ui_mode = m_current_mode;
     int val = m_gradient_selector ? m_gradient_selector->value() : 50;
     m_result.mix_b_percent = val;
+    if (m_current_mode == MODE_GRADIENT)
+        m_result.gradient_solid_widths = gradient_editor_entry().gradient_solid_widths;
     // Default: drop Z-gradient state. Only MODE_GRADIENT re-enables it below.
     m_result.gradient_enabled = false;
     switch (m_current_mode) {
@@ -3404,49 +3513,24 @@ void MixedFilamentDialog::collect_result()
         break;
     }
     case MODE_GRADIENT:
+        m_result                   = gradient_editor_entry();
         m_result.distribution_mode = int(MixedFilament::LayerCycle);
-        // 2-filament Z gradient does not need extra component IDs/weights.
-        m_result.gradient_component_ids.clear();
         m_result.gradient_component_weights.clear();
         m_result.manual_pattern.clear();
-        m_result.gradient_enabled = true;
-        
-        // Gradient direction mapping:
-        // Direction 0: A→B (component_a starts dominant at 80%, ends at 20%)
-        //              gradient_start=0.8, gradient_end=0.2 (start > end)
-        // Direction 1: B→A (component_a starts at 20%, ends dominant at 80%)
-        //              gradient_start=0.2, gradient_end=0.8 (start < end)
-        // 
-        // The gradient_start/end values represent the ratio of component_a.
-        // Component_b ratio is always (1 - component_a_ratio).
-        
-        if (m_gradient_direction == 0) {
-            // A→B: component_a goes from dominant to minority
-            m_result.gradient_start = MixedFilament::k_default_gradient_dominant;
-            m_result.gradient_end   = MixedFilament::k_default_gradient_minority;
-        } else {
-            // B→A: component_a goes from minority to dominant
-            m_result.gradient_start = MixedFilament::k_default_gradient_minority;
-            m_result.gradient_end   = MixedFilament::k_default_gradient_dominant;
-        }
-        
-        // Mid-blend layer ratio (50%) keeps non-gradient consumers consistent.
         m_result.mix_b_percent = 50;
-        m_result.ratio_a = 1;
-        m_result.ratio_b = 1;
-        // Force at least 2 sublayers per layer so the LocalZ planner emits the
-        // two sub-layers needed to realize the per-layer gradient ratio.
-        if (m_result.local_z_max_sublayers < 2)
-            m_result.local_z_max_sublayers = 2;
+        m_result.ratio_a = m_result.ratio_b = 1;
+        m_result.local_z_max_sublayers      = 0;
+        m_result.gradient_stop_positions    = mixed_gradient_stops(m_result, m_filament_colours.size());
         break;
     }
+    m_result.display_color = compute_preview_color();
     m_result.custom = true;
 }
 
 void MixedFilamentDialog::on_dpi_changed(const wxRect& /*suggested_rect*/)
 {
     if (m_preview_panel)
-        m_preview_panel->SetMinSize(wxSize(FromDIP(PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
+        m_preview_panel->SetMinSize(wxSize(FromDIP(2 * PREVIEW_SIZE), FromDIP(PREVIEW_SIZE)));
     if (m_strip_panel)
         m_strip_panel->SetMinSize(wxSize(-1, FromDIP(STRIP_HEIGHT)));
     Layout(); 

@@ -1960,8 +1960,10 @@ private:
         const std::vector<std::string> physical_colors       = m_physical_colors;
         const int                      min_component_percent = m_min_component_percent;
         wxWeakRef<wxWindow>            weak_self(this);
-        std::thread([weak_self, physical_colors, requested_target, request_token, min_component_percent]() {
-            MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, requested_target, min_component_percent);
+        const auto                     context = build_mixed_filament_display_context(physical_colors);
+        std::thread([weak_self, physical_colors, requested_target, request_token, min_component_percent, context]() {
+            MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, requested_target, min_component_percent,
+                                                                               100, true, &context);
             wxGetApp().CallAfter([weak_self, requested_target, recipe = std::move(recipe), request_token]() mutable {
                 if (!weak_self)
                     return;
@@ -6554,7 +6556,9 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
             mfs.back().local_z_max_sublayers       = r.local_z_max_sublayers;
             mfs.back().gradient_enabled            = r.gradient_enabled;
             mfs.back().gradient_start              = r.gradient_start;
-            mfs.back().gradient_end                = r.gradient_end;
+            mfs.back().gradient_end                  = r.gradient_end;
+            mfs.back().gradient_stop_positions       = r.gradient_stop_positions;
+            mfs.back().gradient_solid_widths       = r.gradient_solid_widths;
             mfs.back().display_color             = r.display_color;
             mfs.back().ui_mode                       = r.ui_mode;
             mfs.back().custom                  = true;
@@ -6642,12 +6646,8 @@ void Sidebar::update_color_mix_panel()
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_component_bias_enabled"))
         component_bias_enabled = opt->value;
 
-    const MixedFilamentPreviewSettings preview_settings {
-        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, local_z_direct_multicolor, 1
-    };
-    const MixedFilamentDisplayContext display_context {
-        num_physical, physical_colors, nozzle_diameters, preview_settings, component_bias_enabled
-    };
+    const MixedFilamentDisplayContext display_context = build_mixed_filament_display_context(physical_colors);
+    const MixedFilamentPreviewSettings &preview_settings = display_context.preview_settings;
     preset_bundle->mixed_filaments.set_display_context(display_context);
 
     auto& mfs = preset_bundle->mixed_filaments.mixed_filaments();
@@ -6690,12 +6690,18 @@ void Sidebar::update_color_mix_panel()
 
         const std::string normalized_pattern_cm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
         std::vector<unsigned int> gradient_ids = MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids, 0);
-        const bool z_gradient_tile = mf.gradient_enabled && mf.component_a != mf.component_b
-                                  && normalized_pattern_cm.empty() && gradient_ids.size() < 3;
+        const bool z_gradient_tile = mf.gradient_enabled && mf.component_a != mf.component_b && normalized_pattern_cm.empty();
         wxString lbl;
         if (!normalized_pattern_cm.empty())
             lbl = wxString(summarize_cycle_pattern_text(normalized_pattern_cm, mf, int(num_physical)));
-        else if (gradient_ids.size() >= 3) {
+        else if (z_gradient_tile) {
+            const auto ids = mixed_gradient_components(mf, num_physical);
+            for (size_t i = 0; i < ids.size(); ++i) {
+                if (i)
+                    lbl += " -> ";
+                lbl += wxString::Format("F%u", ids[i]);
+            }
+        } else if (gradient_ids.size() >= 3) {
             // parse weights
             const size_t n = gradient_ids.size();
             std::vector<int> weights;
@@ -6731,7 +6737,7 @@ void Sidebar::update_color_mix_panel()
                 for (unsigned int fid : gradient_ids)
                     lbl += wxString::Format("+F%u", fid);
         }
-        
+
         bool has_error = !is_filament_compatible(mf);
         
         // Create a panel with border for the text
@@ -6810,7 +6816,9 @@ void Sidebar::update_color_mix_panel()
             mfs2[i].local_z_max_sublayers      = r.local_z_max_sublayers;
             mfs2[i].gradient_enabled           = r.gradient_enabled;
             mfs2[i].gradient_start             = r.gradient_start;
-            mfs2[i].gradient_end               = r.gradient_end;
+            mfs2[i].gradient_end                  = r.gradient_end;
+            mfs2[i].gradient_stop_positions       = r.gradient_stop_positions;
+            mfs2[i].gradient_solid_widths       = r.gradient_solid_widths;
             mfs2[i].display_color               = r.display_color;
             mfs2[i].ui_mode                       = r.ui_mode;
             mfs2[i].custom                      = true;
@@ -6859,7 +6867,9 @@ void Sidebar::update_color_mix_panel()
                 mfs2[i].local_z_max_sublayers      = r.local_z_max_sublayers;
                 mfs2[i].gradient_enabled           = r.gradient_enabled;
                 mfs2[i].gradient_start             = r.gradient_start;
-                mfs2[i].gradient_end               = r.gradient_end;
+                mfs2[i].gradient_end                  = r.gradient_end;
+                mfs2[i].gradient_stop_positions       = r.gradient_stop_positions;
+                mfs2[i].gradient_solid_widths       = r.gradient_solid_widths;
                 mfs2[i].ui_mode                       = r.ui_mode;
                 mfs2[i].custom                      = true;
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
@@ -7121,11 +7131,13 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         }
         return fallback;
     };
-    auto get_mixed_float = [preset_bundle, print_cfg](const std::string &key, float fallback) {
+    // ConfigOptionFloat stores doubles. Preserve that precision through sidebar
+    // refreshes, or unchanged values such as 0.06 acquire a false dirty/reset state.
+    auto get_mixed_float = [preset_bundle, print_cfg](const std::string &key, double fallback) {
         if (preset_bundle->project_config.has(key))
-            return float(preset_bundle->project_config.opt_float(key));
+            return preset_bundle->project_config.opt_float(key);
         if (print_cfg && print_cfg->has(key))
-            return float(print_cfg->opt_float(key));
+            return print_cfg->opt_float(key);
         return fallback;
     };
     auto get_mixed_string = [preset_bundle, print_cfg](const std::string &key, const std::string &fallback = std::string()) {
@@ -7141,7 +7153,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         }
         return project_value.empty() ? fallback : project_value;
     };
-    auto set_mixed_float = [preset_bundle, print_cfg](const std::string &key, float value) {
+    auto set_mixed_float = [preset_bundle, print_cfg](const std::string &key, double value) {
         if (print_cfg) {
             if (ConfigOptionFloat *opt = print_cfg->option<ConfigOptionFloat>(key))
                 opt->value = value;
@@ -7358,10 +7370,10 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     };
     const bool height_weighted_mode = get_mixed_mode(false);
     int   gradient_mode = height_weighted_mode ? 1 : 0;
-    float lower_bound   = std::max(0.01f, get_mixed_float("mixed_filament_height_lower_bound", 0.04f));
-    float upper_bound   = std::max(lower_bound, get_mixed_float("mixed_filament_height_upper_bound", 0.16f));
-    float preferred_local_z_a = std::max(0.f, get_mixed_float("mixed_color_layer_height_a", 0.f));
-    float preferred_local_z_b = std::max(0.f, get_mixed_float("mixed_color_layer_height_b", 0.f));
+    double lower_bound   = std::max(0.01, get_mixed_float("mixed_filament_height_lower_bound", 0.06));
+    double upper_bound   = std::max(lower_bound, get_mixed_float("mixed_filament_height_upper_bound", 0.16));
+    double preferred_local_z_a = std::max(0.0, get_mixed_float("mixed_color_layer_height_a", 0.0));
+    double preferred_local_z_b = std::max(0.0, get_mixed_float("mixed_color_layer_height_b", 0.0));
     float nominal_layer_height = 0.2f;
     if (print_cfg && print_cfg->has("layer_height"))
         nominal_layer_height = float(print_cfg->opt_float("layer_height"));
@@ -7371,32 +7383,17 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
     const bool local_z_direct_multicolor =
-        get_mixed_bool("dithering_local_z_direct_multicolor", true) &&
+        (local_z_mode || get_mixed_bool("dithering_local_z_direct_multicolor", true)) &&
         preferred_local_z_a <= EPSILON &&
         preferred_local_z_b <= EPSILON;
     const bool component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
-    float pointillism_pixel_size = std::max(0.f, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.f));
-    float pointillism_line_gap   = std::max(0.f, get_mixed_float("mixed_filament_pointillism_line_gap", 0.f));
-    float mixed_surface_indentation = std::clamp(get_mixed_float("mixed_filament_surface_indentation", 0.f), -2.f, 2.f);
+    double pointillism_pixel_size = std::max(0.0, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.0));
+    double pointillism_line_gap   = std::max(0.0, get_mixed_float("mixed_filament_pointillism_line_gap", 0.0));
+    double mixed_surface_indentation = std::clamp(get_mixed_float("mixed_filament_surface_indentation", 0.0), -2.0, 2.0);
     bool  advanced_dithering = get_mixed_bool("mixed_filament_advanced_dithering", false);
     const std::string mixed_definitions = get_mixed_string("mixed_filament_definitions");
-    const MixedFilamentPreviewSettings preview_settings {
-        nominal_layer_height,
-        lower_bound,
-        upper_bound,
-        preferred_local_z_a,
-        preferred_local_z_b,
-        local_z_mode,
-        local_z_direct_multicolor,
-        wall_loops
-    };
-    const MixedFilamentDisplayContext display_context {
-        num_physical,
-        physical_colors,
-        nozzle_diameters,
-        preview_settings,
-        component_bias_enabled
-    };
+    const MixedFilamentDisplayContext display_context = build_mixed_filament_display_context(physical_colors);
+    const MixedFilamentPreviewSettings &preview_settings = display_context.preview_settings;
     auto summarize_sequence = [num_physical](const std::vector<unsigned int> &sequence) {
         if (sequence.empty() || num_physical == 0)
             return std::string();
@@ -11832,9 +11829,19 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             if (current_project_empty) {
                                 static const t_config_option_keys imported_project_option_keys = {
                                     "filament_colour",
+                                    "filament_transmission_distance",
+                                    "filament_full_spectrum_material_id",
                                     "filament_multi_colors",
                                     "filament_colour_mode",
                                     "mixed_filament_definitions",
+                                    "mixed_filament_calibrated_colors",
+                                    "dithering_local_z_mode",
+                                    "dithering_local_z_whole_objects",
+                                    "dithering_local_z_direct_multicolor",
+                                    "dithering_local_z_preserve_first_layer",
+                                    "dithering_local_z_independent_layer_height",
+                                    "dithering_local_z_gradient_layer_height",
+                                    "dithering_local_z_gradient_middle_filament_window",
                                     "mixed_filament_gradient_mode",
                                     "mixed_filament_height_lower_bound",
                                     "mixed_filament_height_upper_bound",
@@ -25248,5 +25255,4 @@ SuppressBackgroundProcessingUpdate::~SuppressBackgroundProcessingUpdate()
 }
 
 }}    // namespace Slic3r::GUI
-
 

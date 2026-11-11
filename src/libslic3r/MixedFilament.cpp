@@ -1,5 +1,6 @@
 #include "MixedFilament.hpp"
 #include "LocalesUtils.hpp"
+#include "FullSpectrumKSPairResidual.hpp"
 #include "filament_mixer.h"
 #include "libslic3r.h"
 
@@ -31,8 +32,82 @@ namespace {
 // Initial value is false, but will be overridden by AppConfig during application startup.
 // See: GUI_App::init_app_config() which loads the actual config value.
 std::atomic_bool s_mixed_filament_auto_generate_enabled { false };
+std::atomic<MixedFilamentColorEngine> s_mixed_filament_color_engine{MixedFilamentColorEngine::FilamentMixer};
+std::atomic_bool                      s_mixed_filament_use_td_for_color_prediction{true};
 
 } // namespace
+
+std::optional<double> physical_td_for_id(const MixedFilamentDisplayContext& context, unsigned int id)
+{
+    if (!MixedFilamentManager::use_td_for_color_prediction() || id == 0 || id > context.physical_tds.size())
+        return std::nullopt;
+
+    const double td = context.physical_tds[id - 1];
+    if (!std::isfinite(td) || td <= EPSILON)
+        return std::nullopt;
+    return td;
+}
+
+std::optional<std::string> physical_material_id_for_id(const MixedFilamentDisplayContext& context, unsigned int id)
+{
+    if (id == 0 || id > context.physical_material_ids.size() || context.physical_material_ids[id - 1].empty())
+        return std::nullopt;
+    return context.physical_material_ids[id - 1];
+}
+
+std::vector<FullSpectrumKSPairResidualColorInput> full_spectrum_inputs_from_mixed_inputs(
+    const std::vector<MixedFilamentColorInput>& color_percents)
+{
+    std::vector<FullSpectrumKSPairResidualColorInput> inputs;
+    inputs.reserve(color_percents.size());
+    const bool use_td = MixedFilamentManager::use_td_for_color_prediction();
+    for (const MixedFilamentColorInput& input : color_percents)
+        inputs.push_back({input.color_hex, input.percent, use_td ? input.td_mm : std::nullopt, input.material_id});
+    return inputs;
+}
+
+std::pair<double, double> mixed_filament_local_z_pair_heights(double nominal_layer_height, double min_sublayer_height, int mix_b_percent)
+{
+    const double height = std::max(0.0, nominal_layer_height);
+    if (height <= EPSILON)
+        return {0.0, 0.0};
+
+    const int mix_b = std::clamp(mix_b_percent, 0, 100);
+    if (mix_b <= 0)
+        return {height, 0.0};
+    if (mix_b >= 100)
+        return {0.0, height};
+
+    const double minimum = std::max(0.01, min_sublayer_height);
+    if (height < 2.0 * minimum - EPSILON)
+        return mix_b < 50 ? std::pair<double, double>{height, 0.0} : std::pair<double, double>{0.0, height};
+
+    const double height_b = std::clamp(height * double(mix_b) / 100.0, minimum, height - minimum);
+    return {height - height_b, height_b};
+}
+
+bool mixed_filament_definition_uses_local_z(const MixedFilament& definition, bool global_local_z_enabled)
+{
+    if (!definition.enabled || definition.deleted || !definition.manual_pattern.empty() ||
+        definition.distribution_mode == int(MixedFilament::SameLayerPointillisme))
+        return false;
+    return global_local_z_enabled || definition.gradient_enabled;
+}
+
+bool mixed_filament_local_z_uses_full_domain(bool global_full_domain_enabled, bool mixed_filament_assigned_to_region)
+{
+    return global_full_domain_enabled || mixed_filament_assigned_to_region;
+}
+
+bool mixed_filament_local_z_painted_override_uses_planner(bool painted_state_is_mixed, bool painted_mixed_row_uses_local_z)
+{
+    return painted_state_is_mixed && painted_mixed_row_uses_local_z;
+}
+
+bool mixed_filament_local_z_should_subdivide_layer(size_t layer_id, bool /*whole_object_mode*/, bool preserve_first_layer)
+{
+    return !(layer_id == 0 && preserve_first_layer);
+}
 
 static uint64_t canonical_pair_key(unsigned int a, unsigned int b)
 {
@@ -370,27 +445,29 @@ static bool use_component_b_advanced_dither(int layer_index, int ratio_a, int ra
     return b_after > b_before;
 }
 
-static bool parse_row_definition(const std::string &row,
-                                 unsigned int      &a,
-                                 unsigned int      &b,
-                                 uint64_t          &stable_id,
-                                 bool              &enabled,
-                                 bool              &custom,
-                                 bool              &origin_auto,
-                                 int               &mix_b_percent,
-                                 bool              &pointillism_all_filaments,
-                                 std::string       &gradient_component_ids,
-                                 std::string       &gradient_component_weights,
-                                 std::string       &manual_pattern,
-                                 int               &distribution_mode,
-                                 int               &local_z_max_sublayers,
-                                 float             &component_a_surface_offset,
-                                 float             &component_b_surface_offset,
-                                 bool              &deleted,
-                                 bool              &gradient_enabled,
-                                 float             &gradient_start,
-                                 float             &gradient_end,
-                                 int               &cm_mode)
+static bool parse_row_definition(const std::string&  row,
+                                 unsigned int&       a,
+                                 unsigned int&       b,
+                                 uint64_t&           stable_id,
+                                 bool&               enabled,
+                                 bool&               custom,
+                                 bool&               origin_auto,
+                                 int&                mix_b_percent,
+                                 bool&               pointillism_all_filaments,
+                                 std::string&        gradient_component_ids,
+                                 std::string&        gradient_component_weights,
+                                 std::string&        manual_pattern,
+                                 int&                distribution_mode,
+                                 int&                local_z_max_sublayers,
+                                 float&              component_a_surface_offset,
+                                 float&              component_b_surface_offset,
+                                 bool&               deleted,
+                                 bool&               gradient_enabled,
+                                 float&              gradient_start,
+                                 float&              gradient_end,
+                                 int&                cm_mode,
+                                 std::vector<float>& gradient_stop_positions,
+                                 std::vector<float>& gradient_solid_widths)
 {
     auto trim_copy = [](const std::string &s) {
         size_t lo = 0;
@@ -528,6 +605,28 @@ static bool parse_row_definition(const std::string &row,
         const std::string &tok = tokens[i];
         if (tok.empty())
             continue;
+        if (tok[0] == 'p' || tok[0] == 'P' || tok[0] == 'v' || tok[0] == 'V') {
+            auto& values = (tok[0] == 'p' || tok[0] == 'P') ? gradient_stop_positions : gradient_solid_widths;
+            std::istringstream positions(tok.substr(1));
+            positions.imbue(std::locale::classic());
+            values.clear();
+            float position;
+            char  separator;
+            while (positions >> position) {
+                if (!std::isfinite(position)) {
+                    values.clear();
+                    break;
+                }
+                values.push_back(position);
+                if (!(positions >> separator))
+                    break;
+                if (separator != '/') {
+                    values.clear();
+                    break;
+                }
+            }
+            continue;
+        }
         if (tok[0] == 'g' || tok[0] == 'G') {
             gradient_component_ids = tok.substr(1);
             continue;
@@ -597,8 +696,10 @@ static bool parse_row_definition(const std::string &row,
                     parse_float_token(body.substr(s1 + 1, s2 - s1 - 1), parsed_start) &&
                     parse_float_token(body.substr(s2 + 1), parsed_end)) {
                     gradient_enabled = parsed_flag != 0;
-                    if (parsed_start > 0.f && parsed_start < 1.f) gradient_start = parsed_start;
-                    if (parsed_end   > 0.f && parsed_end   < 1.f) gradient_end   = parsed_end;
+                    if (parsed_start >= 0.f && parsed_start <= 1.f)
+                        gradient_start = parsed_start;
+                    if (parsed_end >= 0.f && parsed_end <= 1.f)
+                        gradient_end = parsed_end;
                 }
             }
             continue;
@@ -621,10 +722,10 @@ static bool parse_row_definition(const std::string &row,
     
     // Validate gradient parameters if gradient is enabled
     if (gradient_enabled) {
-        // Ensure start and end are in valid range (0.01 to 0.99)
-        gradient_start = std::clamp(gradient_start, 0.01f, 0.99f);
-        gradient_end   = std::clamp(gradient_end,   0.01f, 0.99f);
-        
+        // Keep pure endpoints valid when loading saved gradients
+        gradient_start = std::clamp(gradient_start, 0.f, 1.f);
+        gradient_end   = std::clamp(gradient_end, 0.f, 1.f);
+
         // Ensure start and end are not too close (need meaningful gradient)
         if (std::abs(gradient_start - gradient_end) < MixedFilament::k_min_gradient_difference) {
             // Gradient range too small, disable gradient mode
@@ -1211,10 +1312,11 @@ static std::vector<unsigned int> build_effective_pair_preview_sequence(unsigned 
     return sequence;
 }
 
-static std::string blend_display_color_from_sequence(const std::vector<std::string> &colors,
-                                                     size_t                           num_physical,
-                                                     const std::vector<unsigned int> &sequence,
-                                                     const std::string               &fallback)
+static std::string blend_display_color_from_sequence(const std::vector<std::string>&    colors,
+                                                     size_t                             num_physical,
+                                                     const std::vector<unsigned int>&   sequence,
+                                                     const std::string&                 fallback,
+                                                     const MixedFilamentDisplayContext& context)
 {
     if (colors.empty() || sequence.empty() || num_physical == 0)
         return fallback;
@@ -1230,20 +1332,21 @@ static std::string blend_display_color_from_sequence(const std::vector<std::stri
     if (total == 0)
         return fallback;
 
-    std::vector<std::pair<std::string, int>> color_percents;
+    std::vector<MixedFilamentColorInput> color_percents;
     color_percents.reserve(num_physical);
     for (size_t id = 1; id <= num_physical; ++id) {
         if (counts[id] == 0 || id > colors.size())
             continue;
-        color_percents.emplace_back(colors[id - 1], int(counts[id]));
+        color_percents.push_back({colors[id - 1], int(counts[id]), physical_td_for_id(context, unsigned(id)),
+                                  physical_material_id_for_id(context, unsigned(id))});
     }
     if (color_percents.empty())
         return fallback;
 
     if (color_percents.size() == 1)
-        return color_percents.front().first;
+        return color_percents.front().color_hex;
 
-    return MixedFilamentManager::blend_color_multi(color_percents);
+    return MixedFilamentManager::blend_color_multi(color_percents, context.color_engine.value_or(MixedFilamentManager::color_engine()));
 }
 
 static std::vector<double> build_local_z_preview_pass_heights(double nominal_layer_height,
@@ -1524,6 +1627,9 @@ int mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament  
     if (gradient_ids.size() >= 3)
         return std::clamp(mf.mix_b_percent, 0, 100);
 
+    if (preview_settings.local_z_independent_layer_height)
+        return std::clamp(mf.mix_b_percent, 0, 100);
+
     const std::vector<double> pass_heights = build_local_z_preview_pass_heights(preview_settings.nominal_layer_height,
                                                                                 preview_settings.mixed_lower_bound,
                                                                                 preview_settings.mixed_upper_bound,
@@ -1632,11 +1738,12 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
         entry.component_a <= context.physical_colors.size() && entry.component_b <= context.physical_colors.size()) {
         const auto [apparent_pct_a, apparent_pct_b] =
             mixed_filament_apparent_pair_percentages(entry, context.preview_settings, context.nozzle_diameters, context.component_bias_enabled);
-        return MixedFilamentManager::blend_color(
-            context.physical_colors[entry.component_a - 1],
-            context.physical_colors[entry.component_b - 1],
-            apparent_pct_a,
-            apparent_pct_b);
+        return MixedFilamentManager::blend_color(context.physical_colors[entry.component_a - 1],
+                                                 context.physical_colors[entry.component_b - 1], apparent_pct_a, apparent_pct_b,
+                                                 physical_td_for_id(context, entry.component_a),
+                                                 physical_td_for_id(context, entry.component_b),
+                                                 physical_material_id_for_id(context, entry.component_a),
+                                                 physical_material_id_for_id(context, entry.component_b));
     }
 
     const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
@@ -1644,7 +1751,7 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
         const std::vector<unsigned int> sequence = build_grouped_manual_pattern_preview_sequence(
             normalized_pattern, entry.component_a, entry.component_b, context.num_physical, context.preview_settings.wall_loops);
         if (!sequence.empty())
-            return blend_display_color_from_sequence(context.physical_colors, context.num_physical, sequence, fallback);
+            return blend_display_color_from_sequence(context.physical_colors, context.num_physical, sequence, fallback, context);
     }
 
     if (entry.distribution_mode != int(MixedFilament::Simple)) {
@@ -1652,10 +1759,14 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
         if (gradient_ids.size() >= 3) {
             const std::vector<int> gradient_weights =
                 decode_gradient_component_weights(entry.gradient_component_weights, gradient_ids.size());
+            if (context.preview_settings.local_z_mode && context.preview_settings.local_z_direct_multicolor)
+                return blend_mixed_components(gradient_ids,
+                                              gradient_weights.empty() ? std::vector<int>(gradient_ids.size(), 1) : gradient_weights,
+                                              context);
             const std::vector<unsigned int> sequence = build_weighted_gradient_sequence(
                 gradient_ids, gradient_weights.empty() ? std::vector<int>(gradient_ids.size(), 1) : gradient_weights);
             if (!sequence.empty())
-                return blend_display_color_from_sequence(context.physical_colors, context.num_physical, sequence, fallback);
+                return blend_display_color_from_sequence(context.physical_colors, context.num_physical, sequence, fallback, context);
         }
     }
 
@@ -1664,7 +1775,7 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
     const std::vector<unsigned int> pair_sequence =
         build_effective_pair_preview_sequence(entry.component_a, entry.component_b, effective_mix_b, same_layer_mode);
     if (!pair_sequence.empty())
-        return blend_display_color_from_sequence(context.physical_colors, context.num_physical, pair_sequence, fallback);
+        return blend_display_color_from_sequence(context.physical_colors, context.num_physical, pair_sequence, fallback, context);
 
     if (entry.component_a == 0 || entry.component_b == 0 ||
         entry.component_a > context.num_physical || entry.component_b > context.num_physical ||
@@ -1673,16 +1784,49 @@ std::string compute_mixed_filament_display_color(const MixedFilament &entry, con
     }
 
     const int mix_b = std::clamp(entry.mix_b_percent, 0, 100);
-    return MixedFilamentManager::blend_color(
-        context.physical_colors[entry.component_a - 1],
-        context.physical_colors[entry.component_b - 1],
-        100 - mix_b,
-        mix_b);
+    return MixedFilamentManager::blend_color(context.physical_colors[entry.component_a - 1], context.physical_colors[entry.component_b - 1],
+                                             100 - mix_b, mix_b, physical_td_for_id(context, entry.component_a),
+                                             physical_td_for_id(context, entry.component_b),
+                                             physical_material_id_for_id(context, entry.component_a),
+                                             physical_material_id_for_id(context, entry.component_b));
 }
 
 // ---------------------------------------------------------------------------
 // MixedFilamentManager
 // ---------------------------------------------------------------------------
+
+void MixedFilamentManager::set_color_engine(MixedFilamentColorEngine engine)
+{
+    s_mixed_filament_color_engine.store(engine, std::memory_order_relaxed);
+}
+
+MixedFilamentColorEngine MixedFilamentManager::color_engine() { return s_mixed_filament_color_engine.load(std::memory_order_relaxed); }
+
+void MixedFilamentManager::set_use_td_for_color_prediction(bool enabled)
+{
+    s_mixed_filament_use_td_for_color_prediction.store(enabled, std::memory_order_relaxed);
+}
+
+bool MixedFilamentManager::use_td_for_color_prediction()
+{
+    return s_mixed_filament_use_td_for_color_prediction.load(std::memory_order_relaxed);
+}
+
+MixedFilamentColorEngine MixedFilamentManager::color_engine_from_string(const std::string& value)
+{
+    if (value == "ks_pair_residual" || value == "fullspectrum_ks_pair_residual")
+        return MixedFilamentColorEngine::FullSpectrumKSPairResidual;
+    return MixedFilamentColorEngine::FilamentMixer;
+}
+
+const char* MixedFilamentManager::color_engine_to_string(MixedFilamentColorEngine engine)
+{
+    switch (engine) {
+    case MixedFilamentColorEngine::FullSpectrumKSPairResidual: return "ks_pair_residual";
+    case MixedFilamentColorEngine::FilamentMixer:
+    default: return "filament_mixer";
+    }
+}
 
 uint64_t MixedFilamentManager::allocate_stable_id()
 {
@@ -2362,9 +2506,26 @@ std::string MixedFilamentManager::serialize_custom_entries()
            << 'u' << mf.stable_id;
         if (mf.ui_mode >= 0)
             ss << ",cm" << mf.ui_mode;
-        if (mf.gradient_enabled)
-            ss << ",r1/" << float_to_string_decimal_point(mf.gradient_start, 4) << '/'
-               << float_to_string_decimal_point(mf.gradient_end, 4);
+        if (mf.gradient_enabled) {
+            ss << ",r1/" << float_to_string_decimal_point(mf.gradient_start, 4) << '/' << float_to_string_decimal_point(mf.gradient_end, 4);
+            if (!mf.gradient_stop_positions.empty()) {
+                ss << ",p";
+                const auto stops = mixed_gradient_stops(mf, kMaxPhysicalFilaments);
+                for (size_t i = 0; i < stops.size(); ++i) {
+                    if (i)
+                        ss << '/';
+                    ss << stops[i];
+                }
+            }
+        }
+        if (mf.gradient_enabled && !mf.gradient_solid_widths.empty()) {
+            ss << ",v";
+            const auto widths = mixed_gradient_solid_half_widths(mf, kMaxPhysicalFilaments);
+            for (size_t i = 0; i < widths.size(); ++i) {
+                if (i) ss << '/';
+                ss << std::fixed << std::setprecision(4) << 2.f * widths[i];
+            }
+        }
         const std::string normalized_pattern = normalize_manual_pattern(mf.manual_pattern);
         if (!normalized_pattern.empty())
             ss << ',' << normalized_pattern;
@@ -2440,10 +2601,11 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         float gradient_start = 0.8f;
         float gradient_end   = 0.2f;
         int   cm_mode = -1;
+        std::vector<float> gradient_stop_positions, gradient_solid_widths;
         if (!parse_row_definition(row, a, b, stable_id, enabled, custom, origin_auto, mix, pointillism_all_filaments,
                                   gradient_component_ids, gradient_component_weights, manual_pattern, distribution_mode,
-                                  local_z_max_sublayers, component_a_surface_offset, component_b_surface_offset, deleted,
-                                  gradient_enabled, gradient_start, gradient_end, cm_mode)) {
+                                  local_z_max_sublayers, component_a_surface_offset, component_b_surface_offset, deleted, gradient_enabled,
+                                  gradient_start, gradient_end, cm_mode, gradient_stop_positions, gradient_solid_widths)) {
             ++skipped_rows;
             BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries invalid row format: " << row;
             continue;
@@ -2513,6 +2675,8 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
             mf.origin_auto = true;
             mf.gradient_enabled = gradient_enabled;
             mf.gradient_start   = gradient_start;
+            mf.gradient_stop_positions = gradient_stop_positions;
+            mf.gradient_solid_widths = gradient_solid_widths;
             mf.gradient_end     = gradient_end;
             disable_pointillism_mode(mf);
 
@@ -2549,6 +2713,8 @@ void MixedFilamentManager::load_custom_entries(const std::string &serialized, co
         mf.origin_auto = origin_auto;
         mf.gradient_enabled = gradient_enabled;
         mf.gradient_start   = gradient_start;
+        mf.gradient_stop_positions = gradient_stop_positions;
+        mf.gradient_solid_widths = gradient_solid_widths;
         mf.gradient_end     = gradient_end;
         disable_pointillism_mode(mf);
         rebuilt.push_back(std::move(mf));
@@ -2880,15 +3046,35 @@ std::vector<size_t> MixedFilamentManager::mixed_filaments_using_physical(unsigne
 }
 
 // Blend N colours using weighted pairwise FilamentMixer blending.
-std::string MixedFilamentManager::blend_color_multi(
-    const std::vector<std::pair<std::string, int>> &color_percents)
+std::string MixedFilamentManager::blend_color_multi(const std::vector<std::pair<std::string, int>>& color_percents)
+{
+    std::vector<MixedFilamentColorInput> inputs;
+    inputs.reserve(color_percents.size());
+    for (const auto& [hex, percent] : color_percents)
+        inputs.push_back({hex, percent, std::nullopt, std::nullopt});
+    return blend_color_multi(inputs);
+}
+
+std::string MixedFilamentManager::blend_color_multi(const std::vector<MixedFilamentColorInput>& color_percents)
+{
+    return blend_color_multi(color_percents, color_engine());
+}
+
+std::string MixedFilamentManager::blend_color_multi(const std::vector<MixedFilamentColorInput>& color_percents,
+                                                    MixedFilamentColorEngine                    engine)
 {
     if (color_percents.empty())
         return "#000000";
     if (color_percents.size() == 1)
-        return color_percents.front().first;
+        return color_percents.front().color_hex;
 
-    struct WeightedColor {
+    if (engine == MixedFilamentColorEngine::FullSpectrumKSPairResidual) {
+        if (const auto calibrated = full_spectrum_ks_blend_color_multi(full_spectrum_inputs_from_mixed_inputs(color_percents)))
+            return *calibrated;
+    }
+
+    struct WeightedColor
+    {
         RGB color;
         int pct;
     };
@@ -2896,46 +3082,71 @@ std::string MixedFilamentManager::blend_color_multi(
     colors.reserve(color_percents.size());
 
     int total_pct = 0;
-    for (const auto &[hex, pct] : color_percents) {
+    for (const MixedFilamentColorInput& input : color_percents) {
+        const int pct = input.percent;
         if (pct <= 0)
             continue;
-        colors.push_back({parse_hex_color(hex), pct});
+        colors.push_back({parse_hex_color(input.color_hex), pct});
         total_pct += pct;
     }
     if (colors.empty() || total_pct <= 0)
         return "#000000";
 
-    unsigned char r = static_cast<unsigned char>(colors.front().color.r);
-    unsigned char g = static_cast<unsigned char>(colors.front().color.g);
-    unsigned char b = static_cast<unsigned char>(colors.front().color.b);
-    int accumulated_pct = colors.front().pct;
+    unsigned char r               = static_cast<unsigned char>(colors.front().color.r);
+    unsigned char g               = static_cast<unsigned char>(colors.front().color.g);
+    unsigned char b               = static_cast<unsigned char>(colors.front().color.b);
+    int           accumulated_pct = colors.front().pct;
 
     for (size_t i = 1; i < colors.size(); ++i) {
-        const auto &next = colors[i];
-        const int new_total = accumulated_pct + next.pct;
+        const auto& next      = colors[i];
+        const int   new_total = accumulated_pct + next.pct;
         if (new_total <= 0)
             continue;
         const float t = static_cast<float>(next.pct) / static_cast<float>(new_total);
-        filament_mixer_lerp(
-            r, g, b,
-            static_cast<unsigned char>(next.color.r),
-            static_cast<unsigned char>(next.color.g),
-            static_cast<unsigned char>(next.color.b),
-            t, &r, &g, &b);
+        filament_mixer_lerp(r, g, b, static_cast<unsigned char>(next.color.r), static_cast<unsigned char>(next.color.g),
+                            static_cast<unsigned char>(next.color.b), t, &r, &g, &b);
         accumulated_pct = new_total;
     }
 
     return rgb_to_hex({int(r), int(g), int(b)});
 }
 
-std::string MixedFilamentManager::blend_color(const std::string &color_a,
-                                              const std::string &color_b,
-                                              int ratio_a, int ratio_b)
+std::string MixedFilamentManager::blend_color(const std::string& color_a, const std::string& color_b, int ratio_a, int ratio_b)
 {
-    const int safe_a = std::max(0, ratio_a);
-    const int safe_b = std::max(0, ratio_b);
-    const int total  = safe_a + safe_b;
-    const float t    = (total > 0) ? (static_cast<float>(safe_b) / static_cast<float>(total)) : 0.5f;
+    return blend_color(color_a, color_b, ratio_a, ratio_b, std::nullopt, std::nullopt, std::nullopt, std::nullopt);
+}
+
+std::string MixedFilamentManager::blend_color(const std::string&           color_a,
+                                              const std::string&           color_b,
+                                              int                          ratio_a,
+                                              int                          ratio_b,
+                                              const std::optional<double>& td_a_mm,
+                                              const std::optional<double>& td_b_mm)
+{
+    return blend_color(color_a, color_b, ratio_a, ratio_b, td_a_mm, td_b_mm, std::nullopt, std::nullopt);
+}
+
+std::string MixedFilamentManager::blend_color(const std::string&                color_a,
+                                              const std::string&                color_b,
+                                              int                               ratio_a,
+                                              int                               ratio_b,
+                                              const std::optional<double>&      td_a_mm,
+                                              const std::optional<double>&      td_b_mm,
+                                              const std::optional<std::string>& material_id_a,
+                                              const std::optional<std::string>& material_id_b)
+{
+    const std::optional<double> active_td_a = use_td_for_color_prediction() ? td_a_mm : std::nullopt;
+    const std::optional<double> active_td_b = use_td_for_color_prediction() ? td_b_mm : std::nullopt;
+    if (color_engine() == MixedFilamentColorEngine::FullSpectrumKSPairResidual) {
+        if (const auto calibrated = full_spectrum_ks_blend_color_multi(
+                {{color_a, std::max(0, ratio_a), active_td_a, material_id_a}, {color_b, std::max(0, ratio_b), active_td_b, material_id_b}}))
+            return *calibrated;
+    }
+
+    const int   safe_a = std::max(0, ratio_a);
+    const int   safe_b = std::max(0, ratio_b);
+    const int   total  = safe_a + safe_b;
+    const float t      = (total > 0) ? (static_cast<float>(safe_b) / static_cast<float>(total)) : 0.5f;
 
     const RGB rgb_a = parse_hex_color(color_a);
     const RGB rgb_b = parse_hex_color(color_b);
@@ -2943,13 +3154,9 @@ std::string MixedFilamentManager::blend_color(const std::string &color_a,
     unsigned char out_r = static_cast<unsigned char>(rgb_a.r);
     unsigned char out_g = static_cast<unsigned char>(rgb_a.g);
     unsigned char out_b = static_cast<unsigned char>(rgb_a.b);
-    filament_mixer_lerp(static_cast<unsigned char>(rgb_a.r),
-                        static_cast<unsigned char>(rgb_a.g),
-                        static_cast<unsigned char>(rgb_a.b),
-                        static_cast<unsigned char>(rgb_b.r),
-                        static_cast<unsigned char>(rgb_b.g),
-                        static_cast<unsigned char>(rgb_b.b),
-                        t, &out_r, &out_g, &out_b);
+    filament_mixer_lerp(static_cast<unsigned char>(rgb_a.r), static_cast<unsigned char>(rgb_a.g), static_cast<unsigned char>(rgb_a.b),
+                        static_cast<unsigned char>(rgb_b.r), static_cast<unsigned char>(rgb_b.g), static_cast<unsigned char>(rgb_b.b), t,
+                        &out_r, &out_g, &out_b);
 
     return rgb_to_hex({int(out_r), int(out_g), int(out_b)});
 }

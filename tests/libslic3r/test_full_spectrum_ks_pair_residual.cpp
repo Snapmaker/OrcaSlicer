@@ -16,6 +16,25 @@ using Catch::Approx;
 
 namespace {
 
+struct MixedColorSettingsGuard
+{
+    MixedColorSettingsGuard(MixedFilamentColorEngine engine, bool use_td)
+        : previous_engine(MixedFilamentManager::color_engine())
+        , previous_use_td(MixedFilamentManager::use_td_for_color_prediction())
+    {
+        MixedFilamentManager::set_color_engine(engine);
+        MixedFilamentManager::set_use_td_for_color_prediction(use_td);
+    }
+
+    ~MixedColorSettingsGuard()
+    {
+        MixedFilamentManager::set_color_engine(previous_engine);
+        MixedFilamentManager::set_use_td_for_color_prediction(previous_use_td);
+    }
+
+    MixedFilamentColorEngine previous_engine;
+    bool                     previous_use_td;
+};
 
 struct MaterialCase
 {
@@ -261,6 +280,37 @@ TEST_CASE("Native profile TD is neutral for every measured material family", "[M
     }
 }
 
+TEST_CASE("Selected KM/K-S engine applies and globally disables TD correction", "[MixedFilament][Color][FullSpectrumKS][TD]")
+{
+    MixedColorSettingsGuard guard(MixedFilamentColorEngine::FullSpectrumKSPairResidual, true);
+
+    const std::string without_td = MixedFilamentManager::blend_color("#008BB3", "#AD4A76", 50, 50);
+    const std::string native_td  = MixedFilamentManager::blend_color("#008BB3", "#AD4A76", 50, 50, 6.4, 5.0);
+    const std::string changed_td = MixedFilamentManager::blend_color("#008BB3", "#AD4A76", 50, 50, 3.2, 5.0);
+
+    CHECK(native_td == without_td);
+    CHECK(changed_td != without_td);
+
+    MixedFilamentManager::set_use_td_for_color_prediction(false);
+    CHECK(MixedFilamentManager::blend_color("#008BB3", "#AD4A76", 50, 50, 3.2, 5.0) == without_td);
+}
+
+TEST_CASE("Unknown valid colors use spectral estimates and invalid input falls back", "[MixedFilament][Color][FullSpectrumKS]")
+{
+    MixedColorSettingsGuard guard(MixedFilamentColorEngine::FullSpectrumKSPairResidual, true);
+
+    const std::optional<std::string> estimated = full_spectrum_ks_blend_color("#123456", "#FEDCBA", 40, 60);
+    REQUIRE(estimated.has_value());
+    CHECK(is_rgb_hex(*estimated));
+    CHECK(MixedFilamentManager::blend_color("#123456", "#FEDCBA", 40, 60) == *estimated);
+
+    const std::string ks_invalid_fallback = MixedFilamentManager::blend_color("#not-a-color", "#FEDCBA", 40, 60);
+    MixedFilamentManager::set_color_engine(MixedFilamentColorEngine::FilamentMixer);
+    const std::string legacy_invalid_result = MixedFilamentManager::blend_color("#not-a-color", "#FEDCBA", 40, 60);
+    CHECK(ks_invalid_fallback == legacy_invalid_result);
+    CHECK(is_rgb_hex(ks_invalid_fallback));
+}
+
 TEST_CASE("Alternate display colors are not material aliases", "[MixedFilament][Color][FullSpectrumKS][Identity]")
 {
     constexpr std::array<const char *, 8> removed_aliases {{
@@ -379,3 +429,76 @@ TEST_CASE("Full-spectrum colors require exactly hash-prefixed RRGGBB input",
     CHECK_FALSE(full_spectrum_ks_blend_color("#008BB", "#AD4A76", 50, 50).has_value());
 }
 
+TEST_CASE("Mixed color engine names round-trip and preserve legacy aliases", "[MixedFilament][Color][FullSpectrumKS]")
+{
+    MixedColorSettingsGuard guard(MixedFilamentColorEngine::FilamentMixer, true);
+
+    CHECK(MixedFilamentManager::color_engine_from_string("filament_mixer") == MixedFilamentColorEngine::FilamentMixer);
+    CHECK(MixedFilamentManager::color_engine_from_string("unknown") == MixedFilamentColorEngine::FilamentMixer);
+    CHECK(MixedFilamentManager::color_engine_from_string("ks_pair_residual") ==
+          MixedFilamentColorEngine::FullSpectrumKSPairResidual);
+    CHECK(MixedFilamentManager::color_engine_from_string("fullspectrum_ks_pair_residual") ==
+          MixedFilamentColorEngine::FullSpectrumKSPairResidual);
+    CHECK(std::string(MixedFilamentManager::color_engine_to_string(MixedFilamentColorEngine::FilamentMixer)) ==
+          "filament_mixer");
+    CHECK(std::string(MixedFilamentManager::color_engine_to_string(MixedFilamentColorEngine::FullSpectrumKSPairResidual)) ==
+          "ks_pair_residual");
+
+    MixedFilamentManager::set_color_engine(MixedFilamentColorEngine::FullSpectrumKSPairResidual);
+    CHECK(MixedFilamentManager::color_engine() == MixedFilamentColorEngine::FullSpectrumKSPairResidual);
+    MixedFilamentManager::set_color_engine(MixedFilamentColorEngine::FilamentMixer);
+    CHECK(MixedFilamentManager::color_engine() == MixedFilamentColorEngine::FilamentMixer);
+}
+
+TEST_CASE("Display context routes physical TDs into KM/K-S prediction", "[MixedFilament][Color][FullSpectrumKS][TD]")
+{
+    MixedColorSettingsGuard guard(MixedFilamentColorEngine::FullSpectrumKSPairResidual, true);
+
+    MixedFilament row;
+    row.component_a  = 1;
+    row.component_b  = 2;
+    row.mix_b_percent = 50;
+
+    MixedFilamentDisplayContext context;
+    context.num_physical    = 2;
+    context.physical_colors = {"#008BB3", "#AD4A76"};
+    context.nozzle_diameters = {0.4, 0.4};
+    context.physical_tds     = {3.2, 5.0};
+
+    const std::string routed_td = compute_mixed_filament_display_color(row, context);
+    CHECK(routed_td == MixedFilamentManager::blend_color("#008BB3", "#AD4A76", 50, 50, 3.2, 5.0));
+
+    context.physical_tds.clear();
+    const std::string without_td = compute_mixed_filament_display_color(row, context);
+    CHECK(routed_td != without_td);
+
+    context.physical_tds = {3.2, 5.0};
+    MixedFilamentManager::set_use_td_for_color_prediction(false);
+    CHECK(compute_mixed_filament_display_color(row, context) == without_td);
+}
+
+TEST_CASE("Display context routes stable material IDs into KM/K-S prediction",
+          "[MixedFilament][Color][FullSpectrumKS][Identity]")
+{
+    MixedColorSettingsGuard guard(MixedFilamentColorEngine::FullSpectrumKSPairResidual, true);
+
+    MixedFilament row;
+    row.component_a   = 1;
+    row.component_b   = 2;
+    row.mix_b_percent = 50;
+
+    MixedFilamentDisplayContext context;
+    context.num_physical          = 2;
+    context.physical_colors       = {"#FFFFFF", "#AD4A76"};
+    context.nozzle_diameters      = {0.4, 0.4};
+    context.physical_tds          = {6.1, 5.0};
+    context.physical_material_ids = {WHITE_MATERIAL_ID, MAGENTA_MATERIAL_ID};
+
+    const std::string identified = compute_mixed_filament_display_color(row, context);
+    CHECK(identified == "#BD648D");
+
+    context.physical_material_ids.clear();
+    const std::string inferred = compute_mixed_filament_display_color(row, context);
+    CHECK(inferred == "#C0638E");
+    CHECK(inferred != identified);
+}

@@ -292,6 +292,7 @@ set(lisbslic3r_sources
     MinAreaBoundingBox.hpp
     MinimumSpanningTree.cpp
     MinimumSpanningTree.hpp
+    MixedFilamentGradient.cpp
     MixedFilament.cpp
     FullSpectrumKSPairResidual.cpp
     FullSpectrumICCPolynomialEstimator.cpp

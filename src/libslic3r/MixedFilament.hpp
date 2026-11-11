@@ -7,12 +7,23 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 
 namespace Slic3r {
 
 class PrintObject;
+
+enum class MixedFilamentColorEngine : uint8_t { FilamentMixer = 0, FullSpectrumKSPairResidual = 1 };
+
+struct MixedFilamentColorInput
+{
+    std::string                color_hex;
+    int                        percent = 0;
+    std::optional<double>      td_mm;
+    std::optional<std::string> material_id;
+};
 
 std::vector<int> fill_continuous_layer_range(const std::vector<int> &sorted_layers);
 
@@ -79,6 +90,11 @@ struct MixedFilament
     bool  gradient_enabled = false;
     float gradient_start = k_default_gradient_dominant;
     float gradient_end   = k_default_gradient_minority;
+    // Alternating color stops and transition midpoints, normalized to [0, 1].
+    std::vector<float> gradient_stop_positions;
+    // Full solid-color widths, aligned with the ordered gradient colors.
+    // Empty means inherit the legacy process value; endpoints have zero width.
+    std::vector<float> gradient_solid_widths;
 
     // Additional XY surface offsets, in mm, applied when this mixed row
     // resolves to component A or B for an entire layer. Positive values
@@ -110,42 +126,41 @@ struct MixedFilament
     {
         constexpr float k_surface_offset_epsilon = 1e-6f;
         constexpr float k_gradient_epsilon       = 1e-4f;
-        return component_a == rhs.component_a &&
-               component_b == rhs.component_b &&
-               stable_id   == rhs.stable_id   &&
-               ratio_a     == rhs.ratio_a     &&
-               ratio_b     == rhs.ratio_b     &&
-               mix_b_percent == rhs.mix_b_percent &&
-               manual_pattern == rhs.manual_pattern &&
-               gradient_component_ids == rhs.gradient_component_ids &&
-               gradient_component_weights == rhs.gradient_component_weights &&
-               pointillism_all_filaments == rhs.pointillism_all_filaments &&
-               distribution_mode == rhs.distribution_mode &&
-               local_z_max_sublayers == rhs.local_z_max_sublayers &&
-               gradient_enabled == rhs.gradient_enabled &&
+        return component_a == rhs.component_a && component_b == rhs.component_b && stable_id == rhs.stable_id &&
+               gradient_stop_positions == rhs.gradient_stop_positions && gradient_solid_widths == rhs.gradient_solid_widths && ratio_a == rhs.ratio_a && ratio_b == rhs.ratio_b &&
+               mix_b_percent == rhs.mix_b_percent && manual_pattern == rhs.manual_pattern &&
+               gradient_component_ids == rhs.gradient_component_ids && gradient_component_weights == rhs.gradient_component_weights &&
+               pointillism_all_filaments == rhs.pointillism_all_filaments && distribution_mode == rhs.distribution_mode &&
+               local_z_max_sublayers == rhs.local_z_max_sublayers && gradient_enabled == rhs.gradient_enabled &&
                std::abs(gradient_start - rhs.gradient_start) <= k_gradient_epsilon &&
-               std::abs(gradient_end   - rhs.gradient_end)   <= k_gradient_epsilon &&
+               std::abs(gradient_end - rhs.gradient_end) <= k_gradient_epsilon &&
                std::abs(component_a_surface_offset - rhs.component_a_surface_offset) <= k_surface_offset_epsilon &&
                std::abs(component_b_surface_offset - rhs.component_b_surface_offset) <= k_surface_offset_epsilon &&
-               enabled      == rhs.enabled &&
-               deleted      == rhs.deleted &&
-               custom       == rhs.custom &&
-               origin_auto  == rhs.origin_auto &&
-               ui_mode      == rhs.ui_mode;
+               enabled == rhs.enabled && deleted == rhs.deleted && custom == rhs.custom && origin_auto == rhs.origin_auto &&
+               ui_mode == rhs.ui_mode;
     }
     bool operator!=(const MixedFilament &rhs) const { return !(*this == rhs); }
 };
 
+std::pair<double, double> mixed_filament_local_z_pair_heights(double height, double minimum, int mix_b_percent);
+bool                      mixed_filament_definition_uses_local_z(const MixedFilament& definition, bool global_local_z_enabled);
+bool                      mixed_filament_local_z_uses_full_domain(bool global_full_domain_enabled, bool mixed_filament_assigned_to_region);
+bool mixed_filament_local_z_painted_override_uses_planner(bool painted_state_is_mixed, bool painted_mixed_row_uses_local_z);
+bool mixed_filament_local_z_should_subdivide_layer(size_t layer_id, bool whole_object_mode, bool preserve_first_layer);
+
 struct MixedFilamentPreviewSettings
 {
     double nominal_layer_height { 0.2 };
-    double mixed_lower_bound { 0.04 };
-    double mixed_upper_bound { 0.16 };
-    double preferred_a_height { 0.0 };
-    double preferred_b_height { 0.0 };
-    bool   local_z_mode { false };
-    bool   local_z_direct_multicolor { true };
-    size_t wall_loops { 1 };
+    double mixed_lower_bound{0.06};
+    double mixed_upper_bound{0.16};
+    double preferred_a_height{0.0};
+    double preferred_b_height{0.0};
+    bool   local_z_mode{false};
+    bool   local_z_direct_multicolor{true};
+    size_t wall_loops{1};
+    bool   local_z_independent_layer_height{true};
+    double gradient_cycle_height{0.20};
+    double gradient_middle_window{0.03};
 };
 
 struct MixedFilamentDisplayContext
@@ -155,6 +170,10 @@ struct MixedFilamentDisplayContext
     std::vector<double>          nozzle_diameters;
     MixedFilamentPreviewSettings preview_settings;
     bool                         component_bias_enabled { false };
+    std::vector<double>                     physical_tds;
+    std::vector<std::string>                physical_material_ids;
+    std::optional<MixedFilamentColorEngine> color_engine;
+    std::vector<std::vector<bool>>          compatible_filaments;
 };
 
 int mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament               &mf,
@@ -167,6 +186,20 @@ std::pair<int, int> mixed_filament_apparent_pair_percentages(const MixedFilament
                                                              const std::vector<double>          &nozzle_diameters,
                                                              bool                                bias_mode_enabled);
 std::string compute_mixed_filament_display_color(const MixedFilament &entry, const MixedFilamentDisplayContext &context);
+struct MixedGradientSample
+{
+    unsigned int component_a{0};
+    unsigned int component_b{0};
+    int          mix_b_percent{0};
+};
+std::vector<unsigned int> mixed_gradient_components(const MixedFilament& entry, size_t num_physical);
+std::vector<float>        mixed_gradient_stops(const MixedFilament& entry, size_t num_physical);
+std::vector<float> mixed_gradient_solid_half_widths(const MixedFilament& entry, size_t num_physical, double fallback = 0.03);
+MixedGradientSample       sample_mixed_gradient(const MixedFilament& entry, size_t num_physical, double progress, double middle_window);
+std::string               blend_mixed_components(const std::vector<unsigned int>&   ids,
+                                                 const std::vector<int>&            weights,
+                                                 const MixedFilamentDisplayContext& context);
+std::string mixed_gradient_display_color(const MixedFilament& entry, const MixedFilamentDisplayContext& context, double progress);
 
 // ---------------------------------------------------------------------------
 // MixedFilamentManager
@@ -204,6 +237,12 @@ public:
 
     static void set_auto_generate_enabled(bool enabled);
     static bool auto_generate_enabled();
+    static void                     set_color_engine(MixedFilamentColorEngine engine);
+    static MixedFilamentColorEngine color_engine();
+    static MixedFilamentColorEngine color_engine_from_string(const std::string& value);
+    static const char*              color_engine_to_string(MixedFilamentColorEngine engine);
+    static void                     set_use_td_for_color_prediction(bool enabled);
+    static bool                     use_td_for_color_prediction();
 
     // ---- Auto-generation ------------------------------------------------
 
@@ -357,6 +396,8 @@ public:
     // color_percents: vector of (hex_color, percent) where percents sum to 100.
     static std::string blend_color_multi(
         const std::vector<std::pair<std::string, int>> &color_percents);
+    static std::string blend_color_multi(const std::vector<MixedFilamentColorInput>& color_percents);
+    static std::string blend_color_multi(const std::vector<MixedFilamentColorInput>& inputs, MixedFilamentColorEngine engine);
 
     const MixedFilament *mixed_filament_from_id(unsigned int filament_id, size_t num_physical) const;
 
@@ -369,6 +410,20 @@ public:
     static std::string blend_color(const std::string &color_a,
                                    const std::string &color_b,
                                    int ratio_a, int ratio_b);
+    static std::string             blend_color(const std::string&           color_a,
+                                               const std::string&           color_b,
+                                               int                          ratio_a,
+                                               int                          ratio_b,
+                                               const std::optional<double>& td_a_mm,
+                                               const std::optional<double>& td_b_mm);
+    static std::string             blend_color(const std::string&                color_a,
+                                               const std::string&                color_b,
+                                               int                               ratio_a,
+                                               int                               ratio_b,
+                                               const std::optional<double>&      td_a_mm,
+                                               const std::optional<double>&      td_b_mm,
+                                               const std::optional<std::string>& material_id_a,
+                                               const std::optional<std::string>& material_id_b);
     static float max_component_surface_offset_mm(float reference_width_mm = 0.4f);
     static float max_pair_bias_mm(float reference_width_mm = 0.4f);
     static std::pair<float, float> surface_offset_pair_from_signed_bias(float bias_mm,
@@ -495,8 +550,7 @@ RedundantFilamentSet compute_redundant_filaments(
     const std::vector<unsigned int>  &kept_mixed_ids,
     const std::vector<MixedFilament> &mixed_filaments);
 
-// Returns true when the mixed filament represents a simple two-color gradient
-// that can be rendered as a vertical color ramp (no manual pattern, exactly 2 components).
+// A vertical gradient can contain two to four ordered materials.
 inline bool is_simple_gradient(const MixedFilament& mf)
 {
     // Lightweight ID count without heap allocation.
@@ -523,6 +577,11 @@ inline bool is_simple_gradient(const MixedFilament& mf)
         && mf.component_a != mf.component_b
         && MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern).empty()
         && count_ids(mf.gradient_component_ids) < 3;
+}
+
+inline bool is_layer_gradient(const MixedFilament& mf)
+{
+    return mf.gradient_enabled && mf.manual_pattern.empty() && !mf.deleted && mf.component_a != mf.component_b;
 }
 
 } // namespace Slic3r

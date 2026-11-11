@@ -979,9 +979,14 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     // A phony move to the end position at the wipe tower.
     gcodegen.writer().travel_to_xy((end_pos + plate_origin_2d).cast<double>());
     gcodegen.set_last_pos(wipe_tower_point_to_object_point(gcodegen, end_pos + plate_origin_2d));
-    if (!is_approx(z, current_z)) {
+    // Return to the logical layer the model printing resumes at. current_z is only
+    // the writer's physical Z on entry, which may still be the previous layer while
+    // the layer change is deferred - returning there would dip below the new layer
+    // and cross back over the model.
+    const double return_z = gcodegen.nominal_z() > 0. ? gcodegen.nominal_z() : current_z;
+    if (!is_approx(z, return_z)) {
         gcode += gcodegen.writer().retract();
-        gcode += gcodegen.writer().travel_to_z(current_z, "Travel back up to the topmost object layer.");
+        gcode += gcodegen.writer().travel_to_z(return_z, "Travel back up to the current object layer.");
         gcode += gcodegen.writer().unretract();
     }
     else {

@@ -38,3 +38,23 @@ TEST_CASE("Read-only extrusion flattening borrows leaves without changing order"
     REQUIRE(ExtrusionEntityCollection{}.flatten_refs().empty());
 }
 
+TEST_CASE("Borrowed streaming buffers preserve commands and modal coordinates", "[CPUSlicing][GCode]")
+{
+    const std::vector<std::string> buffers{"G90\nG1 X10 Y5 Z0.2 E1\n", "G91\r\nG1 X2 Y-1\r\n", "G1 X1", ""};
+    GCodeReader                    owned, borrowed;
+    std::vector<std::string>       expected, actual;
+    for (const auto& buffer : buffers) {
+        owned.parse_buffer(buffer, [&](GCodeReader&, const GCodeReader::GCodeLine& line) { expected.push_back(line.raw()); });
+        borrowed.parse_buffer(buffer.c_str(), buffer.size(),
+                              [&](GCodeReader&, const GCodeReader::GCodeLine& line) { actual.push_back(line.raw()); });
+    }
+    CHECK(actual == expected);
+    REQUIRE(actual.size() == 5);
+    CHECK(actual.back() == "G1 X1");
+    CHECK(borrowed.x() == 13.f);
+    CHECK(borrowed.y() == 4.f);
+    CHECK(borrowed.x() == owned.x());
+    CHECK(borrowed.z() == owned.z());
+    CHECK(borrowed.e() == owned.e());
+    CHECK(borrowed.relative_xyz());
+}

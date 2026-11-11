@@ -52,6 +52,22 @@ struct LocalZInterval
     }
 };
 
+// Own the interval index and its pass storage together. Publication validates
+// lookup ordering and references once, before any consumer can borrow a plan.
+class LocalZPlan
+{
+public:
+    LocalZPlan() = default;
+    LocalZPlan(std::vector<LocalZInterval> intervals, std::vector<SubLayerPlan> passes);
+    const std::vector<LocalZInterval>& intervals() const { return m_intervals; }
+    const std::vector<SubLayerPlan>&   passes() const { return m_passes; }
+    const LocalZInterval*              interval_for_layer(size_t layer_id) const;
+
+private:
+    std::vector<LocalZInterval> m_intervals;
+    std::vector<SubLayerPlan>   m_passes;
+};
+
 } // namespace Slic3r
 
 #endif

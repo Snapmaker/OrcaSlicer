@@ -85,6 +85,25 @@ struct ExportFile
 
 } // namespace
 
+TEST_CASE("Local-Z publication rejects invalid interval references", "[LocalZ][LocalZPlan]")
+{
+    LocalZInterval interval;
+    interval.layer_id       = 4;
+    interval.sublayer_count = 1;
+    SubLayerPlan pass;
+    pass.layer_id = 4;
+    LocalZPlan valid({interval}, {pass});
+    REQUIRE(valid.interval_for_layer(4) != nullptr);
+    CHECK(valid.interval_for_layer(0) == nullptr);
+    CHECK_THROWS_AS(LocalZPlan({interval}, {}), std::invalid_argument);
+    CHECK_THROWS_AS(LocalZPlan({interval, interval}, {pass}), std::invalid_argument);
+    pass.layer_id = 0;
+    CHECK_THROWS_AS(LocalZPlan({interval}, {pass}), std::invalid_argument);
+    interval.independent_layer_height = true;
+    interval.sublayer_count           = 0;
+    CHECK_NOTHROW(LocalZPlan({interval}, {}));
+}
+
 TEST_CASE("Local-Z raft plans use actual layer IDs and preserve object Z", "[LocalZ][LocalZPlan]")
 {
     LocalZTestSettings settings;

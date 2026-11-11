@@ -1211,7 +1211,7 @@ TEST_CASE("Local-Z layers preserve mixed infill when purge overrides are enabled
             plan.split_interval = false;
         expect_subdivision = false;
     }
-    SECTION("Missing plans keep ordinary flushing")
+    SECTION("Missing plans are rejected before publication")
     {
         plans.clear();
         expect_subdivision = false;
@@ -1219,6 +1219,10 @@ TEST_CASE("Local-Z layers preserve mixed infill when purge overrides are enabled
 
     // The second object must protect the whole shared layer, even the first object's support and infill.
     PrintObject *mixed_object = *(print.objects().end() - 1);
+    if (plans.empty()) {
+        CHECK_THROWS_AS(mixed_object->set_local_z_plan({interval}, std::move(plans)), std::invalid_argument);
+        return;
+    }
     mixed_object->set_local_z_plan({interval}, std::move(plans));
     ToolOrdering ordering(print, 0);
     LayerTools&  mixed_layer = ordering.tools_for_layer(0.4);

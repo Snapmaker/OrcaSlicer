@@ -40,6 +40,8 @@ Local-Z captures painted material channels during segmentation, then builds its 
 
 Independent cadence tracks the end of each contiguous eligible mixed domain. Before emitting a pass, terminal height fitting reserves a minimum-height final pass where possible or absorbs a shorter remainder into the current component without exceeding its printer limit. This may approximate the terminal color ratio by up to one minimum-height pass. An infeasible minimum/maximum height combination is reported as a slicing error instead of emitting an undersized pass. Regression coverage is in `tests/libslic3r/test_local_z_plan.cpp`.
 
+`LocalZPlan` owns the interval index and pass storage together and validates layer ordering, pass ranges, and layer references before publication.
+
 ## Product behavior retained
 
 This port retains Snorca's multi-digit filament and manual-pattern encoding, filament-count limits, deletion remapping, and the product's calibrated color selection. Gradient previews retain the FilamentMixer endpoint correction and 3% default solid-color width. Direct multicolor, independent Local-Z heights, first-layer protection, painting controls, and the prime-tower return-to-object-filament fix remain part of the product baseline.

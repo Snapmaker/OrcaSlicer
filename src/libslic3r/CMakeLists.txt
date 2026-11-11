@@ -283,6 +283,7 @@ set(lisbslic3r_sources
     LocalZ/LocalZClipper.hpp
     LocalZ/LocalZHeight.hpp
     LocalZ/LocalZPlan.hpp
+    LocalZ/LocalZPlan.cpp
     libslic3r.cpp
     libslic3r.h
     Line.cpp

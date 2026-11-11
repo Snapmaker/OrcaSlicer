@@ -429,24 +429,15 @@ public:
     SupportLayer* add_tree_support_layer(int id, coordf_t height, coordf_t print_z, coordf_t slice_z);
     std::shared_ptr<TreeSupportData> alloc_tree_support_preview_cache();
     void clear_tree_support_preview_cache() { m_tree_support_preview_cache.reset(); }
-    const std::vector<LocalZInterval>& local_z_intervals() const { return m_local_z_intervals; }
-    const std::vector<SubLayerPlan>&   local_z_sublayer_plan() const { return m_local_z_sublayer_plan; }
-    const LocalZInterval*              local_z_interval_for_layer(size_t layer_id) const
+    const std::vector<LocalZInterval>& local_z_intervals() const { return m_local_z_plan.intervals(); }
+    const std::vector<SubLayerPlan>&   local_z_sublayer_plan() const { return m_local_z_plan.passes(); }
+    const LocalZInterval* local_z_interval_for_layer(size_t layer_id) const { return m_local_z_plan.interval_for_layer(layer_id); }
+    void                  set_local_z_plan(LocalZPlan plan) { m_local_z_plan = std::move(plan); }
+    void                  set_local_z_plan(std::vector<LocalZInterval> intervals, std::vector<SubLayerPlan> passes)
     {
-        const auto it = std::lower_bound(m_local_z_intervals.begin(), m_local_z_intervals.end(), layer_id,
-                                         [](const LocalZInterval& interval, size_t id) { return interval.layer_id < id; });
-        return it != m_local_z_intervals.end() && it->layer_id == layer_id ? &*it : nullptr;
+        set_local_z_plan(LocalZPlan(std::move(intervals), std::move(passes)));
     }
-    void                                set_local_z_plan(std::vector<LocalZInterval> intervals, std::vector<SubLayerPlan> sublayers)
-    {
-        m_local_z_intervals = std::move(intervals);
-        m_local_z_sublayer_plan = std::move(sublayers);
-    }
-    void                                clear_local_z_plan()
-    {
-        m_local_z_intervals.clear();
-        m_local_z_sublayer_plan.clear();
-    }
+    void clear_local_z_plan() { m_local_z_plan = LocalZPlan{}; }
 
     size_t          support_layer_count() const { return m_support_layers.size(); }
     void            clear_support_layers();
@@ -600,8 +591,7 @@ private:
     SlicingParameters                       m_slicing_params;
     LayerPtrs                               m_layers;
     SupportLayerPtrs                        m_support_layers;
-    std::vector<LocalZInterval>             m_local_z_intervals;
-    std::vector<SubLayerPlan>               m_local_z_sublayer_plan;
+    LocalZPlan                              m_local_z_plan;
     // BBS
     std::shared_ptr<TreeSupportData>        m_tree_support_preview_cache;
 

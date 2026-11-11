@@ -1094,7 +1094,7 @@ bool PrintObject::invalidate_state_by_config_options(
     if (opt_keys.empty())
         return false;
 
-    const bool had_local_z_plan = !m_local_z_intervals.empty();
+    const bool had_local_z_plan = !local_z_intervals().empty();
     const auto uses_local_z     = [&](const ConfigOptionResolver& config) {
         const auto* filament = config.option<ConfigOptionInt>("wall_filament");
         if (filament == nullptr || filament->value <= 0)

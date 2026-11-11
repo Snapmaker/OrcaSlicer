@@ -4838,7 +4838,7 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBool(true));
 
     def           = this->add("dithering_local_z_gradient_layer_height", coFloat);
-    def->label    = L("Gradient Local-Z layer height");
+    def->label    = L("Gradient mix subdivision layer height");
     def->category = L("Others");
     def->tooltip  = L("Independent nominal height used to build gradient Local-Z A/B cycles. "
                        "This does not change the object's normal slicing layer height. Gradient passes may span multiple normal layers, "

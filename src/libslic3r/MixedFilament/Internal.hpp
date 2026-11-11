@@ -48,14 +48,6 @@ std::string blend_display_color_from_sequence(const std::vector<std::string>&   
                                               const std::string&                 fallback,
                                               const MixedFilamentDisplayContext& context);
 
-std::vector<double> build_local_z_preview_pass_heights(double nominal_layer_height,
-                                                       double lower_bound,
-                                                       double upper_bound,
-                                                       double preferred_a_height,
-                                                       double preferred_b_height,
-                                                       int    mix_b_percent,
-                                                       int    max_sublayers_limit);
-
 std::vector<std::string> tokenize_pattern_group(const std::string& group);
 
 bool mixed_filament_references_exceed_physical(const std::string& gradient_component_ids, const std::string& manual_pattern, size_t n);

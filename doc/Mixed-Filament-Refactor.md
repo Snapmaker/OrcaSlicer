@@ -48,6 +48,8 @@ The planner now lives in `LocalZ/LocalZPlanner.cpp`. Effective settings, row rec
 
 Production callers read `mixed_filament_legacy_rows()` and publish edits through explicit setters. ID lookup returns a const row. Mutable `mixed_filaments()` borrowing remains only as a compatibility interface, covered by compatibility tests; production code no longer activates that synchronization path. The disabled old sidebar editor has been removed.
 
+Preview settings and the recipe-height calculator live in the core; the calculator preserves the formerly active GUI formula. Recipe preview is distinct from the independent deposition schedule, which may cross nominal layer boundaries.
+
 ## Product behavior retained
 
 This port retains Snorca's multi-digit filament and manual-pattern encoding, filament-count limits, deletion remapping, and the product's calibrated color selection. Gradient previews retain the FilamentMixer endpoint correction and 3% default solid-color width. Direct multicolor, independent Local-Z heights, first-layer protection, painting controls, and the prime-tower return-to-object-filament fix remain part of the product baseline.
@@ -74,3 +76,5 @@ A separate production-loader check opened the existing `CubeTest123.3mf`, saved 
 This verifies that the reported yellow-band fix and Local-Z planning survive the refactor. It is a software regression check, not a new physical print validation.
 
 The final Release builds of the core, tests, GUI library, DLL, and launcher passed. The rebuilt executable started with `--help` and exited with code 0. No manual GUI walkthrough or new physical print validation was performed for this refactor.
+
+The subsequent Local-Z maintainability pass was validated against commit `e55d359a24`. The mixed-filament, product-port, Local-Z, and CPU-slicing suite completed with 284 passed cases, one existing environment-dependent G-code export skip, and the same two expected failures. Six before/after traces (baseline, XY compensation, wipe-tower export, preferred heights, direct multicolor, and gradient export) were byte-identical, including planned passes, mask vertices, and processed G-code movements. Release core, GUI, DLL, and launcher builds passed, and the separate `build-dev-release/maintenance-validation/snapmaker-orca.exe` passed its `--help` smoke check. The already-running slicer was preserved; this pass has not received a manual GUI walkthrough or physical print validation.

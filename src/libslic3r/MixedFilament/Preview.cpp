@@ -1,4 +1,5 @@
 #include "../MixedFilament.hpp"
+#include "../PrintConfig.hpp"
 #include "../FullSpectrumKSPairResidual.hpp"
 #include "../filament_mixer.h"
 #include "../libslic3r.h"
@@ -189,14 +190,19 @@ std::string blend_display_color_from_sequence(const std::vector<std::string>&   
     return MixedFilamentManager::blend_color_multi(color_percents, context.color_engine.value_or(MixedFilamentManager::color_engine()));
 }
 
-std::vector<double> build_local_z_preview_pass_heights(double nominal_layer_height,
-                                                       double lower_bound,
-                                                       double upper_bound,
-                                                       double preferred_a_height,
-                                                       double preferred_b_height,
-                                                       int    mix_b_percent,
-                                                       int    max_sublayers_limit)
+}} // namespace Slic3r::MixedFilamentInternal
+
+namespace Slic3r {
+std::vector<double> mixed_filament_preview_pass_heights(const MixedFilamentPreviewSettings& settings,
+                                                        int                                 mix_b_percent,
+                                                        int                                 max_sublayers_limit)
 {
+    const double nominal_layer_height = settings.nominal_layer_height;
+    const double lower_bound          = settings.mixed_lower_bound;
+    const double upper_bound          = settings.mixed_upper_bound;
+    const double preferred_a_height   = settings.preferred_a_height;
+    const double preferred_b_height   = settings.preferred_b_height;
+
     if (nominal_layer_height <= EPSILON)
         return {};
 
@@ -422,8 +428,57 @@ std::vector<double> build_local_z_preview_pass_heights(double nominal_layer_heig
     const int    mix_b        = std::clamp(mix_b_percent, 0, 100);
     const double pct_b        = double(mix_b) / 100.0;
     const double pct_a        = 1.0 - pct_b;
-    const double gradient_h_a = pct_a * (lo + hi);
-    const double gradient_h_b = pct_b * (lo + hi);
+    const double gradient_h_a = lo + pct_a * (hi - lo);
+    const double gradient_h_b = lo + pct_b * (hi - lo);
     return build_alternating(gradient_h_a, gradient_h_b);
 }
-}} // namespace Slic3r::MixedFilamentInternal
+} // namespace Slic3r
+
+namespace Slic3r {
+MixedFilamentPreviewSettings mixed_filament_preview_settings(const DynamicPrintConfig& project_config, const DynamicPrintConfig* print_cfg)
+{
+    MixedFilamentPreviewSettings settings;
+    auto                         get_mixed_bool = [&project_config, print_cfg](const std::string& key, bool fallback) {
+        if (const ConfigOptionBool* opt = project_config.option<ConfigOptionBool>(key))
+            return opt->value;
+        if (const ConfigOptionInt* opt = project_config.option<ConfigOptionInt>(key))
+            return opt->value != 0;
+        if (print_cfg != nullptr) {
+            if (const ConfigOptionBool* opt = print_cfg->option<ConfigOptionBool>(key))
+                return opt->value;
+            if (const ConfigOptionInt* opt = print_cfg->option<ConfigOptionInt>(key))
+                return opt->value != 0;
+        }
+        return fallback;
+    };
+    auto get_mixed_float = [&project_config, print_cfg](const std::string& key, float fallback) {
+        if (const auto* opt = project_config.option<ConfigOptionPercent>(key))
+            return float(opt->value);
+        if (project_config.has(key))
+            return float(project_config.opt_float(key));
+        if (print_cfg != nullptr)
+            if (const auto* opt = print_cfg->option<ConfigOptionPercent>(key))
+                return float(opt->value);
+        if (print_cfg != nullptr && print_cfg->has(key))
+            return float(print_cfg->opt_float(key));
+        return fallback;
+    };
+
+    settings.mixed_lower_bound  = std::max(0.01, double(get_mixed_float("mixed_filament_height_lower_bound", 0.06f)));
+    settings.mixed_upper_bound  = std::max(settings.mixed_lower_bound, double(get_mixed_float("mixed_filament_height_upper_bound", 0.16f)));
+    settings.preferred_a_height = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_a", 0.f)));
+    settings.preferred_b_height = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_b", 0.f)));
+    settings.nominal_layer_height = 0.2;
+    if (print_cfg != nullptr && print_cfg->has("layer_height"))
+        settings.nominal_layer_height = std::max(0.01, print_cfg->opt_float("layer_height"));
+    if (print_cfg != nullptr && print_cfg->has("wall_loops"))
+        settings.wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
+    settings.local_z_mode              = get_mixed_bool("dithering_local_z_mode", false);
+    settings.local_z_direct_multicolor = (settings.local_z_mode || get_mixed_bool("dithering_local_z_direct_multicolor", true)) &&
+                                         settings.preferred_a_height <= EPSILON && settings.preferred_b_height <= EPSILON;
+    settings.local_z_independent_layer_height = settings.local_z_mode || get_mixed_bool("dithering_local_z_independent_layer_height", true);
+    settings.gradient_cycle_height            = get_mixed_float("dithering_local_z_gradient_layer_height", 0.20f);
+    settings.gradient_middle_window           = get_mixed_float("dithering_local_z_gradient_middle_filament_window", 3.f) / 100.0;
+    return settings;
+}
+} // namespace Slic3r

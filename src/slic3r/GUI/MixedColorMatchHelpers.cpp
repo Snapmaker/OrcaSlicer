@@ -991,34 +991,7 @@ MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vect
         }
         return fallback;
     };
-    auto get_mixed_float = [preset_bundle, print_cfg](const std::string& key, float fallback) {
-        if (const auto *opt = preset_bundle->project_config.option<ConfigOptionPercent>(key))
-            return float(opt->value);
-        if (preset_bundle->project_config.has(key))
-            return float(preset_bundle->project_config.opt_float(key));
-        if (print_cfg != nullptr)
-            if (const auto *opt = print_cfg->option<ConfigOptionPercent>(key))
-                return float(opt->value);
-        if (print_cfg != nullptr && print_cfg->has(key))
-            return float(print_cfg->opt_float(key));
-        return fallback;
-    };
-
-    context.preview_settings.mixed_lower_bound    = std::max(0.01, double(get_mixed_float("mixed_filament_height_lower_bound", 0.06f)));
-    context.preview_settings.mixed_upper_bound    = std::max(context.preview_settings.mixed_lower_bound,
-                                                             double(get_mixed_float("mixed_filament_height_upper_bound", 0.16f)));
-    context.preview_settings.preferred_a_height   = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_a", 0.f)));
-    context.preview_settings.preferred_b_height   = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_b", 0.f)));
-    context.preview_settings.nominal_layer_height = 0.2;
-    if (print_cfg != nullptr && print_cfg->has("layer_height"))
-        context.preview_settings.nominal_layer_height = std::max(0.01, print_cfg->opt_float("layer_height"));
-    if (print_cfg != nullptr && print_cfg->has("wall_loops"))
-        context.preview_settings.wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
-    context.preview_settings.local_z_mode              = get_mixed_bool("dithering_local_z_mode", false);
-    context.preview_settings.local_z_direct_multicolor = (context.preview_settings.local_z_mode ||
-                                                         get_mixed_bool("dithering_local_z_direct_multicolor", true)) &&
-                                                         context.preview_settings.preferred_a_height <= EPSILON &&
-                                                         context.preview_settings.preferred_b_height <= EPSILON;
+    context.preview_settings       = mixed_filament_preview_settings(preset_bundle->project_config, print_cfg);
     context.component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
     if (const auto* opt = preset_bundle->project_config.option<ConfigOptionFloats>("filament_transmission_distance"))
         context.physical_tds = opt->values;
@@ -1055,9 +1028,6 @@ MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vect
     }
     context.compatible_filaments                              = build_compatibility_matrix(context.num_physical);
     context.color_engine                                      = MixedFilamentManager::color_engine();
-    context.preview_settings.local_z_independent_layer_height = context.preview_settings.local_z_mode || get_mixed_bool("dithering_local_z_independent_layer_height", true);
-    context.preview_settings.gradient_cycle_height            = get_mixed_float("dithering_local_z_gradient_layer_height", 0.20f);
-    context.preview_settings.gradient_middle_window = get_mixed_float("dithering_local_z_gradient_middle_filament_window", 3.f) / 100.0;
     std::atomic_store(&preview_color_context, std::make_shared<const MixedFilamentDisplayContext>(context));
     return context;
 }

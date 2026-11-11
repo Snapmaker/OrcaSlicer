@@ -104,6 +104,43 @@ TEST_CASE("Local-Z publication rejects invalid interval references", "[LocalZ][L
     CHECK_NOTHROW(LocalZPlan({interval}, {}));
 }
 
+TEST_CASE("Mixed preview retains the GUI recipe calculation", "[MixedFilament][Preview]")
+{
+    MixedFilamentPreviewSettings settings;
+    settings.mixed_lower_bound    = 0.04;
+    settings.mixed_upper_bound    = 0.16;
+    settings.nominal_layer_height = 0.2;
+    const auto passes             = mixed_filament_preview_pass_heights(settings, 25);
+    REQUIRE(passes.size() == 2);
+    CHECK(passes[0] == Approx(0.13));
+    CHECK(passes[1] == Approx(0.07));
+    settings.preferred_a_height = 0.15;
+    settings.preferred_b_height = 0.05;
+    const auto preferred        = mixed_filament_preview_pass_heights(settings, 25);
+    REQUIRE(preferred.size() == 2);
+    CHECK(preferred[0] == Approx(0.15));
+    CHECK(preferred[1] == Approx(0.05));
+    settings.nominal_layer_height = 0;
+    CHECK(mixed_filament_preview_pass_heights(settings, 25).empty());
+}
+
+TEST_CASE("Mixed preview settings preserve override precedence", "[MixedFilament][Preview]")
+{
+    DynamicPrintConfig project, print;
+    print.set_key_value("mixed_filament_height_lower_bound", new ConfigOptionFloat(0.04));
+    print.set_key_value("layer_height", new ConfigOptionFloat(0.12));
+    project.set_key_value("mixed_filament_height_lower_bound", new ConfigOptionFloat(0.07));
+    project.set_key_value("dithering_local_z_mode", new ConfigOptionBool(true));
+    auto settings = mixed_filament_preview_settings(project, &print);
+    CHECK(settings.mixed_lower_bound == Approx(0.07));
+    CHECK(settings.nominal_layer_height == Approx(0.12));
+    CHECK(settings.local_z_independent_layer_height);
+    project.set_key_value("mixed_color_layer_height_a", new ConfigOptionFloat(0.08));
+    settings = mixed_filament_preview_settings(project, &print);
+    CHECK_FALSE(settings.local_z_direct_multicolor);
+    CHECK(mixed_filament_preview_settings(DynamicPrintConfig{}, nullptr).mixed_upper_bound == Approx(0.16));
+}
+
 TEST_CASE("Local-Z raft plans use actual layer IDs and preserve object Z", "[LocalZ][LocalZPlan]")
 {
     LocalZTestSettings settings;

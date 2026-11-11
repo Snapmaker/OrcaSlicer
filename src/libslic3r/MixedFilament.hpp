@@ -14,6 +14,7 @@
 namespace Slic3r {
 
 class PrintObject;
+class DynamicPrintConfig;
 
 enum class MixedFilamentColorEngine : uint8_t { FilamentMixer = 0, FullSpectrumKSPairResidual = 1 };
 
@@ -317,6 +318,15 @@ struct MixedFilamentPreviewSettings
     double gradient_cycle_height{0.20};
     double gradient_middle_window{0.03};
 };
+
+// Preview config precedence: project overrides, then print settings, then defaults.
+MixedFilamentPreviewSettings mixed_filament_preview_settings(const DynamicPrintConfig& project_config,
+                                                             const DynamicPrintConfig* print_config);
+
+// Recipe preview only: independent cadence can span multiple nominal layers.
+std::vector<double> mixed_filament_preview_pass_heights(const MixedFilamentPreviewSettings& settings,
+                                                        int                                 mix_b_percent,
+                                                        int                                 max_sublayers_limit = 0);
 
 struct MixedFilamentDisplayContext
 {

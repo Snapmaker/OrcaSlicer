@@ -9,6 +9,7 @@
 #include "Geometry/ConvexHull.hpp"
 #include "I18N.hpp"
 #include "LocalZOrderOptimizer.hpp"
+#include "LocalZ/LocalZClipper.hpp"
 #include "ShortestPath.hpp"
 #include "Thread.hpp"
 #include "Time.hpp"
@@ -88,34 +89,23 @@ static inline ExPolygons local_z_compensate_masks_for_wipe_tower(const ExPolygon
     return compensated;
 }
 
-static bool local_z_segments_exist(Polylines segments)
-{
-    for (Polyline &segment : segments) {
-        if (segment.is_valid())
-            return true;
-    }
-    return false;
-}
-
-static bool extrusion_collection_has_local_z_segment(const ExtrusionEntityCollection &source,
-                                                     const ExPolygons               &include_masks)
+static bool extrusion_collection_has_local_z_segment(const ExtrusionEntityCollection& source, const LocalZClipper& include_masks)
 {
     if (source.entities.empty() || include_masks.empty())
         return false;
 
-    ExtrusionEntityCollection flattened = source.flatten(false);
-    for (const ExtrusionEntity *entity : flattened.entities) {
+    for (const ExtrusionEntity* entity : source.flatten_refs()) {
         if (const auto *path = dynamic_cast<const ExtrusionPath*>(entity)) {
-            if (local_z_segments_exist(intersection_pl(Polylines{path->polyline}, include_masks)))
+            if (include_masks.intersects(path->polyline))
                 return true;
         } else if (const auto *multipath = dynamic_cast<const ExtrusionMultiPath*>(entity)) {
             for (const ExtrusionPath &path : multipath->paths) {
-                if (local_z_segments_exist(intersection_pl(Polylines{path.polyline}, include_masks)))
+                if (include_masks.intersects(path.polyline))
                     return true;
             }
         } else if (const auto *loop = dynamic_cast<const ExtrusionLoop*>(entity)) {
             for (const ExtrusionPath &path : loop->paths) {
-                if (local_z_segments_exist(intersection_pl(Polylines{path.polyline}, include_masks)))
+                if (include_masks.intersects(path.polyline))
                     return true;
             }
         }
@@ -124,7 +114,7 @@ static bool extrusion_collection_has_local_z_segment(const ExtrusionEntityCollec
     return false;
 }
 
-static bool layer_has_local_z_extrusions(const Layer &layer, const ExPolygons &pass_masks, bool include_infill)
+static bool layer_has_local_z_extrusions(const Layer& layer, const LocalZClipper& pass_masks, bool include_infill)
 {
     if (pass_masks.empty())
         return false;
@@ -171,16 +161,16 @@ static std::vector<unsigned int> rotate_extruders_to_start_with(const std::vecto
     return rotated;
 }
 
-static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolchanges(
-    const Print                              &print,
-    const std::vector<GCode::LayerToPrint>   &layers,
-    int                                       start_extruder)
+static std::vector<LocalZWipeTowerPassRef> collect_local_z_wipe_tower_passes(const Print&                            print,
+                                                                             const std::vector<GCode::LayerToPrint>& layers)
 {
     std::vector<LocalZWipeTowerPassRef> pass_refs;
     const bool  local_z_infill_enabled        = print.full_print_config().opt_bool("dithering_local_z_infill");
     const float local_z_perimeter_mask_expand = float(scale_(LOCAL_Z_PERIMETER_MASK_EXPAND_MM));
 
     for (size_t layer_to_print_idx = 0; layer_to_print_idx < layers.size(); ++layer_to_print_idx) {
+        if (print.canceled())
+            throw CanceledException();
         const GCode::LayerToPrint &layer_to_print = layers[layer_to_print_idx];
         if (layer_to_print.object_layer == nullptr)
             continue;
@@ -206,40 +196,40 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
         const size_t first_idx = interval_it->first_sublayer_idx;
         const size_t end_idx   = std::min(plans.size(), first_idx + interval_it->sublayer_count);
         for (size_t plan_idx = first_idx; plan_idx < end_idx; ++plan_idx) {
-            const SubLayerPlan &plan = plans[plan_idx];
+            const SubLayerPlan& plan = plans[plan_idx];
             if (!plan.split_interval)
                 continue;
 
-            const size_t plan_mask_slots =
-                std::max(plan.painted_masks_by_extruder.size(), plan.fixed_painted_masks_by_extruder.size());
+            const size_t plan_mask_slots = std::max(plan.painted_masks_by_extruder.size(), plan.fixed_painted_masks_by_extruder.size());
             std::vector<ExPolygons> compensated_masks_by_extruder(plan_mask_slots, ExPolygons());
 
             ExPolygons fixed_raw_masks_union;
-            for (const ExPolygons &fixed_masks : plan.fixed_painted_masks_by_extruder) {
+            for (const ExPolygons& fixed_masks : plan.fixed_painted_masks_by_extruder) {
                 if (!fixed_masks.empty())
                     append(fixed_raw_masks_union, fixed_masks);
             }
             if (!fixed_raw_masks_union.empty() && fixed_raw_masks_union.size() > 1)
                 fixed_raw_masks_union = union_ex(fixed_raw_masks_union);
 
-            const ExPolygons fixed_compensated_guard =
-                fixed_raw_masks_union.empty() ?
-                    ExPolygons() :
-                    local_z_compensate_masks_for_wipe_tower(fixed_raw_masks_union, local_z_perimeter_mask_expand, true);
+            const ExPolygons fixed_compensated_guard = fixed_raw_masks_union.empty() ?
+                                                           ExPolygons() :
+                                                           local_z_compensate_masks_for_wipe_tower(fixed_raw_masks_union,
+                                                                                                   local_z_perimeter_mask_expand, true);
 
             for (size_t extruder_id = 0; extruder_id < plan_mask_slots; ++extruder_id) {
-                const ExPolygons mixed_raw_masks =
-                    extruder_id < plan.painted_masks_by_extruder.size() ? plan.painted_masks_by_extruder[extruder_id] : ExPolygons();
-                const ExPolygons fixed_raw_masks =
-                    extruder_id < plan.fixed_painted_masks_by_extruder.size() ? plan.fixed_painted_masks_by_extruder[extruder_id] :
-                                                                               ExPolygons();
+                const ExPolygons mixed_raw_masks = extruder_id < plan.painted_masks_by_extruder.size() ?
+                                                       plan.painted_masks_by_extruder[extruder_id] :
+                                                       ExPolygons();
+                const ExPolygons fixed_raw_masks = extruder_id < plan.fixed_painted_masks_by_extruder.size() ?
+                                                       plan.fixed_painted_masks_by_extruder[extruder_id] :
+                                                       ExPolygons();
                 if (mixed_raw_masks.empty() && fixed_raw_masks.empty())
                     continue;
 
                 ExPolygons compensated;
                 if (!mixed_raw_masks.empty()) {
-                    ExPolygons compensated_mixed =
-                        local_z_compensate_masks_for_wipe_tower(mixed_raw_masks, local_z_perimeter_mask_expand, true);
+                    ExPolygons compensated_mixed = local_z_compensate_masks_for_wipe_tower(mixed_raw_masks, local_z_perimeter_mask_expand,
+                                                                                           true);
                     if (!fixed_compensated_guard.empty())
                         compensated_mixed = diff_ex(compensated_mixed, fixed_compensated_guard);
                     if (!compensated_mixed.empty())
@@ -258,10 +248,10 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
             for (size_t extruder_id = 0; extruder_id < plan.painted_masks_by_extruder.size(); ++extruder_id) {
                 if (extruder_id >= compensated_masks_by_extruder.size())
                     continue;
-                const ExPolygons &pass_masks = compensated_masks_by_extruder[extruder_id];
+                const ExPolygons& pass_masks = compensated_masks_by_extruder[extruder_id];
                 if (pass_masks.empty())
                     continue;
-                if (layer_has_local_z_extrusions(*layer_to_print.object_layer, pass_masks, local_z_infill_enabled))
+                if (layer_has_local_z_extrusions(*layer_to_print.object_layer, LocalZClipper(pass_masks), local_z_infill_enabled))
                     pass_ref.extruders.push_back(unsigned(extruder_id));
             }
 
@@ -269,7 +259,6 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
                 pass_refs.emplace_back(std::move(pass_ref));
         }
     }
-
     std::sort(pass_refs.begin(), pass_refs.end(), [](const LocalZWipeTowerPassRef &lhs, const LocalZWipeTowerPassRef &rhs) {
         assert(lhs.plan != nullptr && rhs.plan != nullptr);
         if (lhs.plan->print_z != rhs.plan->print_z)
@@ -279,6 +268,12 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
         return lhs.plan->pass_index < rhs.plan->pass_index;
     });
 
+    return pass_refs;
+}
+
+static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolchanges(const std::vector<LocalZWipeTowerPassRef>& pass_refs,
+                                                                                     int start_extruder)
+{
     auto collect_toolchanges_legacy = [&](int start_tool) {
         std::vector<LocalZWipeTowerToolchange> legacy_toolchanges;
         int active_extruder = start_tool;
@@ -3433,7 +3428,7 @@ void Print::_make_wipe_tower()
 
                 if (layers_with_same_print_z != nullptr) {
                     const std::vector<LocalZWipeTowerToolchange> local_z_toolchanges =
-                        collect_local_z_wipe_tower_toolchanges(*this, *layers_with_same_print_z, int(current_extruder_id));
+                        collect_local_z_wipe_tower_toolchanges(collect_local_z_wipe_tower_passes(*this, *layers_with_same_print_z), int(current_extruder_id));
                     for (const LocalZWipeTowerToolchange &toolchange : local_z_toolchanges) {
                         wipe_tower.plan_local_z_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
                                                            toolchange.old_tool, toolchange.new_tool, effective_wipe_tower_volume(m_config, toolchange.new_tool));

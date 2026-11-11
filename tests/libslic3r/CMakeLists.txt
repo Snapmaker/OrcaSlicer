@@ -42,6 +42,8 @@ add_executable(${_TEST_NAME}_tests
 	test_split_painting.cpp
     ../libnest2d/printer_parts.cpp
     slicing/test_cpu_preparation.cpp
+    slicing/test_local_z_clipper.cpp
+    slicing/test_local_z_clip_replay.cpp
 	)
 
 if (TARGET OpenVDB::openvdb)

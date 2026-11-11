@@ -6,6 +6,7 @@
 #include "I18N.hpp"
 #include "GCode.hpp"
 #include "LocalZOrderOptimizer.hpp"
+#include "LocalZ/LocalZClipper.hpp"
 #include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
 #include "EdgeGrid.hpp"
@@ -4224,22 +4225,18 @@ static inline void apply_local_z_flow_height_override(ExtrusionPath& path, const
     path.height = float(flow_height_override);
 }
 
-static inline void append_clipped_path(const ExtrusionPath& src_path,
-                                       const ExPolygons*    include_masks,
-                                       const ExPolygons*    exclude_masks,
-                                       const double         flow_height_override,
+static inline void append_clipped_path(const ExtrusionPath&        src_path,
+                                       const LocalZClipper*        include_masks,
+                                       const LocalZClipper*        exclude_masks,
+                                       const double                flow_height_override,
                                        std::vector<ExtrusionPath>& dst)
 {
-    Polylines segments{src_path.polyline};
-    if (include_masks != nullptr && !include_masks->empty())
-        segments = intersection_pl(std::move(segments), *include_masks);
-    if (exclude_masks != nullptr && !exclude_masks->empty())
-        segments = diff_pl(std::move(segments), *exclude_masks);
+    Polylines segments = LocalZClipper::clip_path(src_path.polyline, include_masks, exclude_masks);
 
     for (Polyline& segment : segments) {
         if (!segment.is_valid())
             continue;
-        ExtrusionPath clipped(segment, src_path);
+        ExtrusionPath clipped(std::move(segment), src_path);
         apply_local_z_flow_height_override(clipped, flow_height_override);
         dst.emplace_back(std::move(clipped));
     }
@@ -4443,12 +4440,11 @@ static inline Polylines collect_local_z_polylines(const ExtrusionEntityCollectio
 
 using LocalZLoopSeamPlacer = std::function<bool(const ExtrusionLoop&, ExtrusionLoop&, Point&)>;
 
-static std::unique_ptr<ExtrusionEntityCollection> clip_extrusion_collection_for_local_z(
-    const ExtrusionEntityCollection& source,
-    const ExPolygons*                include_masks,
-    const ExPolygons*                exclude_masks,
-    const double                     flow_height_override,
-    const LocalZLoopSeamPlacer*      seam_placer = nullptr)
+static std::unique_ptr<ExtrusionEntityCollection> clip_extrusion_collection_for_local_z(const ExtrusionEntityCollection& source,
+                                                                                        const LocalZClipper*             include_masks,
+                                                                                        const LocalZClipper*             exclude_masks,
+                                                                                        const double                flow_height_override,
+                                                                                        const LocalZLoopSeamPlacer* seam_placer = nullptr)
 {
     if (source.entities.empty())
         return nullptr;
@@ -5709,6 +5705,7 @@ LayerResult GCode::process_layer(const Print& print,
     struct LocalZPassBucket {
         const SubLayerPlan*                                   plan { nullptr };
         std::vector<ExPolygons>                               compensated_masks_by_extruder;
+        std::vector<LocalZClipper>                            clippers_by_extruder;
         std::map<unsigned int, std::vector<ObjectByExtruder>> by_extruder;
     };
     struct LocalZLayerContext {
@@ -5716,6 +5713,7 @@ LayerResult GCode::process_layer(const Print& print,
         ExPolygons              raw_mixed_masks_union;
         ExPolygons              mixed_masks_union;
         ExPolygons              mixed_masks_union_for_base_exclude;
+        LocalZClipper                 base_exclude_clipper;
         size_t                  local_clipped_collections { 0 };
         size_t                  base_clipped_collections { 0 };
         size_t                  base_clip_leak_warnings { 0 };
@@ -5724,11 +5722,12 @@ LayerResult GCode::process_layer(const Print& print,
 
     // Local-Z phase-b can run with wipe tower enabled, but wiping-overrides remain unsupported
     // because that flow emits a separate purge/print pass that is not Local-Z aware yet.
-    const bool local_z_perimeter_runtime_supported = !is_anything_overridden;
-    bool       local_z_phase_b_requested_for_layer = false;
-    std::vector<LocalZLayerContext> local_z_layer_contexts;
+    const bool                                              local_z_perimeter_runtime_supported = !is_anything_overridden;
+    bool                                                    local_z_phase_b_requested_for_layer = false;
+    std::unique_ptr<LocalZClipCache>                        local_z_clip_cache;
+    std::vector<LocalZLayerContext>                         local_z_layer_contexts;
     std::vector<std::unique_ptr<ExtrusionEntityCollection>> local_z_clipped_collections;
-    size_t local_z_rejected_context_logs = 0;
+    size_t                                                  local_z_rejected_context_logs = 0;
     if (local_z_perimeter_runtime_supported) {
         local_z_layer_contexts.resize(layers.size());
         for (size_t layer_to_print_idx = 0; layer_to_print_idx < layers.size(); ++layer_to_print_idx) {
@@ -5864,6 +5863,23 @@ LayerResult GCode::process_layer(const Print& print,
                                                << " compensated_mask_polygon_count=" << compensated_mask_polygon_count
                                                << " pass_buckets=" << ctx.pass_buckets.size()
                                                << " mixed_mask_count=" << ctx.mixed_masks_union.size();
+                }
+            }
+            // Bind borrowed geometry after all mask vectors have reached their final
+            // positions. These masks remain immutable during this process_layer call.
+            if (ctx.enabled) {
+                if (!local_z_clip_cache)
+                    local_z_clip_cache = std::make_unique<LocalZClipCache>();
+                ctx.base_exclude_clipper = LocalZClipper(ctx.mixed_masks_union_for_base_exclude.empty() ?
+                                                             ctx.mixed_masks_union :
+                                                             ctx.mixed_masks_union_for_base_exclude,
+                                                         local_z_clip_cache.get());
+                for (LocalZPassBucket& bucket : ctx.pass_buckets) {
+                    const auto& masks = bucket.compensated_masks_by_extruder.empty() ? bucket.plan->painted_masks_by_extruder :
+                                                                                       bucket.compensated_masks_by_extruder;
+                    bucket.clippers_by_extruder.reserve(masks.size());
+                    for (const ExPolygons& mask : masks)
+                        bucket.clippers_by_extruder.emplace_back(mask, local_z_clip_cache.get());
                 }
             }
             if (ctx.enabled && !ctx.pass_buckets.empty())
@@ -6089,9 +6105,7 @@ LayerResult GCode::process_layer(const Print& print,
                                     continue;
                                 for (size_t pass_extruder_id = 0; pass_extruder_id < pass_bucket.plan->painted_masks_by_extruder.size();
                                      ++pass_extruder_id) {
-                                    const ExPolygons& pass_masks = pass_bucket.compensated_masks_by_extruder.empty()
-                                        ? pass_bucket.plan->painted_masks_by_extruder[pass_extruder_id]
-                                        : pass_bucket.compensated_masks_by_extruder[pass_extruder_id];
+                                    const LocalZClipper& pass_masks = pass_bucket.clippers_by_extruder[pass_extruder_id];
                                     if (pass_masks.empty())
                                         continue;
                                     auto clipped_local = clip_extrusion_collection_for_local_z(*extrusions,
@@ -6135,21 +6149,16 @@ LayerResult GCode::process_layer(const Print& print,
                                 }
                             }
 
-                            const ExPolygons* base_exclude_masks =
-                                local_z_ctx->mixed_masks_union_for_base_exclude.empty() ? &local_z_ctx->mixed_masks_union
-                                                                                        : &local_z_ctx->mixed_masks_union_for_base_exclude;
-                            auto clipped_base = clip_extrusion_collection_for_local_z(*extrusions,
-                                                                                     nullptr,
-                                                                                     base_exclude_masks,
-                                                                                     0.,
-                                                                                     &local_z_loop_seam_placer);
+                            auto clipped_base = clip_extrusion_collection_for_local_z(*extrusions, nullptr,
+                                                                                      &local_z_ctx->base_exclude_clipper, 0.,
+                                                                                      &local_z_loop_seam_placer);
                             if (!clipped_base)
                                 continue;
                             const LocalZPathHeightStats base_height_stats = collect_local_z_path_height_stats(*clipped_base);
                             ++local_z_ctx->base_clipped_collections;
                             const ExPolygons &mixed_leak_ref =
                                 !local_z_ctx->raw_mixed_masks_union.empty() ? local_z_ctx->raw_mixed_masks_union : local_z_ctx->mixed_masks_union;
-                            if (local_z_ctx->base_clip_leak_warnings < 3 && !mixed_leak_ref.empty()) {
+                            if (local_z_validate_clipping() && local_z_ctx->base_clip_leak_warnings < 3 && !mixed_leak_ref.empty()) {
                                 Polylines clipped_base_lines = collect_local_z_polylines(*clipped_base);
                                 if (!clipped_base_lines.empty()) {
                                     Polylines leaked_segments = intersection_pl(std::move(clipped_base_lines), mixed_leak_ref);

@@ -372,6 +372,10 @@ set(lisbslic3r_sources
     Print.hpp
     PrintObject.cpp
     PrintObjectSlice.cpp
+    LocalZ/LocalZClipDecision.cpp
+    LocalZ/LocalZClipDecision.hpp
+    LocalZ/LocalZClipper.cpp
+    LocalZ/LocalZClipper.hpp
     PrintRegion.cpp
     ProjectSchemaVersion.cpp
     ProjectSchemaVersion.hpp

@@ -813,7 +813,7 @@ TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[Mi
     config.set("dithering_local_z_mode", true);
     config.set("dithering_local_z_whole_objects", true);
     config.set("dithering_local_z_infill", true);
-    config.set("mixed_filament_height_lower_bound", 0.04);
+    config.option<ConfigOptionFloats>("min_layer_height")->values.assign(4, 0.04);
     config.set("mixed_filament_height_upper_bound", 0.16);
     config.set("enable_prime_tower", false);
     config.set("flush_into_infill", true);
@@ -914,7 +914,7 @@ TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height b
         config.set("dithering_local_z_whole_objects", !painted);
         config.set("dithering_local_z_infill", true);
         config.set("dithering_local_z_direct_multicolor", direct_multicolor);
-        config.set("mixed_filament_height_lower_bound", test.lower_bound);
+        config.option<ConfigOptionFloats>("min_layer_height")->values.assign(4, test.lower_bound);
         config.set("mixed_filament_height_upper_bound", test.upper_bound);
         config.set("mixed_color_layer_height_a", test.preferred_a);
         config.set("mixed_color_layer_height_b", test.preferred_b);

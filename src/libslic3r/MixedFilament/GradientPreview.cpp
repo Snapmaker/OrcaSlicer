@@ -98,14 +98,18 @@ MixedGradientLocalZSample sample_mixed_gradient_local_z(const MixedFilament&    
                                                         double                     progress,
                                                         double                     middle_window,
                                                         double                     nominal_height,
-                                                        double                     minimum_height,
+                                                        const std::vector<double>& min_layer_heights,
                                                         const std::vector<double>& max_layer_heights)
 {
     MixedGradientLocalZSample result;
     result.mix           = sample_mixed_gradient(entry, num_physical, progress, middle_window);
-    const double minimum = std::max(0.01, minimum_height);
-    const double nominal = std::max(nominal_height, 2.0 * minimum);
-    const auto   heights = mixed_filament_local_z_pair_heights(nominal, minimum, result.mix.mix_b_percent);
+    const auto minimum_for = [&min_layer_heights](unsigned int id) {
+        return id > 0 && id <= min_layer_heights.size() ? min_layer_heights[id - 1] : 0.07;
+    };
+    const double minimum_a = minimum_for(result.mix.component_a);
+    const double minimum_b = minimum_for(result.mix.component_b);
+    const double nominal   = std::max(nominal_height, minimum_a + minimum_b);
+    const auto   heights   = mixed_filament_local_z_pair_heights(nominal, minimum_a, minimum_b, result.mix.mix_b_percent);
     result.height_a      = heights.first;
     result.height_b      = heights.second;
     if (!entry.gradient_enabled || !std::isfinite(progress))

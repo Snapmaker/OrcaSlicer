@@ -5,6 +5,7 @@
 #include "../Slicing/PreparationDiagnostics.hpp"
 #include "../Slicing/LayerGeometryBatch.hpp"
 #include "../Print.hpp"
+#include "../Slicing.hpp"
 #include "../Layer.hpp"
 #include "../ClipperUtils.hpp"
 #include "../SVG.hpp"
@@ -639,40 +640,29 @@ struct LocalZIndependentDirectPass
     double       height{0.0};
 };
 
-static double local_z_max_layer_height_for_extruder(const PrintConfig& print_config, unsigned int extruder_id)
-{
-    const size_t extruder_idx    = extruder_id > 0 ? size_t(extruder_id - 1) : 0;
-    const double configured_max  = print_config.max_layer_height.values.empty() ? 0.0 : print_config.max_layer_height.get_at(extruder_idx);
-    const double nozzle_diameter = print_config.nozzle_diameter.values.empty() ? 0.4 : print_config.nozzle_diameter.get_at(extruder_idx);
-    return std::max(0.01, configured_max > EPSILON ? configured_max : 0.75 * nozzle_diameter);
-}
-
 static std::vector<LocalZIndependentDirectPass> build_local_z_independent_direct_cadence(const std::vector<unsigned int>& component_ids,
                                                                                          const std::vector<int>&          component_weights,
-                                                                                         double             min_sublayer_height,
                                                                                          const PrintConfig& print_config)
 {
     std::vector<LocalZIndependentDirectPass> cadence;
     if (component_ids.empty())
         return cadence;
 
-    int minimum_positive_weight = std::numeric_limits<int>::max();
+    // Scale the complete ratio until every participating nozzle can print its share.
+    double height_per_weight = 0.0;
     for (size_t idx = 0; idx < component_ids.size(); ++idx) {
         const int weight = idx < component_weights.size() ? component_weights[idx] : 0;
         if (component_ids[idx] > 0 && weight > 0)
-            minimum_positive_weight = std::min(minimum_positive_weight, weight);
+            height_per_weight = std::max(height_per_weight,
+                                         Slicing::min_layer_height_from_nozzle(print_config, component_ids[idx]) / double(weight));
     }
-    if (minimum_positive_weight == std::numeric_limits<int>::max())
-        return cadence;
-
-    const double minimum = std::max<double>(0.01, min_sublayer_height);
     for (size_t idx = 0; idx < component_ids.size(); ++idx) {
         const int weight = idx < component_weights.size() ? component_weights[idx] : 0;
         if (component_ids[idx] == 0 || weight <= 0)
             continue;
 
-        const double total_component_height = minimum * double(weight) / double(minimum_positive_weight);
-        const double max_layer_height       = local_z_max_layer_height_for_extruder(print_config, component_ids[idx]);
+        const double total_component_height = height_per_weight * double(weight);
+        const double max_layer_height       = Slicing::max_layer_height_from_nozzle(print_config, component_ids[idx]);
         const size_t split_count            = std::max<size_t>(1, size_t(std::ceil(total_component_height / max_layer_height - EPSILON)));
         const double split_height           = total_component_height / double(split_count);
         for (size_t split_idx = 0; split_idx < split_count; ++split_idx)
@@ -689,7 +679,7 @@ static void append_local_z_independent_component_height(std::vector<LocalZIndepe
     if (component_id == 0 || total_height <= EPSILON)
         return;
 
-    const double max_layer_height = local_z_max_layer_height_for_extruder(print_config, component_id);
+    const double max_layer_height = Slicing::max_layer_height_from_nozzle(print_config, component_id);
     const size_t split_count      = std::max<size_t>(1, size_t(std::ceil(total_height / max_layer_height - EPSILON)));
     const double split_height     = total_height / double(split_count);
     for (size_t split_idx = 0; split_idx < split_count; ++split_idx)
@@ -698,7 +688,6 @@ static void append_local_z_independent_component_height(std::vector<LocalZIndepe
 
 static std::vector<LocalZIndependentDirectPass> build_local_z_independent_gradient_cadence(const MixedGradientLocalZSample& sample,
                                                                                            double             available_height,
-                                                                                           double             min_sublayer_height,
                                                                                            unsigned int       previous_extruder,
                                                                                            const PrintConfig& print_config)
 {
@@ -714,7 +703,10 @@ static std::vector<LocalZIndependentDirectPass> build_local_z_independent_gradie
     double height_a       = sample.height_a;
     double height_b       = sample.height_b;
     if (height_a + height_b > available_height) {
-        const auto clipped = mixed_filament_local_z_pair_heights(available_height, min_sublayer_height, pair.mix_b_percent);
+        const auto clipped = mixed_filament_local_z_pair_heights(available_height,
+                                                                 Slicing::min_layer_height_from_nozzle(print_config, pair.component_a),
+                                                                 Slicing::min_layer_height_from_nozzle(print_config, pair.component_b),
+                                                                 pair.mix_b_percent);
         height_a           = clipped.first;
         height_b           = clipped.second;
     }
@@ -766,7 +758,7 @@ struct LocalZPlanDiagnostics
 };
 
 static void export_local_z_plan_debug(const PrintObject&           print_object,
-                                      coordf_t                     min_sublayer_height,
+                                      const std::vector<double>&   nozzle_min_layer_heights,
                                       const LocalZPlanDiagnostics& diagnostics)
 {
     if (!diagnostics.enabled)
@@ -783,7 +775,10 @@ static void export_local_z_plan_debug(const PrintObject&           print_object,
         json << std::fixed << std::setprecision(6);
         json << "{\n";
         json << "  \"object_id\": " << object_id << ",\n";
-        json << "  \"min_sublayer_height\": " << min_sublayer_height << ",\n";
+        json << "  \"nozzle_min_layer_heights\": [";
+        for (size_t i = 0; i < nozzle_min_layer_heights.size(); ++i)
+            json << (i ? ", " : "") << nozzle_min_layer_heights[i];
+        json << "],\n";
         json << "  \"interval_count\": " << intervals.size() << ",\n";
         json << "  \"sublayer_count\": " << plans.size() << ",\n";
         json << "  \"intervals\": [\n";
@@ -1158,6 +1153,7 @@ struct LocalZRowState
 struct LocalZRow
 {
     MixedFilament                            definition;
+    double                                   min_sublayer_height = 0.01;
     uint8_t                                  uses_local_z = 0;
     uint8_t                                  is_gradient  = 0;
     std::vector<unsigned int>                gradient_components;
@@ -1335,7 +1331,6 @@ struct LocalZSettings
     bool     local_z_preserve_first_layer;
     bool     local_z_direct_multicolor;
     bool     local_z_independent_layer_height;
-    coordf_t min_sublayer_height;
     coordf_t preferred_a;
     coordf_t preferred_b;
     coordf_t gradient_nominal_height;
@@ -1358,8 +1353,6 @@ static LocalZSettings resolve_local_z_settings(const Print& print, bool whole_ob
                                                   (local_z_mode ||
                                                    bool_from_full_config(full_cfg, "dithering_local_z_independent_layer_height",
                                                                          print_cfg.dithering_local_z_independent_layer_height.value));
-    coordf_t min_sublayer_height     = float_from_full_config(full_cfg, "mixed_filament_height_lower_bound",
-                                                              coordf_t(print_cfg.mixed_filament_height_lower_bound.value));
     coordf_t preferred_a             = float_from_full_config(full_cfg, "mixed_color_layer_height_a",
                                                               coordf_t(print_cfg.mixed_color_layer_height_a.value));
     coordf_t preferred_b             = float_from_full_config(full_cfg, "mixed_color_layer_height_b",
@@ -1369,10 +1362,9 @@ static LocalZSettings resolve_local_z_settings(const Print& print, bool whole_ob
     coordf_t gradient_middle_filament_window =
         float_from_full_config(full_cfg, "dithering_local_z_gradient_middle_filament_window",
                                coordf_t(print_cfg.dithering_local_z_gradient_middle_filament_window.value));
-    min_sublayer_height                          = std::max<coordf_t>(0.01f, min_sublayer_height);
     preferred_a                                  = std::max<coordf_t>(0.f, preferred_a);
     preferred_b                                  = std::max<coordf_t>(0.f, preferred_b);
-    gradient_nominal_height                      = std::max<coordf_t>(gradient_nominal_height, 2.f * min_sublayer_height);
+    gradient_nominal_height                      = std::max<coordf_t>(gradient_nominal_height, 0.01);
     gradient_middle_filament_window              = std::clamp<coordf_t>(gradient_middle_filament_window, 0.f, 100.f);
     const double gradient_middle_window_fraction = double(gradient_middle_filament_window) / 100.0;
 
@@ -1381,7 +1373,6 @@ static LocalZSettings resolve_local_z_settings(const Print& print, bool whole_ob
             local_z_preserve_first_layer,
             local_z_direct_multicolor,
             local_z_independent_layer_height,
-            min_sublayer_height,
             preferred_a,
             preferred_b,
             gradient_nominal_height,
@@ -1408,8 +1399,7 @@ static std::vector<LocalZRow> prepare_local_z_rows(const Print& print, const Loc
             local_z_direct_multicolor_definition(row.definition, num_physical, &row.direct_components, &row.direct_weights)) {
             row.uses_direct_solver = true;
             row.state.component_error.assign(row.direct_components.size(), 0.0);
-            row.direct_cadence = build_local_z_independent_direct_cadence(row.direct_components, row.direct_weights,
-                                                                          settings.min_sublayer_height, print_cfg);
+            row.direct_cadence = build_local_z_independent_direct_cadence(row.direct_components, row.direct_weights, print_cfg);
         }
         if (settings.local_z_independent_layer_height && automatic_heights && row.direct_cadence.empty() && row.uses_local_z &&
             local_z_eligible_mixed_definition(row.definition) && !row.definition.gradient_enabled) {
@@ -1418,9 +1408,15 @@ static std::vector<LocalZRow> prepare_local_z_rows(const Print& print, const Loc
                 auto component_weights = decode_blend_component_weights(row.definition, num_physical, component_ids.size());
                 if (component_weights.empty())
                     component_weights.assign(component_ids.size(), 1);
-                row.direct_cadence = build_local_z_independent_direct_cadence(component_ids, component_weights,
-                                                                              settings.min_sublayer_height, print_cfg);
+                row.direct_cadence = build_local_z_independent_direct_cadence(component_ids, component_weights, print_cfg);
             }
+        }
+        const auto component_ids     = row.is_gradient ? row.gradient_components : decode_blend_component_ids(row.definition, num_physical);
+        const auto component_weights = decode_blend_component_weights(row.definition, num_physical, component_ids.size());
+        for (size_t component = 0; component < component_ids.size(); ++component) {
+            if (row.is_gradient || component_weights.empty() || component_weights[component] > 0)
+                row.min_sublayer_height = std::max(row.min_sublayer_height,
+                                                   Slicing::min_layer_height_from_nozzle(print_cfg, component_ids[component]));
         }
         if (!row.uses_direct_solver) {
             row.pair_cycle      = build_local_z_pair_cycle_for_definition(row.definition, num_physical);
@@ -1460,9 +1456,11 @@ static void build_local_z_plan(PrintObject&                                print
         return;
     }
 
-    std::vector<double> gradient_max_layer_heights(num_physical);
-    for (size_t i = 0; i < num_physical; ++i)
-        gradient_max_layer_heights[i] = local_z_max_layer_height_for_extruder(print_cfg, unsigned(i + 1));
+    std::vector<double> nozzle_min_layer_heights(num_physical), nozzle_max_layer_heights(num_physical);
+    for (size_t i = 0; i < num_physical; ++i) {
+        nozzle_min_layer_heights[i] = Slicing::min_layer_height_from_nozzle(print_cfg, int(i + 1));
+        nozzle_max_layer_heights[i] = Slicing::max_layer_height_from_nozzle(print_cfg, int(i + 1));
+    }
 
     const MixedFilamentManager& mixed_mgr = print->mixed_filament_manager();
     auto                        rows      = prepare_local_z_rows(*print, settings);
@@ -1471,9 +1469,9 @@ static void build_local_z_plan(PrintObject&                                print
         return;
 
     BOOST_LOG_TRIVIAL(debug) << "Local-Z plan start"
-                             << " object=" << object_name << " layers=" << print_object.layer_count()
-                             << " min_sublayer_height=" << settings.min_sublayer_height << " preferred_a=" << settings.preferred_a
-                             << " preferred_b=" << settings.preferred_b << " gradient_nominal_height=" << settings.gradient_nominal_height
+                             << " object=" << object_name << " layers=" << print_object.layer_count() << " nozzle_height_limits=1"
+                             << " preferred_a=" << settings.preferred_a << " preferred_b=" << settings.preferred_b
+                             << " gradient_nominal_height=" << settings.gradient_nominal_height
                              << " direct_multicolor=" << (settings.local_z_direct_multicolor ? 1 : 0)
                              << " independent_layer_height=" << (settings.local_z_independent_layer_height ? 1 : 0)
                              << " global_mode=" << (settings.local_z_mode ? 1 : 0) << " enabled_rows=" << enabled_row_count
@@ -1633,7 +1631,7 @@ static void build_local_z_plan(PrintObject&                                print
 
         (void) layer_id;
         return build_local_z_direct_multicolor_pass_heights(rows[row_idx].definition, rows[row_idx].direct_weights, base_height,
-                                                            settings.min_sublayer_height, rows[row_idx].direct_components.size());
+                                                            rows[row_idx].min_sublayer_height, rows[row_idx].direct_components.size());
     };
 
     auto build_direct_sequence_for_definition = [&](size_t row_idx, size_t layer_id,
@@ -1767,6 +1765,10 @@ static void build_local_z_plan(PrintObject&                                print
         auto&        row_state_ids            = prepared.row_ids;
         auto&        fixed_state_masks_union  = prepared.fixed_union;
         const auto&  row_active_this_layer    = prepared.row_active;
+        double       shared_min_sublayer_height = 0.01;
+        for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx)
+            if (row_active_this_layer[row_idx])
+                shared_min_sublayer_height = std::max(shared_min_sublayer_height, rows[row_idx].min_sublayer_height);
         const size_t dominant_mixed_idx       = prepared.dominant_mixed_idx;
         const size_t mixed_state_count        = prepared.mixed_state_count;
         const size_t active_mixed_definitions = size_t(std::count(row_active_this_layer.begin(), row_active_this_layer.end(), uint8_t(1)));
@@ -1823,7 +1825,7 @@ static void build_local_z_plan(PrintObject&                                print
                 dominant_is_gradient = effective_gradient_heights_for_definition(dominant_mixed_idx, layer_id, interval.base_height,
                                                                                  dominant_gradient_h_a, dominant_gradient_h_b);
                 if (!dominant_is_gradient)
-                    compute_local_z_component_heights(dominant_mix_b_percent, interval.base_height, settings.min_sublayer_height,
+                    compute_local_z_component_heights(dominant_mix_b_percent, interval.base_height, shared_min_sublayer_height,
                                                       dominant_gradient_h_a, dominant_gradient_h_b);
                 dominant_gradient_valid = true;
             }
@@ -1937,11 +1939,10 @@ static void build_local_z_plan(PrintObject&                                print
                                                            1.0);
                     const auto   sample       = sample_mixed_gradient_local_z(rows[row_idx].definition, num_physical, progress,
                                                                               settings.gradient_middle_window_fraction,
-                                                                              settings.gradient_nominal_height, settings.min_sublayer_height,
-                                                                              gradient_max_layer_heights);
+                                                                              settings.gradient_nominal_height, nozzle_min_layer_heights,
+                                                                              nozzle_max_layer_heights);
                     state.gradient_cadence    = build_local_z_independent_gradient_cadence(sample, remaining_domain_height,
-                                                                                           settings.min_sublayer_height, state.last_extruder,
-                                                                                           print_cfg);
+                                                                                           state.last_extruder, print_cfg);
                     state.gradient_pass_index = 0;
                     return !state.gradient_cadence.empty();
                 };
@@ -1964,12 +1965,23 @@ static void build_local_z_plan(PrintObject&                                print
                     const double remaining_height = state.z_end - state.z_cursor;
                     if (remaining_height <= EPSILON)
                         break;
-                    const double height = local_z_bounded_pass_height(cadence_pass->height, remaining_height, settings.min_sublayer_height,
-                                                                      local_z_max_layer_height_for_extruder(print_cfg,
-                                                                                                            cadence_pass->extruder_id));
+                    // At a gradient cycle boundary the next sample may select another tool.
+                    // Reserve enough height for that row; within a cadence use the actual next nozzle.
+                    unsigned int next_extruder = 0;
+                    if (!gradient_row)
+                        next_extruder = direct_cadence[(state.cadence_index + 1) % direct_cadence.size()].extruder_id;
+                    else if (state.gradient_pass_index + 1 < state.gradient_cadence.size())
+                        next_extruder = state.gradient_cadence[state.gradient_pass_index + 1].extruder_id;
+                    const double next_minimum = next_extruder > 0 ? nozzle_min_layer_heights[next_extruder - 1] :
+                                                                    rows[row_idx].min_sublayer_height;
+                    const double height       = local_z_bounded_pass_height(cadence_pass->height, remaining_height,
+                                                                            nozzle_min_layer_heights[cadence_pass->extruder_id - 1],
+                                                                            nozzle_max_layer_heights[cadence_pass->extruder_id - 1],
+                                                                            next_minimum);
                     if (height <= 0.0)
-                        throw SlicingError(L("Local-Z cannot fit the minimum layer height into this mixed region. Reduce the mixed "
-                                             "filament minimum layer height."));
+                        throw SlicingError(
+                            L("Local-Z cannot fit the nozzle layer height limits into this mixed region. Check the nozzle minimum "
+                              "and maximum layer heights in the printer settings."));
                     const double next_z = state.z_cursor + height;
                     if (next_z > interval.z_hi + EPSILON)
                         break;
@@ -2073,19 +2085,20 @@ static void build_local_z_plan(PrintObject&                                print
                     const bool row_is_gradient = effective_gradient_heights_for_definition(row_idx, layer_id, interval.base_height, row_h_a,
                                                                                            row_h_b);
                     if (!row_is_gradient)
-                        compute_local_z_component_heights(row_mix_b_percent, interval.base_height, settings.min_sublayer_height, row_h_a,
-                                                          row_h_b);
+                        compute_local_z_component_heights(row_mix_b_percent, interval.base_height, rows[row_idx].min_sublayer_height,
+                                                          row_h_a, row_h_b);
                     if (row_is_gradient)
                         std::swap(row_h_a, row_h_b);
                     row_passes = (row_is_gradient || active_pair.uses_layer_cycle_sequence) ?
-                                     build_local_z_two_pass_heights(interval.base_height, settings.min_sublayer_height, row_h_a, row_h_b) :
-                                     build_local_z_alternating_pass_heights(interval.base_height, settings.min_sublayer_height, row_h_a,
-                                                                            row_h_b);
+                                     build_local_z_two_pass_heights(interval.base_height, rows[row_idx].min_sublayer_height, row_h_a,
+                                                                    row_h_b) :
+                                     build_local_z_alternating_pass_heights(interval.base_height, rows[row_idx].min_sublayer_height,
+                                                                            row_h_a, row_h_b);
                 }
                 if (row_passes.empty())
                     row_passes.emplace_back(interval.base_height);
-                if (!sanitize_local_z_pass_heights(row_passes, interval.base_height, settings.min_sublayer_height))
-                    row_passes = build_uniform_local_z_pass_heights(interval.base_height, settings.min_sublayer_height);
+                if (!sanitize_local_z_pass_heights(row_passes, interval.base_height, rows[row_idx].min_sublayer_height))
+                    row_passes = build_uniform_local_z_pass_heights(interval.base_height, rows[row_idx].min_sublayer_height);
                 if (row_passes.size() > 1)
                     ++isolated_rows_with_split;
                 isolated_row_pass_heights[row_idx] = std::move(row_passes);
@@ -2107,32 +2120,32 @@ static void build_local_z_plan(PrintObject&                                print
                         ++alternating_height_intervals;
                 } else if (dominant_gradient_valid) {
                     if (dominant_is_gradient) {
-                        pass_heights = build_local_z_two_pass_heights(interval.base_height, settings.min_sublayer_height,
+                        pass_heights = build_local_z_two_pass_heights(interval.base_height, shared_min_sublayer_height,
                                                                       dominant_gradient_h_b, dominant_gradient_h_a);
                     } else {
                         const bool dominant_uses_pair_cycle = dominant_mixed_idx < rows.size() &&
                                                               row_active_pairs[dominant_mixed_idx].uses_layer_cycle_sequence;
                         pass_heights = dominant_uses_pair_cycle ?
-                                           build_local_z_two_pass_heights(interval.base_height, settings.min_sublayer_height,
+                                           build_local_z_two_pass_heights(interval.base_height, shared_min_sublayer_height,
                                                                           dominant_gradient_h_a, dominant_gradient_h_b) :
-                                           build_local_z_alternating_pass_heights(interval.base_height, settings.min_sublayer_height,
+                                           build_local_z_alternating_pass_heights(interval.base_height, shared_min_sublayer_height,
                                                                                   dominant_gradient_h_a, dominant_gradient_h_b);
                     }
                     if (pass_heights.size() > 1)
                         ++alternating_height_intervals;
                 } else {
-                    pass_heights = build_uniform_local_z_pass_heights(interval.base_height, settings.min_sublayer_height);
+                    pass_heights = build_uniform_local_z_pass_heights(interval.base_height, shared_min_sublayer_height);
                 }
             } else {
-                pass_heights = build_local_z_pass_heights(interval.base_height, settings.min_sublayer_height, settings.preferred_a,
+                pass_heights = build_local_z_pass_heights(interval.base_height, shared_min_sublayer_height, settings.preferred_a,
                                                           settings.preferred_b);
             }
         } else
             pass_heights.emplace_back(interval.base_height);
 
         if (interval.has_mixed_paint) {
-            if (!sanitize_local_z_pass_heights(pass_heights, interval.base_height, settings.min_sublayer_height))
-                pass_heights = build_uniform_local_z_pass_heights(interval.base_height, settings.min_sublayer_height);
+            if (!sanitize_local_z_pass_heights(pass_heights, interval.base_height, shared_min_sublayer_height))
+                pass_heights = build_uniform_local_z_pass_heights(interval.base_height, shared_min_sublayer_height);
         }
 
         // Ordinary two-color rows keep the planner's A/B order, just like isolated
@@ -2239,7 +2252,7 @@ static void build_local_z_plan(PrintObject&                                print
                         const bool row_is_gradient = effective_gradient_heights_for_definition(row_idx, layer_id, interval.base_height,
                                                                                                row_h_a, row_h_b);
                         if (!row_is_gradient)
-                            compute_local_z_component_heights(active_pair.mix_b_percent, interval.base_height, settings.min_sublayer_height,
+                            compute_local_z_component_heights(active_pair.mix_b_percent, interval.base_height, shared_min_sublayer_height,
                                                               row_h_a, row_h_b);
                         start_with_a = row_is_gradient ?
                                            false :
@@ -2401,7 +2414,7 @@ static void build_local_z_plan(PrintObject&                                print
                         const bool row_is_gradient = effective_gradient_heights_for_definition(row_idx, layer_id, interval.base_height,
                                                                                                row_h_a, row_h_b);
                         if (!row_is_gradient)
-                            compute_local_z_component_heights(active_pair.mix_b_percent, interval.base_height, settings.min_sublayer_height,
+                            compute_local_z_component_heights(active_pair.mix_b_percent, interval.base_height, shared_min_sublayer_height,
                                                               row_h_a, row_h_b);
                         start_with_component_a[row_idx] = row_is_gradient ?
                                                               uint8_t(0) :
@@ -2617,7 +2630,7 @@ static void build_local_z_plan(PrintObject&                                print
                                     << " max_retained_points=" << max_batch_retained_points
                                     << " retained_vertex_bytes=" << max_batch_retained_points * sizeof(Point);
         print_object.set_local_z_plan(std::move(intervals), std::move(plans));
-        export_local_z_plan_debug(print_object, settings.min_sublayer_height, diagnostics);
+        export_local_z_plan_debug(print_object, nozzle_min_layer_heights, diagnostics);
         BOOST_LOG_TRIVIAL(warning) << "Local-Z plan built"
                                    << " object=" << object_name << " mixed_intervals=" << mixed_intervals
                                    << " split_intervals=" << split_intervals << " non_split_mixed_intervals=" << non_split_mixed_intervals
@@ -2629,7 +2642,7 @@ static void build_local_z_plan(PrintObject&                                print
                                    << " mixed_state_layers=" << total_mixed_state_layers
                                    << " forced_height_resolve_calls=" << forced_height_resolve_calls
                                    << " forced_height_resolve_invalid_target=" << forced_height_resolve_invalid_target
-                                   << " min_sublayer_height=" << settings.min_sublayer_height << " preferred_a=" << settings.preferred_a
+                                   << " nozzle_height_limits=1" << " preferred_a=" << settings.preferred_a
                                    << " preferred_b=" << settings.preferred_b;
     } else {
         BOOST_LOG_TRIVIAL(warning) << "Local-Z plan empty after build"

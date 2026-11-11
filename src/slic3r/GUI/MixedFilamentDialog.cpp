@@ -959,17 +959,16 @@ void MixedFilamentDialog::build_ui()
                 unsigned char* data = img.GetData();
                 // Use physical cycle spacing so thickening the solid-zone filament
                 // also spaces out the remaining thin colored stripes in the preview.
-                const double              nominal        = std::max(context.preview_settings.gradient_cycle_height,
-                                                                    2.0 * context.preview_settings.mixed_lower_bound);
+                const double              nominal        = std::max(0.01, context.preview_settings.gradient_cycle_height);
                 const double              preview_height = std::max(1.0, double(sz.GetHeight()) / 12.0) * nominal;
                 std::vector<unsigned int> layered_ids(sz.GetHeight(), 0);
                 unsigned int              previous = 0;
                 for (double z = 0.0; z < preview_height - EPSILON;) {
                     const double progress = std::min(1.0, (z + 0.5 * std::min(nominal, preview_height - z)) / preview_height);
-                    const auto   sample   = sample_mixed_gradient_local_z(entry, context.num_physical, progress,
-                                                                          context.preview_settings.gradient_middle_window, nominal,
-                                                                          context.preview_settings.mixed_lower_bound,
-                                                                          context.max_layer_heights);
+                    const auto                      sample   = sample_mixed_gradient_local_z(entry, context.num_physical, progress,
+                                                                                             context.preview_settings.gradient_middle_window, nominal,
+                                                                                             context.preview_settings.nozzle_min_layer_heights,
+                                                                                             context.max_layer_heights);
                     std::pair<unsigned int, double> passes[] = {{sample.mix.component_b, sample.height_b},
                                                                 {sample.mix.component_a, sample.height_a}};
                     if (previous == sample.mix.component_b && sample.mix.component_a != sample.mix.component_b)

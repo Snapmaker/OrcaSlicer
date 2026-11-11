@@ -853,7 +853,6 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         config->opt_bool("dithering_local_z_mode");
     toggle_line("dithering_local_z_infill", local_z_dithering_enabled);
     toggle_line("dithering_local_z_direct_multicolor", local_z_dithering_enabled);
-    toggle_line("mixed_filament_height_lower_bound", local_z_dithering_enabled);
     toggle_line("fs_painted_zone_extra_perimeters", config->opt_bool("fs_surface_paint_only"));
 
     WipeTowerWallType wipe_tower_wall_type = config->opt_enum<WipeTowerWallType>("wipe_tower_wall_type");

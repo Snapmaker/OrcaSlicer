@@ -25,6 +25,7 @@ Each object must own a validated Local-Z plan derived from its final printable g
 - Plan after XY compensation, slice repair, and polyhole conversion; clip painted masks to that final domain. Relevant assignment, recipe, and setting edits must rebuild the plan so reused prints behave like fresh slices.
 - Own interval indexing and pass storage together. Validate layer ordering and pass ranges before publication, and use actual layer IDs, including raft offsets.
 - Cover the eligible domain within the applicable height bounds, without undersized terminal passes. Reject infeasible bounds, retain the existing first-layer policy, and limit terminal ratio approximation to one minimum-height pass.
+- Use each printing nozzle's printer-profile minimum and maximum layer heights for independent Local-Z passes. Nozzle-limit edits must rebuild the plan; legacy mixed-filament height bounds must not override these limits. Shared layer-aligned grids use the strictest minimum among their participating nozzles.
 
 ## 4. Keep Local-Z execution and purging consistent
 

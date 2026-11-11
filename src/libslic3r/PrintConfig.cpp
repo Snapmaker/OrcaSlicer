@@ -4672,11 +4672,10 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("mixed_filament_height_lower_bound", coFloat);
-    def->label    = L("Local-Z minimum sublayer height");
+    def->label    = L("Mixed filament lower height bound (legacy)");
     def->category = L("Others");
-    def->tooltip  = L("Smallest sublayer height Local-Z may assign to an active filament. "
-                       "Requested blend percentages divide the complete strict cadence-cycle height and are clamped to this minimum. "
-                       "Independent Local-Z passes also respect the printer profile's maximum layer height.");
+    def->tooltip  = L("Lower height bound retained for legacy mixed-filament layer patterns. "
+                       "Local-Z uses each printing nozzle's minimum and maximum layer heights from the printer settings.");
     def->sidetext = "mm";
     def->min = 0.01;
     def->mode = comAdvanced;

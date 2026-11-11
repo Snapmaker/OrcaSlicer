@@ -22,6 +22,7 @@
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp" // GetFilamentMatchName (family preset scan)
 
 namespace Slic3r { namespace GUI {
@@ -969,15 +970,6 @@ MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vect
         }
     }
 
-    const auto* maximums = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("max_layer_height");
-    const auto* nozzles  = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-    context.max_layer_heights.resize(context.num_physical);
-    for (size_t i = 0; i < context.num_physical; ++i) {
-        const double configured      = maximums != nullptr && !maximums->values.empty() ? maximums->get_at(i) : 0.0;
-        const double nozzle          = nozzles != nullptr && !nozzles->values.empty() ? nozzles->get_at(i) : 0.4;
-        context.max_layer_heights[i] = std::max(0.01, configured > EPSILON ? configured : 0.75 * nozzle);
-    }
-
     auto get_mixed_bool = [preset_bundle, print_cfg](const std::string& key, bool fallback) {
         if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>(key))
             return opt->value;
@@ -992,6 +984,13 @@ MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vect
         return fallback;
     };
     context.preview_settings       = mixed_filament_preview_settings(preset_bundle->project_config, print_cfg);
+    const auto& printer_config     = preset_bundle->printers.get_edited_preset().config;
+    context.preview_settings.nozzle_min_layer_heights.resize(context.num_physical);
+    context.max_layer_heights.resize(context.num_physical);
+    for (size_t i = 0; i < context.num_physical; ++i) {
+        context.preview_settings.nozzle_min_layer_heights[i] = Slicing::min_layer_height_from_nozzle(printer_config, int(i + 1));
+        context.max_layer_heights[i]                         = Slicing::max_layer_height_from_nozzle(printer_config, int(i + 1));
+    }
     context.component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
     if (const auto* opt = preset_bundle->project_config.option<ConfigOptionFloats>("filament_transmission_distance"))
         context.physical_tds = opt->values;

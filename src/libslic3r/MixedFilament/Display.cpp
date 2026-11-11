@@ -61,8 +61,12 @@ int mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament& 
     const double preferred_total = preview_settings.preferred_a_height + preview_settings.preferred_b_height;
     if (preferred_total > EPSILON)
         requested = int(std::lround(100.0 * preview_settings.preferred_b_height / preferred_total));
-    const auto   heights = mixed_filament_local_z_pair_heights(preview_settings.nominal_layer_height, preview_settings.mixed_lower_bound,
-                                                               requested);
+    const auto minimum_for = [&preview_settings](unsigned int id) {
+        return id > 0 && id <= preview_settings.nozzle_min_layer_heights.size() ? preview_settings.nozzle_min_layer_heights[id - 1] : 0.07;
+    };
+    // The layer-aligned solver uses a common pass grid for both components.
+    const double minimum = std::max(minimum_for(mf.component_a), minimum_for(mf.component_b));
+    const auto   heights = mixed_filament_local_z_pair_heights(preview_settings.nominal_layer_height, minimum, requested);
     const double total   = heights.first + heights.second;
     return total > EPSILON ? int(std::lround(100.0 * heights.second / total)) : std::clamp(requested, 0, 100);
 }

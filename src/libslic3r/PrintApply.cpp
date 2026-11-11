@@ -1,6 +1,7 @@
 #include "MixedFilament.hpp"
 #include "Model.hpp"
 #include "Print.hpp"
+#include "Slicing.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <algorithm>
@@ -1483,6 +1484,9 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     mixed_display_context.nozzle_diameters      = m_config.nozzle_diameter.values;
     mixed_display_context.color_engine          = MixedFilamentColorEngine::FullSpectrumKSPairResidual;
     auto& mixed_preview                         = mixed_display_context.preview_settings;
+    mixed_preview.nozzle_min_layer_heights.resize(num_extruders);
+    for (size_t i = 0; i < num_extruders; ++i)
+        mixed_preview.nozzle_min_layer_heights[i] = Slicing::min_layer_height_from_nozzle(m_config, int(i + 1));
     mixed_preview.mixed_lower_bound             = mixed_height_lower;
     mixed_preview.mixed_upper_bound             = mixed_height_upper;
     mixed_preview.local_z_mode                  = m_config.dithering_local_z_mode.value;

@@ -299,6 +299,7 @@ struct MixedFilamentDefinition
 };
 
 std::pair<double, double> mixed_filament_local_z_pair_heights(double height, double minimum, int mix_b_percent);
+std::pair<double, double> mixed_filament_local_z_pair_heights(double height, double minimum_a, double minimum_b, int mix_b_percent);
 bool                      mixed_filament_definition_uses_local_z(const MixedFilament& definition, bool global_local_z_enabled);
 bool                      mixed_filament_local_z_uses_full_domain(bool global_full_domain_enabled, bool mixed_filament_assigned_to_region);
 bool mixed_filament_local_z_painted_override_uses_planner(bool painted_state_is_mixed, bool painted_mixed_row_uses_local_z);
@@ -317,6 +318,7 @@ struct MixedFilamentPreviewSettings
     bool   local_z_independent_layer_height{true};
     double gradient_cycle_height{0.20};
     double gradient_middle_window{0.03};
+    std::vector<double> nozzle_min_layer_heights;
 };
 
 // Preview config precedence: project overrides, then print settings, then defaults.
@@ -369,7 +371,7 @@ MixedGradientLocalZSample sample_mixed_gradient_local_z(const MixedFilament&    
                                                         double                     progress,
                                                         double                     middle_window,
                                                         double                     nominal_height,
-                                                        double                     minimum_height,
+                                                        const std::vector<double>& min_layer_heights,
                                                         const std::vector<double>& max_layer_heights);
 std::vector<unsigned int> mixed_gradient_components(const MixedFilament& entry, size_t num_physical);
 std::vector<float>        mixed_gradient_stops(const MixedFilament& entry, size_t num_physical);

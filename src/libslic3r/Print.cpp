@@ -455,6 +455,8 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         } else if (
                 opt_key == "initial_layer_print_height" 
             || opt_key == "nozzle_diameter" 
+            || opt_key == "min_layer_height"
+            || opt_key == "max_layer_height"
             || opt_key == "filament_shrink" 
             || opt_key == "filament_shrinkage_compensation_z"
             || opt_key == "resolution" 
@@ -524,8 +526,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             //FIXME Killing supports on any change of "filament_soluble" is rough. We should check for each object whether that is necessary.
             osteps.emplace_back(posSupportMaterial);
             osteps.emplace_back(posSimplifySupportPath);
-        } else if (opt_key == "initial_layer_line_width" || opt_key == "min_layer_height" ||
-                   opt_key == "max_layer_height"
+        } else if (opt_key == "initial_layer_line_width"
                    //|| opt_key == "resolution"
                    // BBS: when enable arc fitting, we must re-generate perimeter
                    || opt_key == "enable_arc_fitting" || opt_key == "print_order" || opt_key == "wall_sequence") {

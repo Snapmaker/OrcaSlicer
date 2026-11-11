@@ -163,7 +163,8 @@ TEST_CASE("Local-Z prime towers emit every planned layer and extrusion", "[Produ
     config.set("mixed_filament_definitions", manager.serialize_custom_entries());
     config.set("layer_height", layer_height);
     config.set("initial_layer_print_height", .20);
-    config.set("mixed_filament_height_lower_bound", .06);
+    config.option<ConfigOptionFloats>("min_layer_height")
+        ->values.assign(config.option<ConfigOptionFloats>("nozzle_diameter")->values.size(), .06);
     config.set("dithering_local_z_mode", true);
     config.set("dithering_local_z_infill", true);
     config.set("enable_prime_tower", true);
@@ -479,7 +480,8 @@ TEST_CASE("Product gradient and direct multicolor modes subdivide assigned objec
     config.set("dithering_local_z_gradient_layer_height", .20);
     config.option<ConfigOptionPercent>("dithering_local_z_gradient_middle_filament_window")->value = 0;
 
-    config.set("mixed_filament_height_lower_bound", .06);
+    config.option<ConfigOptionFloats>("min_layer_height")
+        ->values.assign(config.option<ConfigOptionFloats>("nozzle_diameter")->values.size(), .06);
     config.set("fs_surface_paint_only", painted && surface_only);
     config.set("fs_painted_zone_extra_perimeters", painted ? 1 : 0);
     config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
@@ -634,7 +636,8 @@ TEST_CASE("SML restores direct independent heights for painted two and three fil
     config.set("mixed_filament_definitions", manager.serialize_custom_entries());
     config.set("layer_height", .12);
     config.set("initial_layer_print_height", .20);
-    config.set("mixed_filament_height_lower_bound", .06);
+    config.option<ConfigOptionFloats>("min_layer_height")
+        ->values.assign(config.option<ConfigOptionFloats>("nozzle_diameter")->values.size(), .06);
     config.set("dithering_local_z_mode", false);
     config.set("dithering_local_z_direct_multicolor", false);
     config.set("dithering_local_z_independent_layer_height", false);
@@ -1139,7 +1142,7 @@ TEST_CASE("Gradient solid-zone ramps thicken only the approaching filament", "[P
     row.gradient_stop_positions = {0.f, .25f, .5f, .75f, 1.f};
     row.gradient_solid_widths   = {0.f, .03f, 0.f};
     const auto sample           = [&](double t, double maximum = .30) {
-        return sample_mixed_gradient_local_z(row, 3, t, .03, .20, .06, {.30, maximum, .30});
+        return sample_mixed_gradient_local_z(row, 3, t, .03, .20, {.06, .06, .06}, {.30, maximum, .30});
     };
     const auto white_height = [](const MixedGradientLocalZSample& value) {
         return value.mix.component_a == 2 ? value.height_a : value.height_b;
@@ -1186,14 +1189,14 @@ TEST_CASE("Gradient ramp follows moved stops and per-filament printer limits", "
     row.gradient_end            = 1.f;
     row.gradient_stop_positions = {0.f, .1f, .3f, .5f, .7f, .9f, 1.f};
     row.gradient_solid_widths   = {0.f, .04f, .08f, 0.f};
-    auto first                  = sample_mixed_gradient_local_z(row, 4, .3, .03, .20, .06, {.3, .24, .27, .3});
-    auto second                 = sample_mixed_gradient_local_z(row, 4, .7, .03, .20, .06, {.3, .24, .27, .3});
+    auto first                  = sample_mixed_gradient_local_z(row, 4, .3, .03, .20, {.06, .06, .06, .06}, {.3, .24, .27, .3});
+    auto second                 = sample_mixed_gradient_local_z(row, 4, .7, .03, .20, {.06, .06, .06, .06}, {.3, .24, .27, .3});
     CHECK(first.mix.component_a == 3);
     CHECK(first.height_a == Approx(.27));
     CHECK(second.mix.component_a == 2);
     CHECK(second.height_a == Approx(.24));
     // With a different cycle setting, the target remains nominal + .08.
-    first = sample_mixed_gradient_local_z(row, 4, .3, .03, .12, .04, {.3, .3, .3, .3});
+    first = sample_mixed_gradient_local_z(row, 4, .3, .03, .12, {.04, .04, .04, .04}, {.3, .3, .3, .3});
     CHECK(first.height_a == Approx(.20));
 }
 
@@ -1257,7 +1260,8 @@ TEST_CASE("Sliced gradients ramp on both sides of the solid zone within printer 
     config.set("mixed_filament_definitions", manager.serialize_custom_entries());
     config.set("layer_height", .20);
     config.set("initial_layer_print_height", .20);
-    config.set("mixed_filament_height_lower_bound", .06);
+    config.option<ConfigOptionFloats>("min_layer_height")
+        ->values.assign(config.option<ConfigOptionFloats>("nozzle_diameter")->values.size(), .06);
     config.set("dithering_local_z_gradient_layer_height", .20);
     config.option<ConfigOptionStrings>("filament_colour")->values  = colors;
     config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75};

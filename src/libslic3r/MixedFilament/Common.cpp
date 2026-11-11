@@ -14,6 +14,14 @@ namespace Slic3r {
 
 std::pair<double, double> mixed_filament_local_z_pair_heights(double nominal_layer_height, double min_sublayer_height, int mix_b_percent)
 {
+    return mixed_filament_local_z_pair_heights(nominal_layer_height, min_sublayer_height, min_sublayer_height, mix_b_percent);
+}
+
+std::pair<double, double> mixed_filament_local_z_pair_heights(double nominal_layer_height,
+                                                              double minimum_a,
+                                                              double minimum_b,
+                                                              int    mix_b_percent)
+{
     const double height = std::max(0.0, nominal_layer_height);
     if (height <= EPSILON)
         return {0.0, 0.0};
@@ -24,11 +32,17 @@ std::pair<double, double> mixed_filament_local_z_pair_heights(double nominal_lay
     if (mix_b >= 100)
         return {0.0, height};
 
-    const double minimum = std::max(0.01, min_sublayer_height);
-    if (height < 2.0 * minimum - EPSILON)
+    minimum_a = std::max(0.01, minimum_a);
+    minimum_b = std::max(0.01, minimum_b);
+    if (height < minimum_a + minimum_b - EPSILON) {
+        if (height >= minimum_a - EPSILON && height < minimum_b - EPSILON)
+            return {height, 0.0};
+        if (height >= minimum_b - EPSILON && height < minimum_a - EPSILON)
+            return {0.0, height};
         return mix_b < 50 ? std::pair<double, double>{height, 0.0} : std::pair<double, double>{0.0, height};
+    }
 
-    const double height_b = std::clamp(height * double(mix_b) / 100.0, minimum, height - minimum);
+    const double height_b = std::clamp(height * double(mix_b) / 100.0, minimum_b, std::max(minimum_b, height - minimum_a));
     return {height - height_b, height_b};
 }
 

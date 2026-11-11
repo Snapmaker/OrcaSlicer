@@ -317,6 +317,8 @@ set(lisbslic3r_sources
     MixedFilament/Pattern.cpp
     MixedFilament/Preview.cpp
     MixedFilament/Resolver.cpp
+    MixedFilament/Recommendations.cpp
+    MixedFilament/Recommendations.hpp
     MixedFilament/Serialization.cpp
     MixedFilament/Serialization.hpp
     MixedFilament/Slicing.hpp

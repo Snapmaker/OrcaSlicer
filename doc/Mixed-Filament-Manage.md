@@ -42,6 +42,9 @@ The saved section shows existing recipes in their stored order. Swatches keep
 their opening filament numbers throughout the dialog. Gradients retain their
 gradient swatches and direction tooltips; ordinary recipes show component slots
 and percentages. Clicking a saved swatch toggles a pending removal.
+**Remove all**, below the saved swatches, marks every saved recipe for removal.
+It becomes disabled once all are marked; individual swatches can still be
+unmarked. Confirm applies the removals, while Cancel discards them.
 Saved weighted recipes and recommendations use the same requested-ratio color
 prediction, so registration does not change the color shown inside Manage.
 

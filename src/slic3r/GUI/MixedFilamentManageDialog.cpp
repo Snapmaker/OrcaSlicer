@@ -102,8 +102,9 @@ private:
     std::array<CollapsibleSubSection*, 2> m_groups{};
     std::array<BatchSwatchGrid*, 2>       m_recommendation_grids{};
     std::array<std::vector<size_t>, 2>    m_group_indices;
-    Button*                               m_confirm = nullptr;
-    Button*                               m_cancel  = nullptr;
+    Button*                               m_confirm    = nullptr;
+    Button*                               m_cancel     = nullptr;
+    Button*                               m_remove_all = nullptr;
 
     wxStaticText* label(wxWindow* parent, const wxString& text, bool heading = false)
     {
@@ -189,6 +190,16 @@ private:
                     refresh_state();
                 },
                 FromDIP(8));
+            m_remove_all = new Button(saved_body, _CTX("Remove all", "MixedFilaments"));
+            m_remove_all->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
+            m_remove_all->SetToolTip(_L("Mark all saved mixed filaments for removal. Changes are applied when you click Confirm."));
+            m_remove_all->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+                for (auto& saved : m_catalog.saved)
+                    saved.removed = true;
+                track_manage("remove_all", {{"count", m_catalog.removals()}});
+                refresh_state();
+            });
+            saved_sizer->Add(m_remove_all, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
         }
 
         content->Add(m_saved_section, 0, wxEXPAND | wxALL, FromDIP(8));
@@ -343,6 +354,11 @@ private:
             m_select_all->Enable(any_available);
         for (size_t i = 0; i < m_catalog.saved.size(); ++i)
             m_saved_grid->set_mark(i, m_catalog.saved[i].removed ? -1 : 0);
+        if (m_remove_all) {
+            const bool can_remove = m_catalog.removals() < m_catalog.saved.size();
+            if (m_remove_all->IsEnabled() != can_remove)
+                m_remove_all->Enable(can_remove);
+        }
         // Swatch marks never change geometry. Only removing an error banner
         // requires the expensive parent layout.
         if (had_error)
@@ -425,6 +441,8 @@ private:
         SetMinSize(FromDIP(wxSize(500, 500)));
         m_confirm->Rescale();
         m_cancel->Rescale();
+        if (m_remove_all)
+            m_remove_all->Rescale();
         for (auto* grid : m_grids)
             grid->rescale();
         m_select_all->rescale();

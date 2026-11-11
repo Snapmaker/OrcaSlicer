@@ -15997,6 +15997,15 @@ msgstr "混色耗材管理"
 msgid "Saved Mixed Filaments"
 msgstr "已创建混色"
 
+# Mixed filament management.
+msgctxt "MixedFilaments"
+msgid "Remove all"
+msgstr "全部移除"
+
+# Mixed filament management.
+msgid "Mark all saved mixed filaments for removal. Changes are applied when you click Confirm."
+msgstr "标记所有已保存的混色耗材以供移除。点击“确认”后应用更改。"
+
 # Mixed filament management (PRD 2.0).
 msgid "No mixed filaments"
 msgstr "No mixed filaments"

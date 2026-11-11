@@ -552,8 +552,8 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     gcodegen.m_writer.add_object_end_labels(gcode);
 
     double current_z = gcodegen.writer().get_position().z();
-    if (z == -1.) // in case no specific z was provided, print at current_z pos
-        z = current_z;
+    if (z == -1.) // in case no specific z was provided, print at the logical layer Z;
+        z = gcodegen.nominal_z() > 0. ? gcodegen.nominal_z() : current_z; // defer to the writer's physical Z while priming, before change_layer() has run
     if (!is_approx(z, current_z)) {
         gcode += gcodegen.writer().retract();
         gcode += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");
@@ -802,8 +802,8 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
 
     double current_z = gcodegen.writer().get_position().z();
-    if (z == -1.) // in case no specific z was provided, print at current_z pos
-        z = current_z;
+    if (z == -1.) // in case no specific z was provided, print at the logical layer Z;
+        z = gcodegen.nominal_z() > 0. ? gcodegen.nominal_z() : current_z; // defer to the writer's physical Z while priming, before change_layer() has run
 
     const bool will_go_down = !is_approx(z, current_z);
     if (!tcr.priming && (tcr.is_finish_first || will_go_down)) {

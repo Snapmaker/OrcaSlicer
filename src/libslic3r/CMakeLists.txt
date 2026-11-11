@@ -284,6 +284,8 @@ set(lisbslic3r_sources
     LocalZ/LocalZHeight.hpp
     LocalZ/LocalZPlan.hpp
     LocalZ/LocalZPlan.cpp
+    LocalZ/LocalZPlanner.hpp
+    LocalZ/LocalZPlanner.cpp
     LocalZ/LocalZMaskPreparation.hpp
     LocalZ/LocalZMaskPreparation.cpp
     LocalZ/LocalZSchedule.hpp
@@ -315,6 +317,8 @@ set(lisbslic3r_sources
     MixedFilament/Pattern.cpp
     MixedFilament/Preview.cpp
     MixedFilament/Resolver.cpp
+    MixedFilament/Slicing.hpp
+    MixedFilament/Slicing.cpp
     MixedFilament.cpp
     FullSpectrumKSPairResidual.cpp
     FullSpectrumICCPolynomialEstimator.cpp

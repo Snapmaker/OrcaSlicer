@@ -21,7 +21,6 @@ struct SubLayerPlan
     size_t                  dependency_order{0};
     std::vector<ExPolygons> painted_masks_by_extruder;
     std::vector<ExPolygons> fixed_painted_masks_by_extruder;
-    ExPolygons              base_masks;
 };
 
 struct LocalZInterval

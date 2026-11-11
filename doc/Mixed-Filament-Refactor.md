@@ -44,6 +44,8 @@ Independent cadence tracks the end of each contiguous eligible mixed domain. Bef
 
 `LocalZMaskPreparation` owns fixed-paint precedence and boundary expansion for both purge planning and G-code emission. `LocalZSchedule` produces ordered tool/pass phases from geometry-independent descriptors; both consumers use that scheduler, including its height-order fallback.
 
+The planner now lives in `LocalZ/LocalZPlanner.cpp`. Effective settings, row recipes/cadence state, and immutable geometry preparation have separate contracts. Base-mask geometry used only by JSON/SVG diagnostics is captured only when `ORCA_LOCAL_Z_DEBUG=1` and is not retained in the execution plan. The disabled dense-zone shared-plane fallback has been removed.
+
 ## Product behavior retained
 
 This port retains Snorca's multi-digit filament and manual-pattern encoding, filament-count limits, deletion remapping, and the product's calibrated color selection. Gradient previews retain the FilamentMixer endpoint correction and 3% default solid-color width. Direct multicolor, independent Local-Z heights, first-layer protection, painting controls, and the prime-tower return-to-object-filament fix remain part of the product baseline.

@@ -5428,10 +5428,9 @@ void PrintConfigDef::init_fff_params()
     def = this->add("enable_overlap_area_carving", coBool);
     def->label = L("Carve overlaps by per-layer slice area");
     def->category = L("Other");
-    def->tooltip = L("Controls how overlaps between different-extruder parts are carved. Enabled: the 2.4.1 "
-                   "rule - on each layer the smaller slice area wins, and while the two areas stay within "
-                   "1.5x the region listed first wins. Disabled (default): the legacy rule - the part "
-                   "listed last always carves the parts before it. Developer option.");
+    def->tooltip = L("When enabled, overlaps between multi-extruder parts are carved with the new "
+                   "algorithm: on each layer, the part with the smaller slice area owns the overlap, "
+                   "keeping small details intact inside larger bodies. Developer option.");
     def->mode = comDevelop;
     def->set_default_value(new ConfigOptionBool(false));
 

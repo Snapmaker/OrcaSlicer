@@ -38,8 +38,8 @@ msgstr "当前AMS湿度"
 msgid "Carve overlaps by per-layer slice area"
 msgstr "按逐层切片面积裁切重叠"
 
-msgid "Controls how overlaps between different-extruder parts are carved. Enabled: the 2.4.1 rule - on each layer the smaller slice area wins, and while the two areas stay within 1.5x the region listed first wins. Disabled (default): the legacy rule - the part listed last always carves the parts before it. Developer option."
-msgstr "控制不同挤出机部件之间重叠区域的裁切方式。开启时采用 2.4.1 规则：每层由切片面积较小的一方胜出，两侧面积比在 1.5 倍以内时由先列出的一方胜出。关闭时（默认）采用旧规则：后列出的部件总是裁切先列出的部件。开发者选项。"
+msgid "When enabled, overlaps between multi-extruder parts are carved with the new algorithm: on each layer, the part with the smaller slice area owns the overlap, keeping small details intact inside larger bodies. Developer option."
+msgstr "开启后，多色部件间的重叠区域使用新算法裁切：每层由切片面积较小的部件占有重叠区，嵌入大部件的小细节得以保留。开发者选项。"
 
 msgid "Drying"
 msgstr "烘干"

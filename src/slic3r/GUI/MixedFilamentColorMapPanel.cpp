@@ -8,46 +8,7 @@ namespace Slic3r { namespace GUI {
 
 wxColour blend_multi_filament_mixer(const std::vector<wxColour>& colors, const std::vector<double>& weights)
 {
-    if (colors.empty() || weights.empty())
-        return wxColour("#26A69A");
-
-    unsigned char out_r              = 0;
-    unsigned char out_g              = 0;
-    unsigned char out_b              = 0;
-    double        accumulated_weight = 0.0;
-    bool          has_color          = false;
-
-    for (size_t i = 0; i < colors.size() && i < weights.size(); ++i) {
-        const double weight = std::max(0.0, weights[i]);
-        if (weight <= 0.0)
-            continue;
-
-        const wxColour      safe = colors[i].IsOk() ? colors[i] : wxColour("#26A69A");
-        const unsigned char r    = static_cast<unsigned char>(safe.Red());
-        const unsigned char g    = static_cast<unsigned char>(safe.Green());
-        const unsigned char b    = static_cast<unsigned char>(safe.Blue());
-
-        if (!has_color) {
-            out_r              = r;
-            out_g              = g;
-            out_b              = b;
-            accumulated_weight = weight;
-            has_color          = true;
-            continue;
-        }
-
-        const double new_total = accumulated_weight + weight;
-        if (new_total <= 0.0)
-            continue;
-        const float t = float(weight / new_total);
-        ::Slic3r::filament_mixer_lerp(out_r, out_g, out_b, r, g, b, t, &out_r, &out_g, &out_b);
-        accumulated_weight = new_total;
-    }
-
-    if (!has_color)
-        return wxColour("#26A69A");
-
-    return wxColour(out_r, out_g, out_b);
+    return blend_preview_colors(colors, weights);
 }
 
 // --- MixedFilamentColorMapPanel ---

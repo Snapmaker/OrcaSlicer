@@ -2493,11 +2493,26 @@ void MixedFilamentBatchDialog::launch_background_match()
     auto cancel_token = m_cancel_requested;
     auto progress_bar = m_progress_bar;
 
-    m_worker_thread = std::thread([this, model_colors, manual_colors, all_physical,
-                                    preset_colors, preset_family_names, matching_method, existing_mixed_count,
-                                    destroyed, cancel_token, progress_bar,
-                                    manual_full_ids = std::move(manual_full_ids_c)]()
-    {
+    auto context = build_mixed_filament_display_context(matching_method == MANUAL ? manual_colors : preset_colors);
+    if (matching_method == RECOMMENDED) {
+        context.physical_tds.assign(preset_colors.size(), 0.0);
+        context.physical_material_ids.assign(preset_colors.size(), "");
+        for (size_t i = 0; i < preset_colors.size() && i < preset_family_names.size(); ++i) {
+            FilamentColorInfo info;
+            if (!FilamentColorLibrary::Instance().FindFilamentByName(preset_family_names[i], info))
+                continue;
+            for (const auto& item : info.colors) {
+                if (item.colorData.colors.size() == 1 && item.colorData.PrimaryColor() == NormalizeFilamentHexColor(preset_colors[i])) {
+                    context.physical_tds[i]          = item.tdValue;
+                    context.physical_material_ids[i] = item.fullSpectrumMaterialId;
+                    break;
+                }
+            }
+        }
+    }
+    m_worker_thread = std::thread([this, model_colors, manual_colors, all_physical, context, preset_colors, preset_family_names,
+                                   matching_method, existing_mixed_count, destroyed, cancel_token, progress_bar,
+                                   manual_full_ids = std::move(manual_full_ids_c)]() {
         std::vector<std::string> physical_colors;
         if (matching_method == MANUAL) {
             physical_colors = manual_colors;
@@ -2543,7 +2558,10 @@ void MixedFilamentBatchDialog::launch_background_match()
             size_t best_idx = 0;
             for (size_t j = 0; j < existing_palette.size(); ++j) {
                 double de = color_delta_e00(mc.color, existing_palette[j]);
-                if (de < best_de) { best_de = de; best_idx = j; }
+                if (de < best_de) {
+                    best_de  = de;
+                    best_idx = j;
+                }
             }
             if (best_de < K_REUSE_THRESHOLD && best_idx < existing_ids.size()) {
                 // Direct mapping to existing filament
@@ -2591,7 +2609,8 @@ void MixedFilamentBatchDialog::launch_background_match()
                                   ? 100
                                   : kAutoMaxPairComponentPercent;
         if (!unmatched_colors.empty()) {
-            auto sub_result = batch_match_model_colors(unmatched_colors, physical_colors, match_min, match_max, cancel_token,
+            auto sub_result = batch_match_model_colors(
+                unmatched_colors, physical_colors, match_min, match_max, cancel_token,
                 [progress_bar, destroyed](int done, int total) {
                     if (progress_bar && !destroyed->load()) {
                         wxGetApp().CallAfter([progress_bar, done, total, destroyed]() {
@@ -2600,7 +2619,7 @@ void MixedFilamentBatchDialog::launch_background_match()
                         });
                     }
                 },
-                /*check_compatible=*/ false);
+                /*check_compatible=*/false, &context);
             if (sub_result.success) {
                 // Offset virtual IDs: start after all existing filaments
                 assign_batch_virtual_filament_ids(sub_result, physical_colors.size(), existing_mixed_count);
@@ -2642,7 +2661,8 @@ void MixedFilamentBatchDialog::launch_background_match()
                 if (!mapping.recipe.gradient_component_ids.empty()) {
                     auto ids = MixedFilamentManager::decode_gradient_component_ids(
                         mapping.recipe.gradient_component_ids);
-                    for (auto& id : ids) remap_id(id);
+                    for (auto& id : ids)
+                        remap_id(id);
                     mapping.recipe.gradient_component_ids =
                         MixedFilamentManager::encode_gradient_component_ids(ids);
                 }
@@ -2689,7 +2709,8 @@ void MixedFilamentBatchDialog::launch_background_match()
             // output shades, losing per-source traceability); merge_duplicate_recipe_mappings
             // above only collapses byte-identical recipes, which is lossless for ΔE.
             double sum_de = 0.0;
-            for (const auto& m : result.mappings) sum_de += m.delta_e;
+            for (const auto& m : result.mappings)
+                sum_de += m.delta_e;
             result.avg_delta_e = sum_de / double(result.mappings.size());
             // Use full project filament indices for manual mode
             if (need_manual_remap) {

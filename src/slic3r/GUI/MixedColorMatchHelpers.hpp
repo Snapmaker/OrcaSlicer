@@ -80,7 +80,7 @@ private:
     size_t m_n;
     // m_pair[a][b-a][percent] for b >= a; symmetric access via get()
     std::vector<std::vector<std::vector<CIELab>>> m_pair;
-    friend BlendLUT build_blend_lut(const std::vector<wxColour>& palette);
+    friend BlendLUT build_blend_lut(const std::vector<wxColour>& palette, const MixedFilamentDisplayContext* context);
 };
 
 struct MixedColorMatchRecipeResult
@@ -119,20 +119,25 @@ CIELab sRGB_to_CIELab(const wxColour& c);
 
 double  delta_e_lab(const CIELab& a, const CIELab& b);
 
-BlendLUT build_blend_lut(const std::vector<wxColour>& palette);
+BlendLUT build_blend_lut(const std::vector<wxColour>& palette, const MixedFilamentDisplayContext* context = nullptr);
 
 /// Multi-color blend via sequential polynomial pigment mixing in
 /// filament-ID-ascending order, then sRGB→CIELab.
-CIELab blend_weighted_lab_accurate(const std::vector<wxColour>& palette,
-                                    const std::vector<unsigned int>& ids,
-                                    const std::vector<int>& weights);
+CIELab blend_weighted_lab_accurate(const std::vector<wxColour>&       palette,
+                                   const std::vector<unsigned int>&   ids,
+                                   const std::vector<int>&            weights,
+                                   const MixedFilamentDisplayContext* context = nullptr);
 
-MixedColorMatchRecipeResult build_best_color_match_recipe(
-    const std::vector<std::string> &physical_colors,
-    const wxColour                 &target_color,
-    int                             min_component_percent = 0,
-    int                             max_component_percent = 100,
-    bool                            check_compatible = true);
+MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std::string>&    physical_colors,
+                                                          const wxColour&                    target_color,
+                                                          int                                min_component_percent = 0,
+                                                          int                                max_component_percent = 100,
+                                                          bool                               check_compatible      = true,
+                                                          const MixedFilamentDisplayContext* context               = nullptr);
+
+// Preview-only callers share a published immutable palette. Background recipe
+// searches receive an explicit snapshot through their API instead.
+wxColour blend_preview_colors(const std::vector<wxColour>& colors, const std::vector<double>& weights);
 
 // ---- display context helpers ----
 MixedFilamentDisplayContext build_mixed_filament_display_context(
@@ -237,14 +242,14 @@ std::vector<ModelColorEntry> extract_model_colors(const Slic3r::Print& print);
 
 /// Main entry: batch-match all model colors to filament recipes.
 /// Callable from background thread (cancel_token checked per-color).
-BatchMatchResult batch_match_model_colors(
-    const std::vector<ModelColorEntry>&          model_colors,
-    const std::vector<std::string>&             physical_colors,
-    int                                          min_component_percent,
-    int                                          max_component_percent = 100,
-    std::shared_ptr<std::atomic<bool>>           cancel_token = nullptr,
-    std::function<void(int,int)>                 progress_callback = nullptr,
-    bool                                         check_compatible = true);
+BatchMatchResult batch_match_model_colors(const std::vector<ModelColorEntry>& model_colors,
+                                          const std::vector<std::string>&     physical_colors,
+                                          int                                 min_component_percent,
+                                          int                                 max_component_percent = 100,
+                                          std::shared_ptr<std::atomic<bool>>  cancel_token          = nullptr,
+                                          std::function<void(int, int)>       progress_callback     = nullptr,
+                                          bool                                check_compatible      = true,
+                                          const MixedFilamentDisplayContext*  context               = nullptr);
 
 #if 0 // Dead code — no deduplication is performed (explicit policy since phase2)
 /// Deduplicate mappings where matched colors are visually close (ΔE < 1.5).

@@ -98,6 +98,14 @@ inline std::filesystem::path preferences_plist_path()
     return home / "Library" / "Preferences" / (std::string(kBundleId) + ".plist");
 }
 
+inline std::filesystem::path saved_state_dir()
+{
+    const auto home = home_path();
+    if (home.empty())
+        return {};
+    return home / "Library" / "Saved Application State" / (std::string(kBundleId) + ".savedState");
+}
+
 inline bool is_managed_install_path(const std::filesystem::path& bundle)
 {
     if (bundle.empty() || !bundle.is_absolute())
@@ -136,7 +144,8 @@ inline bool safe_remove_exact(const std::filesystem::path& expected)
 {
     namespace fs = std::filesystem;
     if (expected.empty() ||
-        (expected != support_dir() && expected != webkit_data_dir() && expected != caches_dir() && expected != http_storages_dir()))
+        (expected != support_dir() && expected != webkit_data_dir() && expected != caches_dir() &&
+         expected != http_storages_dir() && expected != saved_state_dir()))
         return false;
 
     std::error_code ec;

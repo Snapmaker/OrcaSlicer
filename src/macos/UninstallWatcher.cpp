@@ -497,8 +497,10 @@ void remove_helper_dir()
 
 void remove_user_data_dir(const std::filesystem::path& path)
 {
-    if (!SnapmakerUninstall::safe_remove_exact(path))
+    if (!SnapmakerUninstall::safe_remove_exact(path)) {
         syslog(LOG_ERR, "Snapmaker Orca Monitor: could not safely remove %s", path.c_str());
+        log_line("could not safely remove " + path.string());
+    }
 }
 
 // The watcher always removes itself once the prompt is answered: the app is
@@ -511,12 +513,13 @@ void remove_user_data_dir(const std::filesystem::path& path)
     run_command({"/bin/launchctl", "disable", gui_domain() + "/" + SnapmakerUninstall::kLabel}, false);
 
     if (delete_user_data) {
-        log_line("removing Snapmaker Orca user data: Application Support, WebKit, caches, HTTP storage, preferences");
+        log_line("removing Snapmaker Orca user data: Application Support, WebKit, caches, HTTP storage, preferences, saved state");
         remove_user_data_dir(SnapmakerUninstall::webkit_data_dir());
         remove_user_data_dir(SnapmakerUninstall::caches_dir());
         remove_user_data_dir(SnapmakerUninstall::http_storages_dir());
         remove_http_cookie_files();
         remove_preferences_plist();
+        remove_user_data_dir(SnapmakerUninstall::saved_state_dir());
     }
 
     remove_helper_dir();
@@ -539,7 +542,11 @@ int main()
     }
 
     log_line("watching for a Trash uninstall");
-    unsigned retry_delay = 30;
+    unsigned retry_delay   = 30;
+    unsigned dialog_failed = 0;
+    // A dialog that never succeeds (for example a broken osascript) must not keep
+    // the watcher alive forever; give up and self-remove without touching user data.
+    constexpr unsigned kMaxDialogFailures = 10;
     for (;;) {
         const WatchState state = load_state();
         if (!state.valid || !state.seen) {
@@ -555,12 +562,18 @@ int main()
         const WatchState current = load_state();
         if (!current.valid || !current.seen || current.bundle != state.bundle || !bundle_missing(state.bundle)) {
             log_line("installation state changed while the dialog was open; skipping cleanup");
+            dialog_failed = 0;
             continue;
         }
         if (choice == Choice::DeleteData)
             finish(true);
         if (choice == Choice::KeepData)
             finish(false);
+        if (++dialog_failed >= kMaxDialogFailures) {
+            log_line("dialog failed " + std::to_string(dialog_failed) + " times; removing the watcher");
+            syslog(LOG_ERR, "Snapmaker Orca Monitor: dialog failed %u times; removing the watcher", dialog_failed);
+            finish(false);
+        }
         // Bound the retry log growth when the dialog keeps failing.
         std::this_thread::sleep_for(std::chrono::seconds(retry_delay));
         retry_delay = std::min(retry_delay * 2, 300u);

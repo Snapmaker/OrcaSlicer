@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <thread>
 #include <vector>
@@ -133,6 +134,14 @@ bool write_text_atomic(const std::filesystem::path& path, const std::string& tex
         return false;
     }
     return true;
+}
+
+std::string read_text_file(const std::filesystem::path& path)
+{
+    std::ifstream in(path, std::ios::binary);
+    if (!in)
+        return {};
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
 }
 
 bool files_equal(const boost::filesystem::path& left, const boost::filesystem::path& right)
@@ -335,7 +344,10 @@ void ensure_macos_uninstall_watcher()
 
     const auto launchctl_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
     const bool loaded             = service_loaded(launchctl_deadline);
-    if (!loaded || replaced) {
+    // Rewrite and reload when only the plist changed: otherwise plist-only updates
+    // (new keys, tweaked scheduling) never reach machines whose helper binary is unchanged.
+    const bool plist_stale = read_text_file(plist_path) != plist;
+    if (!loaded || replaced || plist_stale) {
         if (!write_text_atomic(plist_path, plist)) {
             BOOST_LOG_TRIVIAL(error) << "Failed to write LaunchAgent plist";
             return;
@@ -356,9 +368,9 @@ void ensure_macos_uninstall_watcher()
         return;
     }
 
-    if (replaced) {
-        // bootout first so launchd drops the previous program path; kickstart would
-        // keep running the previous binary.
+    if (replaced || plist_stale) {
+        // bootout first so launchd drops the previous program path and reloads the
+        // plist; kickstart would keep running the previous binary and configuration.
         run_quiet({"/bin/launchctl", "bootout", launchd_domain() + "/" + SnapmakerUninstall::kLabel}, launchctl_deadline);
         const int rc = run_quiet({"/bin/launchctl", "bootstrap", launchd_domain(), plist_path.string()}, launchctl_deadline);
         if (rc != 0 && !service_loaded(launchctl_deadline))

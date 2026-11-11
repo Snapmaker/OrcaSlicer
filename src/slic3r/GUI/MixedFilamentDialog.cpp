@@ -944,20 +944,41 @@ void MixedFilamentDialog::build_ui()
                 const auto     context = build_mixed_filament_display_context(m_filament_colours);
                 wxImage img(sz.GetWidth(), sz.GetHeight());
                 unsigned char* data = img.GetData();
+                // Use physical cycle spacing so thickening the solid-zone filament
+                // also spaces out the remaining thin colored stripes in the preview.
+                const double              nominal        = std::max(context.preview_settings.gradient_cycle_height,
+                                                                    2.0 * context.preview_settings.mixed_lower_bound);
+                const double              preview_height = std::max(1.0, double(sz.GetHeight()) / 12.0) * nominal;
+                std::vector<unsigned int> layered_ids(sz.GetHeight(), 0);
+                unsigned int              previous = 0;
+                for (double z = 0.0; z < preview_height - EPSILON;) {
+                    const double progress = std::min(1.0, (z + 0.5 * std::min(nominal, preview_height - z)) / preview_height);
+                    const auto   sample   = sample_mixed_gradient_local_z(entry, context.num_physical, progress,
+                                                                          context.preview_settings.gradient_middle_window, nominal,
+                                                                          context.preview_settings.mixed_lower_bound,
+                                                                          context.max_layer_heights);
+                    std::pair<unsigned int, double> passes[] = {{sample.mix.component_b, sample.height_b},
+                                                                {sample.mix.component_a, sample.height_a}};
+                    if (previous == sample.mix.component_b && sample.mix.component_a != sample.mix.component_b)
+                        std::swap(passes[0], passes[1]);
+                    for (const auto& pass : passes) {
+                        if (pass.second <= EPSILON)
+                            continue;
+                        const double end         = std::min(preview_height, z + pass.second);
+                        const int    first_pixel = int(std::lround(z / preview_height * sz.GetHeight()));
+                        const int    last_pixel  = int(std::lround(end / preview_height * sz.GetHeight()));
+                        for (int pixel = first_pixel; pixel < last_pixel; ++pixel)
+                            layered_ids[sz.GetHeight() - 1 - pixel] = pass.first;
+                        z        = end;
+                        previous = pass.first;
+                    }
+                }
                 // Vertical gradient: top = cb-last, bottom = ca-first
                 // (t=1.0 at top→pure cb, t=0 at bottom→pure ca, matching gradient_start/end direction 0)
                 for (int y = 0; y < sz.GetHeight(); ++y) {
                     float t = (sz.GetHeight() > 1) ? 1.0f - float(y) / float(sz.GetHeight() - 1) : 0.5f;
                     wxColour c(mixed_gradient_display_color(entry, context, t));
-                    const auto pair = sample_mixed_gradient(entry, context.num_physical, t, context.preview_settings.gradient_middle_window);
-                    const auto   heights = mixed_filament_local_z_pair_heights(std::max(context.preview_settings.gradient_cycle_height,
-                                                                                        2.0 * context.preview_settings.mixed_lower_bound),
-                                                                               context.preview_settings.mixed_lower_bound,
-                                                                               pair.mix_b_percent);
-                    const double cycle   = heights.first + heights.second;
-                    const unsigned int layer_id = std::fmod(double(sz.GetHeight() - y - 1), 12.0) / 12.0 < heights.first / cycle ?
-                                                      pair.component_a :
-                                                      pair.component_b;
+                    const unsigned int layer_id = layered_ids[y];
                     const wxColour layer_color(layer_id > 0 && layer_id <= m_filament_colours.size() ? m_filament_colours[layer_id - 1] :
                                                                                                        "#26A69A");
                     for (int x = 0; x < sz.GetWidth(); ++x) {

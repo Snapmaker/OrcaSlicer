@@ -329,6 +329,7 @@ struct MixedFilamentDisplayContext
     std::vector<std::string>                physical_material_ids;
     std::optional<MixedFilamentColorEngine> color_engine;
     std::vector<std::vector<bool>>          compatible_filaments;
+    std::vector<double>                     max_layer_heights;
 };
 
 int  mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament& mf, const MixedFilamentPreviewSettings& preview_settings);
@@ -346,6 +347,20 @@ struct MixedGradientSample
     unsigned int component_b{0};
     int          mix_b_percent{0};
 };
+// Printable gradient sample shared by the planner and layered editor preview.
+struct MixedGradientLocalZSample
+{
+    MixedGradientSample mix;
+    double              height_a{0.0};
+    double              height_b{0.0};
+};
+MixedGradientLocalZSample sample_mixed_gradient_local_z(const MixedFilament&       entry,
+                                                        size_t                     num_physical,
+                                                        double                     progress,
+                                                        double                     middle_window,
+                                                        double                     nominal_height,
+                                                        double                     minimum_height,
+                                                        const std::vector<double>& max_layer_heights);
 std::vector<unsigned int> mixed_gradient_components(const MixedFilament& entry, size_t num_physical);
 std::vector<float>        mixed_gradient_stops(const MixedFilament& entry, size_t num_physical);
 std::vector<float>        mixed_gradient_solid_half_widths(const MixedFilament& entry, size_t num_physical, double fallback = 0.03);

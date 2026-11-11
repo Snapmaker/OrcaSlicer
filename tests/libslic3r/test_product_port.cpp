@@ -991,3 +991,134 @@ TEST_CASE("Legacy 3MF recipes and painted assignments survive refactored resaves
         model = std::move(loaded_model);
     }
 }
+
+TEST_CASE("Gradient solid-zone ramps thicken only the approaching filament", "[ProductPort][Gradient][GradientRamp]")
+{
+    MixedFilament row;
+    row.gradient_enabled        = true;
+    row.gradient_component_ids  = "123";
+    row.gradient_stop_positions = {0.f, .25f, .5f, .75f, 1.f};
+    row.gradient_solid_widths   = {0.f, .03f, 0.f};
+    const auto sample           = [&](double t, double maximum = .30) {
+        return sample_mixed_gradient_local_z(row, 3, t, .03, .20, .06, {.30, maximum, .30});
+    };
+    const auto white_height = [](const MixedGradientLocalZSample& value) {
+        return value.mix.component_a == 2 ? value.height_a : value.height_b;
+    };
+    for (double t : {.0, .2, .4, .6, .8, 1.0}) {
+        const auto actual   = sample(t);
+        const auto original = mixed_filament_local_z_pair_heights(.20, .06, actual.mix.mix_b_percent);
+        CHECK(actual.height_a == Approx(original.first));
+        CHECK(actual.height_b == Approx(original.second));
+    }
+    double last_white = .14;
+    for (int step = 0; step <= 70; ++step) {
+        const double t        = .4125 + .001 * step;
+        const auto   entering = sample(t);
+        const auto   leaving  = sample(1.0 - t);
+        CHECK(entering.mix.component_b == 2);
+        CHECK(leaving.mix.component_a == 2);
+        CHECK(entering.height_a == Approx(.06));
+        CHECK(leaving.height_b == Approx(.06));
+        CHECK(white_height(entering) >= last_white - 1e-7);
+        CHECK(white_height(entering) == Approx(white_height(leaving)).margin(1e-6));
+        CHECK(white_height(entering) <= .28 + 1e-7);
+        last_white = white_height(entering);
+    }
+    CHECK(last_white > .279);
+    CHECK(white_height(sample(.5)) == Approx(.28));
+    CHECK(sample(.5).height_b == 0.0);
+    CHECK(white_height(sample(.4825, .24)) > .239);
+    CHECK(white_height(sample(.5, .24)) == Approx(.24));
+    // A zero-width color stop is not a solid zone.
+    row.gradient_solid_widths[1] = 0.f;
+    CHECK(white_height(sample(.5)) == Approx(.20));
+    row.gradient_solid_widths[1] = .03f;
+    row.gradient_enabled         = false;
+    CHECK(white_height(sample(.5)) == Approx(.20));
+}
+
+TEST_CASE("Gradient ramp follows moved stops and per-filament printer limits", "[ProductPort][Gradient][GradientRamp]")
+{
+    MixedFilament row;
+    row.gradient_enabled        = true;
+    row.gradient_component_ids  = "1234";
+    row.gradient_start          = 0.f; // Reverse the component order, without reversing the stop positions.
+    row.gradient_end            = 1.f;
+    row.gradient_stop_positions = {0.f, .1f, .3f, .5f, .7f, .9f, 1.f};
+    row.gradient_solid_widths   = {0.f, .04f, .08f, 0.f};
+    auto first                  = sample_mixed_gradient_local_z(row, 4, .3, .03, .20, .06, {.3, .24, .27, .3});
+    auto second                 = sample_mixed_gradient_local_z(row, 4, .7, .03, .20, .06, {.3, .24, .27, .3});
+    CHECK(first.mix.component_a == 3);
+    CHECK(first.height_a == Approx(.27));
+    CHECK(second.mix.component_a == 2);
+    CHECK(second.height_a == Approx(.24));
+    // With a different cycle setting, the target remains nominal + .08.
+    first = sample_mixed_gradient_local_z(row, 4, .3, .03, .12, .04, {.3, .3, .3, .3});
+    CHECK(first.height_a == Approx(.20));
+}
+
+TEST_CASE("Sliced gradients ramp on both sides of the solid zone within printer limits", "[ProductPort][LocalZ][Slice][GradientRamp]")
+{
+    double white_limit = .30;
+    SECTION("Normal nozzle limit") {}
+    SECTION("Lower white nozzle limit") { white_limit = .24; }
+    const std::vector<std::string> colors{"#00FF00", "#FFFFFF", "#FFFF00"};
+    MixedFilamentManager           manager;
+    manager.add_custom_filament(1, 2, 50, colors);
+    auto& row                  = manager.mixed_filaments().back();
+    row.gradient_enabled       = true;
+    row.gradient_component_ids = "123";
+    row.gradient_solid_widths  = {0.f, .03f, 0.f};
+    auto config                = DynamicPrintConfig::full_print_config();
+    config.set_num_extruders(3);
+    config.set_num_filaments(3);
+    config.set("mixed_filament_definitions", manager.serialize_custom_entries());
+    config.set("layer_height", .20);
+    config.set("initial_layer_print_height", .20);
+    config.set("mixed_filament_height_lower_bound", .06);
+    config.set("dithering_local_z_gradient_layer_height", .20);
+    config.option<ConfigOptionStrings>("filament_colour")->values  = colors;
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75};
+    config.option<ConfigOptionFloats>("max_layer_height")->values  = {.30, white_limit, .30};
+    Model model;
+    auto* object = model.add_object();
+    object->config.set("extruder", 4);
+    object->add_volume(make_cube(8., 8., 20.));
+    object->add_instance();
+    object->ensure_on_bed();
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    auto* printed = print.get_object(0);
+    printed->slice();
+    REQUIRE_FALSE(printed->local_z_sublayer_plan().empty());
+    bool         ramp_before = false, ramp_after = false, solid_target = false;
+    const double target = std::min(.28, white_limit);
+    for (const auto& pass : printed->local_z_sublayer_plan()) {
+        REQUIRE(pass.flow_height > 0.0);
+        CHECK(pass.z_hi <= 20.0 + 1e-5);
+        if (pass.layer_id == 0) {
+            CHECK(pass.flow_height == Approx(.20));
+            continue;
+        }
+        REQUIRE(pass.painted_masks_by_extruder.size() >= 3);
+        for (size_t component = 0; component < 3; ++component) {
+            if (pass.painted_masks_by_extruder[component].empty())
+                continue;
+            CHECK(pass.flow_height <= (component == 1 ? white_limit : .30) + 1e-6);
+            if (component == 1) {
+                const double mid = .5 * (pass.z_lo + pass.z_hi);
+                if (mid < 9.8 && pass.flow_height > .20)
+                    ramp_before = true;
+                if (mid > 10.4 && pass.flow_height > .20)
+                    ramp_after = true;
+                if (mid > 9.8 && mid < 10.4 && std::abs(pass.flow_height - target) < 1e-6)
+                    solid_target = true;
+            }
+        }
+    }
+    CHECK(ramp_before);
+    CHECK(ramp_after);
+    CHECK(solid_target);
+}

@@ -93,6 +93,65 @@ MixedGradientSample sample_mixed_gradient(const MixedFilament& entry, size_t num
     return {ids.back(), ids.back(), 0};
 }
 
+MixedGradientLocalZSample sample_mixed_gradient_local_z(const MixedFilament&       entry,
+                                                        size_t                     num_physical,
+                                                        double                     progress,
+                                                        double                     middle_window,
+                                                        double                     nominal_height,
+                                                        double                     minimum_height,
+                                                        const std::vector<double>& max_layer_heights)
+{
+    MixedGradientLocalZSample result;
+    result.mix           = sample_mixed_gradient(entry, num_physical, progress, middle_window);
+    const double minimum = std::max(0.01, minimum_height);
+    const double nominal = std::max(nominal_height, 2.0 * minimum);
+    const auto   heights = mixed_filament_local_z_pair_heights(nominal, minimum, result.mix.mix_b_percent);
+    result.height_a      = heights.first;
+    result.height_b      = heights.second;
+    if (!entry.gradient_enabled || !std::isfinite(progress))
+        return result;
+
+    const auto ids    = mixed_gradient_components(entry, num_physical);
+    const auto stops  = mixed_gradient_stops(entry, num_physical);
+    const auto widths = mixed_gradient_solid_half_widths(entry, num_physical, middle_window);
+    // Ease the solid-zone filament up to nominal + 0.08 mm over the adjacent
+    // 15% of each transition. This is a pass-height target, not a cycle target.
+    constexpr double ramp_fraction = 0.15;
+    for (size_t i = 1; i + 1 < ids.size(); ++i) {
+        if (widths[i] <= 0.f)
+            continue;
+        const double lo         = stops[2 * i] - widths[i];
+        const double hi         = stops[2 * i] + widths[i];
+        const double left_span  = lo - (stops[2 * i - 2] + widths[i - 1]);
+        const double right_span = (stops[2 * i + 2] - widths[i + 1]) - hi;
+        // A moved midpoint must not make us thicken the still-minority color.
+        const double left_ramp  = std::min(ramp_fraction * left_span, lo - stops[2 * i - 1]);
+        const double right_ramp = std::min(ramp_fraction * right_span, stops[2 * i + 1] - hi);
+        double       strength   = 1.0;
+        if (progress < lo)
+            strength = left_ramp > 0.0 ? 1.0 - (lo - progress) / left_ramp : 0.0;
+        else if (progress > hi)
+            strength = right_ramp > 0.0 ? 1.0 - (progress - hi) / right_ramp : 0.0;
+        strength = std::clamp(strength, 0.0, 1.0);
+        strength = strength * strength * (3.0 - 2.0 * strength);
+        if (strength <= 0.0)
+            continue;
+        double* dominant = result.mix.component_a == ids[i] ? &result.height_a :
+                           result.mix.component_b == ids[i] ? &result.height_b :
+                                                              nullptr;
+        if (dominant == nullptr || *dominant <= 0.0)
+            continue;
+        const double configured_max = ids[i] <= max_layer_heights.size() ? max_layer_heights[ids[i] - 1] : 0.30;
+        const double maximum        = std::isfinite(configured_max) && configured_max > 0.0 ? configured_max : 0.30;
+        const double target         = std::min(nominal + 0.08, maximum);
+        // Preserve the fading pass and never shrink an existing pass here.
+        // The planner splits any pre-existing oversized passes as usual.
+        *dominant += strength * std::max(0.0, target - *dominant);
+        break;
+    }
+    return result;
+}
+
 std::string blend_mixed_components(const std::vector<unsigned int>&   ids,
                                    const std::vector<int>&            weights,
                                    const MixedFilamentDisplayContext& context)

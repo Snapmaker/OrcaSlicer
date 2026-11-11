@@ -969,6 +969,15 @@ MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vect
         }
     }
 
+    const auto* maximums = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("max_layer_height");
+    const auto* nozzles  = preset_bundle->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    context.max_layer_heights.resize(context.num_physical);
+    for (size_t i = 0; i < context.num_physical; ++i) {
+        const double configured      = maximums != nullptr && !maximums->values.empty() ? maximums->get_at(i) : 0.0;
+        const double nozzle          = nozzles != nullptr && !nozzles->values.empty() ? nozzles->get_at(i) : 0.4;
+        context.max_layer_heights[i] = std::max(0.01, configured > EPSILON ? configured : 0.75 * nozzle);
+    }
+
     auto get_mixed_bool = [preset_bundle, print_cfg](const std::string& key, bool fallback) {
         if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>(key))
             return opt->value;

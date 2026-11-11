@@ -23,6 +23,7 @@ add_executable(${_TEST_NAME}_tests
 	test_profile_load_util.cpp
 	test_mutable_polygon.cpp
 	test_mutable_priority_queue.cpp
+	test_step.cpp
 	test_stl.cpp
 	test_fill_spacing_zero.cpp
 	test_meshboolean.cpp

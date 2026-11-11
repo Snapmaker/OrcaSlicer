@@ -1,5 +1,6 @@
 #include <tbb/task_arena.h>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleMeshSlicer.hpp"
@@ -22,7 +23,7 @@ TEST_CASE("Triangle selector round-trips painted states above sixteen", "[Triang
     TriangleMesh     mesh(its);
     TriangleSelector selector(mesh);
 
-    constexpr int painted_state = 120;
+    const int painted_state = GENERATE(120, 255, 256, 272, int(MAXIMUM_FILAMENT_NUMBER));
     selector.set_facet(0, static_cast<EnforcerBlockerType>(painted_state));
 
     auto data = selector.serialize();

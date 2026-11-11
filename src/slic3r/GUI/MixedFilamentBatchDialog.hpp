@@ -96,18 +96,7 @@ private:
     void check_manual_recipe_ratio();
 
     void set_match_buttons_state(bool matching);
-    // Predict whether applying m_result would exceed MAXIMUM_FILAMENT_NUMBER (64)
-    // at the add_batch_custom_filaments gate (the authoritative cap). The estimate
-    // is an UPPER BOUND: post_apply_total = n + enabled_mixed + new_mixed_rows.
-    // It does NOT subtract the mixed rows cleanup_unused_filaments_after_batch_match
-    // will delete, because cleanup runs AFTER add_batch (Plater.cpp: add_batch at
-    // 2594, cleanup at 2627) — so the cap is hit at add_batch time, before any
-    // redundant_mixed deletion can lower the count. The bound is therefore
-    // conservative (may over-warn) but never under-warns: if it predicts overflow,
-    // colour will in fact be lost at the gate. Called from the Confirm button
-    // handler so the user is asked to proceed (or cancel) at the point of
-    // commitment, not as a banner at match-completion time. See the .cpp impl for
-    // the precise n / enabled_mixed / new_mixed_rows derivations.
+    // Count pending insertions against the saved mixed-recipe limit before cleanup.
     bool predict_slot_overflow() const;
     // Post-match advisory priority: slot overflow (data-loss) outranks the ratio hint —
     // the red error banner and the orange ratio banner are mutually exclusive. Shows the

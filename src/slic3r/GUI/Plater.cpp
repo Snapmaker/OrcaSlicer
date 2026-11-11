@@ -4173,7 +4173,7 @@ void Sidebar::on_filaments_change(size_t num_filaments)
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
-            p->m_btn_add_color_mix->Enable(can_add);
+            p->m_btn_add_color_mix->Enable(pb->mixed_filaments.registered_count() < MAXIMUM_MIXED_FILAMENT_NUMBER);
     }
 }
 
@@ -6291,7 +6291,8 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
         if (dlg.ShowModal() != wxID_OK) return;
 
         auto& mgr = pb->mixed_filaments;
-        if (mgr.total_filaments(colors.size()) >= MAXIMUM_FILAMENT_NUMBER) return;
+        if (mgr.registered_count() >= MAXIMUM_MIXED_FILAMENT_NUMBER)
+            return;
         const MixedFilament& r = dlg.GetResult();
         mgr.add_custom_filament(r.component_a, r.component_b, r.mix_b_percent, colors);
         auto mfs = mgr.mixed_filament_legacy_rows();
@@ -6803,7 +6804,7 @@ void Sidebar::update_color_mix_panel()
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
-            p->m_btn_add_color_mix->Enable(can_add);
+            p->m_btn_add_color_mix->Enable(preset_bundle->mixed_filaments.registered_count() < MAXIMUM_MIXED_FILAMENT_NUMBER);
     }
 }
 
@@ -7413,7 +7414,7 @@ void Sidebar::on_filaments_delete(size_t filament_id)
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
-            p->m_btn_add_color_mix->Enable(can_add);
+            p->m_btn_add_color_mix->Enable(pb->mixed_filaments.registered_count() < MAXIMUM_MIXED_FILAMENT_NUMBER);
     }
 }
 
@@ -11475,9 +11476,11 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                 Semver                file_version;
                 
                 //ObjImportColorFn obj_color_fun=nullptr;
-                auto obj_color_fun = [this, &path](std::vector<RGBA> &input_colors, bool is_single_color, std::vector<unsigned char> &filament_ids,
-                                                   unsigned char &first_extruder_id) {
-                    if (!boost::iends_with(path.string(), ".obj")) { return; }
+                auto obj_color_fun = [this, &path](std::vector<RGBA>& input_colors, bool is_single_color,
+                                                   std::vector<unsigned int>& filament_ids, unsigned int& first_extruder_id) {
+                    if (!boost::iends_with(path.string(), ".obj")) {
+                        return;
+                    }
                     const std::vector<std::string> extruder_colours = wxGetApp().plater()->get_extruder_colors_from_plater_config();
                     ObjColorDialog                 color_dlg(nullptr, input_colors, is_single_color, extruder_colours, filament_ids, first_extruder_id);
                     if (color_dlg.ShowModal() != wxID_OK) { 
@@ -13528,11 +13531,16 @@ void Plater::priv::reload_from_disk()
     // load one file at a time
     for (size_t i = 0; i < input_paths.size(); ++i) {
         const auto& path = input_paths[i].string();
-        auto obj_color_fun = [this, &path](std::vector<RGBA> &input_colors, bool is_single_color, std::vector<unsigned char> &filament_ids, unsigned char &first_extruder_id) {
-            if (!boost::iends_with(path, ".obj")) { return; }
+        auto obj_color_fun = [this, &path](std::vector<RGBA>& input_colors, bool is_single_color, std::vector<unsigned int>& filament_ids,
+                                           unsigned int& first_extruder_id) {
+            if (!boost::iends_with(path, ".obj")) {
+                return;
+            }
             const std::vector<std::string> extruder_colours = wxGetApp().plater()->get_extruder_colors_from_plater_config();
             ObjColorDialog                 color_dlg(nullptr, input_colors, is_single_color, extruder_colours, filament_ids, first_extruder_id);
-            if (color_dlg.ShowModal() != wxID_OK) { filament_ids.clear(); }
+            if (color_dlg.ShowModal() != wxID_OK) {
+                filament_ids.clear();
+            }
         };
         wxBusyCursor wait;
         GLCanvas3D* canvas = q->get_current_canvas3D();

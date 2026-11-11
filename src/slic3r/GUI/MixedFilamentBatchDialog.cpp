@@ -2323,48 +2323,25 @@ void MixedFilamentBatchDialog::relayout_scrolled_content()
 
 bool MixedFilamentBatchDialog::predict_slot_overflow() const
 {
-    // Predict whether confirming this match would push the project past
-    // MAXIMUM_FILAMENT_NUMBER (64). The AUTHORITATIVE gate is
-    // add_batch_custom_filaments (MixedFilament.cpp:1951-1957): it computes
-    //   current_total = total_filaments(n) = n + enabled_mixed
-    // then drops every batch entry once current_total reaches 64 (assigns id 0
-    // -> the model region keeps its original colour, i.e. colour is LOST).
-    //
-    // n = apply-time physical base:
-    //   recommended -> max(4, current_physical)  (target_count, Plater.cpp:2419)
-    //   manual      -> current_physical          (colors_vec = full filament_colour,
-    //                  Plater.cpp:2466)
-    // enabled_mixed = current enabled_count() (auto_generate is off; manual mode does
-    //   not touch m_mixed before add_batch; recommended mode's set_num_filaments would
-    //   rebuild it only if auto_generate were on).
-    // new_mixed_rows = non-pure, non-in-place mappings (one slot each), mirroring the
-    //   batch_entries build at Plater.cpp:2576-2579.
-    const auto* pb = wxGetApp().preset_bundle;
-    if (pb == nullptr) return false;
-    const size_t current_physical = m_physical_colors.size();
-    if (current_physical == 0) return false;
-
-    const bool recom = m_result.is_recommended_mode;
-    const size_t n = recom ? std::max<size_t>(4, current_physical) : current_physical;
-
+    const auto* bundle = wxGetApp().preset_bundle;
+    if (!bundle)
+        return false;
     size_t new_mixed_rows = 0;
-    for (const auto& m : m_result.mappings)
-        if (!m.is_pure_recipe && !m.in_place_edited) ++new_mixed_rows;
-
-    const size_t enabled_mixed = pb->mixed_filaments.enabled_count();
-    const size_t post_apply_total = n + enabled_mixed + new_mixed_rows;
-    return post_apply_total > MAXIMUM_FILAMENT_NUMBER;
+    for (const auto& mapping : m_result.mappings)
+        if (!mapping.is_pure_recipe && !mapping.in_place_edited)
+            ++new_mixed_rows;
+    // Batch insertion precedes cleanup; count disabled saved recipes as well.
+    return bundle->mixed_filaments.registered_count() + new_mixed_rows > MAXIMUM_MIXED_FILAMENT_NUMBER;
 }
 
 bool MixedFilamentBatchDialog::try_show_slot_overflow_advisory()
 {
     // Single source of truth for the overflow banner + the "overflow wins over ratio"
     // priority. Returns true (and shows the red advisory) when applying m_result would
-    // exceed the 64-slot cap; otherwise returns false and leaves the banners as they are
+    // exceed the 256-mixed-recipe cap; otherwise returns false and leaves the banners as they are
     // so the caller is free to surface the lower-priority ratio hint.
     if (!predict_slot_overflow()) return false;
-    display_error_advisory(
-        _L("Color mapping list limit reached (max 64 colors). Excess colors will be removed."));
+    display_error_advisory(_L("Mixed filament limit reached (256 recipes). Excess mixed colors will be removed."));
     return true;
 }
 

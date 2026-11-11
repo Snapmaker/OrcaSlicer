@@ -4643,7 +4643,7 @@ TEST_CASE("add_batch at the filament cap emits per-entry zero ids instead of tru
     const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
     MixedFilamentManager mgr;
     // Fill to one slot below the cap: 4 physical + (kMax - 5) mixed = kMax - 1.
-    const size_t kMax = MAXIMUM_FILAMENT_NUMBER;
+    const size_t kMax = colors.size() + MAXIMUM_MIXED_FILAMENT_NUMBER;
     for (size_t i = 0; i < kMax - 5; ++i)
         mgr.mixed_filaments().push_back(make_row(1, 2));
     REQUIRE(mgr.total_filaments(4) == kMax - 1);

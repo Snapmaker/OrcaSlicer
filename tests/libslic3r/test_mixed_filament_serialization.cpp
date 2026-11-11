@@ -359,3 +359,54 @@ TEST_CASE("Existing CubeLines project migrates to JSON without changing recipes 
         }
     }
 }
+
+TEST_CASE("256 mixed recipes retain high object and painted IDs through 3MF", "[MixedManage][MixedFilamentJSON][3mf]")
+{
+    TemporaryDirectory temporary;
+    Model              model;
+    model.set_backup_path((temporary.path / "export").string());
+    auto* object = model.add_object();
+    auto* volume = object->add_volume(make_cube(5., 5., 5.));
+    object->add_volume(make_cube(2., 2., 2.))->set_offset(Vec3d(10., 0., 0.));
+    object->add_instance();
+    object->config.set("extruder", 272);
+    volume->config.set("extruder", 271);
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(0, EnforcerBlockerType(272));
+    selector.set_facet(1, EnforcerBlockerType(256));
+    volume->mmu_segmentation_facets.set(selector);
+    auto                           config = full_config();
+    const std::vector<std::string> colors(16, "#808080");
+    config.set_key_value("filament_colour", new ConfigOptionStrings(colors));
+    config.option<ConfigOptionFloats>("filament_diameter")->values.assign(16, 1.75);
+    std::vector<MixedFilamentDefinition> definitions(256);
+    for (size_t i = 0; i < definitions.size(); ++i) {
+        definitions[i].identity.stable_id      = i + 1;
+        definitions[i].source.kind             = MixedFilamentSourceKind::Custom;
+        definitions[i].recipe.blend.components = {{{1}, 50}, {{2}, 50}};
+    }
+    config.set("mixed_filament_definitions", mixed_filaments_to_legacy(definitions));
+    const auto path = (temporary.path / "256-mixed.3mf").string();
+    REQUIRE(save_project(path, model, config));
+    LoadedProject loaded;
+    REQUIRE(loaded.load(path, (temporary.path / "import").string()));
+    REQUIRE(mixed_filaments_from_project_config(loaded.config, 16).size() == 256);
+    REQUIRE(loaded.model.objects.size() == 1);
+    CHECK(loaded.model.objects[0]->config.opt_int("extruder") == 272);
+    const auto* reopened = loaded.model.objects[0]->volumes[0];
+    CHECK(reopened->config.opt_int("extruder") == 271);
+    REQUIRE(reopened->mmu_segmentation_facets.get_data().used_states.size() > 272);
+    CHECK(reopened->mmu_segmentation_facets.get_data().used_states[272]);
+    CHECK(reopened->mmu_segmentation_facets.get_data().used_states[256]);
+    CHECK(reopened->mmu_segmentation_facets.get_triangle_as_string(0) == volume->mmu_segmentation_facets.get_triangle_as_string(0));
+
+    // The OBJ matching path can also select an existing virtual recipe.
+    Model                           obj_model;
+    auto*                           obj_volume = obj_model.add_object()->add_volume(make_cube(5., 5., 5.));
+    const std::vector<unsigned int> face_ids(obj_volume->mesh().its.indices.size(), 272);
+    REQUIRE(Model::obj_import_face_color_deal(face_ids, 272u, &obj_model));
+    CHECK(obj_volume->mmu_segmentation_facets.get_data().used_states[272]);
+    const std::vector<unsigned int> vertex_ids(obj_volume->mesh().its.vertices.size(), 256);
+    REQUIRE(Model::obj_import_vertex_color_deal(vertex_ids, 256u, &obj_model));
+    CHECK(obj_volume->mmu_segmentation_facets.get_data().used_states[256]);
+}

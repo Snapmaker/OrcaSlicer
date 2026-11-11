@@ -290,7 +290,14 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string>& filamen
         return;
     }
 
-    // Generate all C(N,2) pairwise combinations.
+    size_t registered = std::count_if(custom_definitions.begin(), custom_definitions.end(),
+                                      [](const auto& definition) { return !definition.visibility.tombstoned; });
+    for (const auto& entry : old_auto_definitions) {
+        const auto pair = entry.second->recipe.blend.primary_pair_or();
+        if (!entry.second->visibility.tombstoned && pair.component_a.id <= n && pair.component_b.id <= n)
+            ++registered;
+    }
+    // Keep stored recipes intact; do not generate new pairs beyond the mixed limit.
     for (size_t i = 0; i < n; ++i) {
         for (size_t j = i + 1; j < n; ++j) {
             const unsigned int component_a = static_cast<unsigned int>(i + 1); // 1-based
@@ -302,6 +309,8 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string>& filamen
             definition.source.origin_auto      = true;
 
             const auto it_prev = old_auto_definitions.find(canonical_pair_key(component_a, component_b));
+            if (it_prev == old_auto_definitions.end() && registered >= MAXIMUM_MIXED_FILAMENT_NUMBER)
+                continue;
             if (it_prev != old_auto_definitions.end()) {
                 const MixedFilamentDefinition& prev = *it_prev->second;
                 definition.visibility.tombstoned    = prev.visibility.tombstoned;
@@ -309,6 +318,8 @@ void MixedFilamentManager::auto_generate(const std::vector<std::string>& filamen
                 definition.identity.stable_id       = prev.identity.stable_id;
             }
             definition.identity.stable_id = normalize_stable_id(definition.identity.stable_id);
+            if (it_prev == old_auto_definitions.end() && !definition.visibility.tombstoned)
+                ++registered;
             m_definitions.push_back(std::move(definition));
         }
     }
@@ -350,12 +361,20 @@ void MixedFilamentManager::add_custom_filament(unsigned int                    c
     add_custom_filament_definition(std::move(definition), filament_colours);
 }
 
+size_t MixedFilamentManager::registered_count() const
+{
+    if (m_legacy_cache_mutable_borrowed && !m_legacy_cache_dirty)
+        return std::count_if(m_legacy_cache.begin(), m_legacy_cache.end(), [](const auto& row) { return !row.deleted; });
+    return std::count_if(m_definitions.begin(), m_definitions.end(),
+                         [](const auto& definition) { return !definition.visibility.tombstoned; });
+}
+
 bool MixedFilamentManager::add_custom_filament_definition(MixedFilamentDefinition         definition,
                                                           const std::vector<std::string>& filament_colours)
 {
     sync_mutable_legacy_cache_to_definitions(filament_colours.size());
     const size_t n = filament_colours.size();
-    if (n < 2 || total_filaments(n) >= MAXIMUM_FILAMENT_NUMBER)
+    if (n < 2 || registered_count() >= MAXIMUM_MIXED_FILAMENT_NUMBER)
         return false;
 
     definition.recipe.blend = normalized_manager_blend(std::move(definition.recipe.blend), n);
@@ -401,8 +420,9 @@ void MixedFilamentManager::add_batch_custom_filaments(const std::vector<MixedFil
         return;
 
     size_t current_total = total_filaments(num_physical);
+    size_t registered    = registered_count();
     for (const MixedFilamentBatchEntry& entry : entries) {
-        if (current_total >= MAXIMUM_FILAMENT_NUMBER) {
+        if (registered >= MAXIMUM_MIXED_FILAMENT_NUMBER) {
             if (out_assigned_ids != nullptr)
                 out_assigned_ids->push_back(0u);
             continue;
@@ -447,6 +467,7 @@ void MixedFilamentManager::add_batch_custom_filaments(const std::vector<MixedFil
         if (out_assigned_ids != nullptr)
             out_assigned_ids->push_back(static_cast<unsigned int>(current_total + 1));
         ++current_total;
+        ++registered;
     }
 
     invalidate_legacy_cache();

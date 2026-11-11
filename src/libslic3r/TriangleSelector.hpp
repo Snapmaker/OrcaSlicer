@@ -18,9 +18,9 @@ namespace Slic3r {
 
 enum class EnforcerBlockerType : int16_t {
     // Maximum is 3. The value is serialized in TriangleSelector into 2 bits.
-    NONE      = 0,
-    ENFORCER  = 1,
-    BLOCKER   = 2,
+    NONE     = 0,
+    ENFORCER = 1,
+    BLOCKER  = 2,
     // For the fuzzy skin, we use just two values (NONE and FUZZY_SKIN).
     FUZZY_SKIN = ENFORCER,
     // Extruder states are serialized using a 2-bit prefix plus one or more 4-bit nibbles.
@@ -41,7 +41,7 @@ enum class EnforcerBlockerType : int16_t {
     Extruder14,
     Extruder15,
     Extruder16,
-    ExtruderMax = 255
+    ExtruderMax = MAXIMUM_FILAMENT_NUMBER
 };
 
 // Type alias for the state mapping array to improve code readability

@@ -430,6 +430,8 @@ class MixedFilamentManager
 public:
     MixedFilamentManager() = default;
     bool add_custom_filament_definition(MixedFilamentDefinition definition, const std::vector<std::string>& filament_colours);
+    // All saved recipes, including disabled ones, excluding deletion tombstones.
+    size_t                                 registered_count() const;
     std::optional<MixedFilamentDefinition> mixed_filament_definition_from_id(unsigned int filament_id, size_t num_physical) const;
     std::optional<unsigned int>            filament_id_from_stable_id(MixedFilamentStableId stable_id, size_t num_physical) const;
 
@@ -463,7 +465,7 @@ public:
 
     // Batch-insert custom mixed filaments from a match-mapping operation.
     // Each entry is fully specified except `stable_id`, which is allocated internally.
-    // Entries exceeding `MAXIMUM_FILAMENT_NUMBER` are silently dropped.
+    // Entries exceeding `MAXIMUM_MIXED_FILAMENT_NUMBER` are silently dropped.
     // All entries receive `ui_mode = 2` (MATCH), `custom = true`.
     // Calls `refresh_display_colors()` exactly once after all inserts.
     // If `out_assigned_ids` is non-null it is filled with one entry per input

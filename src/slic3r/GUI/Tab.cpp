@@ -3058,7 +3058,7 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
 
         optgroup = page->new_optgroup(L("Special mode"), L"param_special");
         optgroup->append_single_option_line("slicing_mode", "others_settings_special_mode#slicing-mode");
-        optgroup->append_single_option_line("enable_overlap_area_carving", "others_settings_special_mode#slicing-mode");
+        optgroup->append_single_option_line("enable_overlap_area_carving");
         optgroup->append_single_option_line("print_sequence", "others_settings_special_mode#print-sequence");
         optgroup->append_single_option_line("print_order", "others_settings_special_mode#intra-layer-order");
         optgroup->append_single_option_line("spiral_mode", "others_settings_special_mode#spiral-vase");

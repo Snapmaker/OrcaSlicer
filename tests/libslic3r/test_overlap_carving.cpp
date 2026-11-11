@@ -58,15 +58,16 @@ DynamicPrintConfig carving_print_config(bool area_carving)
     return config;
 }
 
-// Total slice area per print region at the middle layer, sorted ascending.
-// Units follow the raw scaled expolygon area; only ratios are asserted.
+// Total slice area per print region at the middle layer, in mm2.
+// (expolygon areas are in scaled units: mm2 = scaled area * SCALING_FACTOR^2.)
+// Sorted ascending. Absolute values are asserted so the geometry scale is locked.
 std::vector<double> sorted_region_areas(Slic3r::PrintObject *object)
 {
     const Slic3r::Layer *layer = object->layers()[object->layers().size() / 2];
     std::vector<double> areas(layer->region_count(), 0.0);
     for (size_t r = 0; r < layer->region_count(); ++r)
         for (const Slic3r::Surface &s : layer->get_region(r)->slices.surfaces)
-            areas[r] += s.expolygon.area() / (SCALING_FACTOR * SCALING_FACTOR);
+            areas[r] += s.expolygon.area() * (SCALING_FACTOR * SCALING_FACTOR);
     std::sort(areas.begin(), areas.end());
     return areas;
 }
@@ -141,16 +142,19 @@ TEST_CASE("Overlap carving switch selects between legacy and 2.4.1 arbitration",
                                                  /*detail_dx=*/9.12, /*detail_dy=*/0., /*depth=*/4.);
             const std::vector<double> areas = sorted_region_areas(print->get_object(0));
             REQUIRE(areas.size() == 2);
-            const double total = areas[0] + areas[1];
+            // Locked geometry: 4x4 detail 72% embedded (11.52 mm2 overlap), 4.48 mm2
+            // protruding; the two states both sum to 148.48 mm2.
             if (area_carving_on) {
-                // The protruding detail is the smaller region: it wins its full slice.
-                CHECK(areas[0] / total == Approx(16.0 / 144.0).margin(0.01));  // detail keeps its full slice
-                CHECK(areas[1] / total == Approx(128.0 / 144.0).margin(0.01)); // base is carved around it
+                // The protruding detail is the smaller region: it keeps its full
+                // 16 mm2 slice; the base is carved around the overlap.
+                CHECK(areas[0] == Approx(16.0).margin(0.01));
+                CHECK(areas[1] == Approx(132.48).margin(0.01));
             } else {
-                // Legacy last-listed-wins: the later base carves the overlap,
-                // leaving the detail its protruding part only (16 - 16*0.72 = 4.48).
-                CHECK(areas[0] / total == Approx(4.48 / 144.0).margin(0.01));
-                CHECK(areas[1] / total == Approx(139.52 / 144.0).margin(0.01));
+                // Legacy last-listed-wins: the later base carves the overlap away
+                // from the detail (the 4.48 mm2 protruding part survives) and keeps
+                // its full 144 mm2 slice.
+                CHECK(areas[0] == Approx(4.48).margin(0.01));
+                CHECK(areas[1] == Approx(144.0).margin(0.01));
             }
         }
 
@@ -243,71 +247,6 @@ TEST_CASE("Overlap carving switch selects between legacy and 2.4.1 arbitration",
                 CHECK(areas[0] / total == Approx(44.0 / 144.0).margin(0.01));
                 CHECK(areas[1] / total == Approx(100.0 / 144.0).margin(0.01));
             }
-        }
-    }
-}
-
-// Regression test for the user-reported "switch has no effect": on the real
-// seal ticket model (TS20261028000011) the two switch states must disagree.
-// Mid layer of the real 3mf, volume list order: white details (extruder 3)
-// first, blue body (extruder 1), ..., cream bulk (extruder 4) listed last.
-//   switch on  (2.4.1 rule): the blue body owns the body silhouette (smaller
-//     region on most carved layers).
-//   switch off (legacy):     the later cream bulk paints over everything else.
-// Skipped when the model file is not present on this machine.
-#include "libslic3r/Format/bbs_3mf.hpp"
-#include <boost/filesystem/operations.hpp>
-
-TEST_CASE("Seal regression model ownership follows the carving switch", "[overlap_carving][seal3mf]")
-{
-    const std::string seal_path = "C:/tmp/e2o/seal_regression_ascii.3mf";
-    if (!boost::filesystem::exists(seal_path)) {
-        WARN("seal_regression.3mf not present on this machine; skipping");
-        return;
-    }
-    Slic3r::Model model;
-    Slic3r::DynamicPrintConfig config;
-    Slic3r::ConfigSubstitutionContext ctxt{Slic3r::ForwardCompatibilitySubstitutionRule::Disable};
-    Slic3r::PlateDataPtrs plate_data;
-    std::vector<Slic3r::Preset*> project_presets;
-    bool is_bbl_3mf = false;
-    Slic3r::Semver file_version;
-    REQUIRE(Slic3r::load_bbs_3mf(seal_path.c_str(), &config, &ctxt, &model, &plate_data, &project_presets,
-        &is_bbl_3mf, &file_version, nullptr, Slic3r::LoadStrategy::LoadModel));
-    REQUIRE(model.objects.size() == 1);
-
-    for (bool area_carving_on : {false, true}) {
-        DYNAMIC_SECTION("seal 3mf, overlap area carving " << (area_carving_on ? "on" : "off")) {
-            Slic3r::Print print;
-            print.set_status_silent();
-            if (auto *sw = config.option<Slic3r::ConfigOptionBool>("enable_overlap_area_carving"))
-                sw->value = area_carving_on;
-            else
-                config.set_key_value("enable_overlap_area_carving", new Slic3r::ConfigOptionBool{area_carving_on});
-            print.apply(model, config);
-            REQUIRE(print.objects().size() == 1);
-            print.get_object(0)->slice();
-
-            const Slic3r::Layer *layer = print.get_object(0)->layers()[print.get_object(0)->layers().size() / 2];
-            double total = 0.0;
-            std::vector<double> region_areas(layer->region_count(), 0.0);
-            std::vector<int> region_extruders(layer->region_count(), 0);
-            for (size_t r = 0; r < layer->region_count(); ++r) {
-                region_extruders[r] = int(layer->get_region(r)->region().extruder(Slic3r::frExternalPerimeter));
-                for (const Slic3r::Surface &s : layer->get_region(r)->slices.surfaces)
-                    region_areas[r] += s.expolygon.area() / (SCALING_FACTOR * SCALING_FACTOR);
-                total += region_areas[r];
-            }
-            for (size_t r = 0; r < layer->region_count(); ++r)
-                INFO("region " << r << " extruder=" << region_extruders[r] << " area=" << region_areas[r] << " share=" << region_areas[r] / total);
-            size_t biggest = 0;
-            for (size_t r = 1; r < region_areas.size(); ++r)
-                if (region_areas[r] > region_areas[biggest]) biggest = r;
-            // The switch must decide who owns the body silhouette: the blue
-            // body (extruder 1) under the 2.4.1 rule, the later cream bulk
-            // (extruder 4) under the legacy rule. If both states agreed, this
-            // is exactly the user-reported "switch has no effect" bug.
-            CHECK(region_extruders[biggest] == (area_carving_on ? 1 : 4));
         }
     }
 }

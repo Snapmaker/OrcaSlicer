@@ -3,7 +3,9 @@
 #include "MixedColorMatchHelpers.hpp"
 #include "I18N.hpp"
 #include "MFDTheme.hpp"
+#include "Widgets/ComboBox.hpp"
 #include "Widgets/Label.hpp"
+#include "wxExtensions.hpp"
 #include <wx/stattext.h>
 #include <wx/sizer.h>
 #include <wx/dcbuffer.h>
@@ -28,12 +30,16 @@ public:
                        Recipe                                         recipe,
                        MixedFilamentDisplayContext                    context,
                        std::function<void(const std::vector<float>&)> changed,
-                       std::function<void(const std::vector<float>&)> widths_changed)
+                       std::function<void(const std::vector<float>&)> widths_changed,
+                       std::vector<wxString>                          filament_names,
+                       std::function<void(size_t, int)>               filament_changed)
         : wxPanel(parent)
         , m_recipe(std::move(recipe))
         , m_context(std::move(context))
         , m_changed(std::move(changed))
         , m_widths_changed(std::move(widths_changed))
+        , m_filament_names(std::move(filament_names))
+        , m_filament_changed(std::move(filament_changed))
     {
         MFDTheme::apply_window(this);
         auto* sizer = new wxBoxSizer(wxVERTICAL);
@@ -42,6 +48,20 @@ public:
         m_canvas->SetBackgroundStyle(wxBG_STYLE_PAINT);
         MFDTheme::apply_window(m_canvas);
         sizer->Add(m_canvas, 0, wxEXPAND);
+        m_filament_combo = new ComboBox(this, wxID_ANY, wxEmptyString, wxDefaultPosition, wxSize(-1, FromDIP(30)), 0, nullptr,
+                                        wxCB_READONLY);
+        for (size_t i = 0; i < m_context.physical_colors.size(); ++i) {
+            wxBitmap* icon = get_extruder_color_icon(m_context.physical_colors[i], std::to_string(i + 1), FromDIP(20), FromDIP(20));
+            m_filament_combo->Append(m_filament_names[i], icon ? icon->ConvertToImage() : wxNullImage);
+        }
+        m_filament_combo->SetToolTip(
+            _L("Choose a filament for the selected color stop. Selecting a filament already in use swaps the two stops."));
+        sizer->Add(m_filament_combo, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
+        m_filament_combo->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) {
+            const int selected = m_filament_combo->GetSelection();
+            if (m_selected % 2 == 0 && selected != wxNOT_FOUND && m_filament_changed)
+                m_filament_changed(m_selected / 2, selected);
+        });
         auto* row        = new wxBoxSizer(wxHORIZONTAL);
         m_position_label = label(_L("Position:"));
         row->Add(m_position_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
@@ -220,6 +240,21 @@ private:
         const auto stops = mixed_gradient_stops(m_recipe(), m_context.num_physical);
         if (m_selected >= stops.size())
             m_selected = 0;
+        const auto ids                = mixed_gradient_components(m_recipe(), m_context.num_physical);
+        const bool color_stop         = m_selected % 2 == 0 && m_selected / 2 < ids.size();
+        bool       changed_visibility = m_filament_combo->IsShown() != color_stop;
+        m_filament_combo->Show(color_stop);
+        if (color_stop) {
+            const unsigned int selected_id = ids[m_selected / 2];
+            for (size_t i = 0; i < m_filament_names.size(); ++i) {
+                wxString text = m_filament_names[i];
+                if (i + 1 != selected_id && std::find(ids.begin(), ids.end(), i + 1) != ids.end())
+                    text += " (" + _L("Switch") + ")";
+                m_filament_combo->SetString(i, text);
+            }
+            m_filament_combo->SetSelection(int(selected_id) - 1);
+            m_filament_combo->SetIcon(create_scaled_bitmap("drop_down", m_filament_combo, 16));
+        }
         double position = stops.empty() ? 0.0 : stops[m_selected];
         if (m_selected % 2 != 0) {
             const double range = stops[m_selected + 1] - stops[m_selected - 1];
@@ -229,7 +264,7 @@ private:
         m_position->ChangeValue(wxString::Format("%.1f", position * 100.0));
         m_position->Enable(m_selected > 0 && m_selected + 1 < stops.size());
         const bool interior           = m_selected > 0 && m_selected + 1 < stops.size() && m_selected % 2 == 0;
-        const bool changed_visibility = m_width_panel->IsShown() != interior;
+        changed_visibility            = changed_visibility || m_width_panel->IsShown() != interior;
         m_width_panel->Show(interior);
         if (interior) {
             const auto widths = mixed_gradient_solid_half_widths(m_recipe(), m_context.num_physical,
@@ -380,6 +415,9 @@ private:
     MixedFilamentDisplayContext                    m_context;
     std::function<void(const std::vector<float>&)> m_changed;
     std::function<void(const std::vector<float>&)> m_widths_changed;
+    std::vector<wxString>                          m_filament_names;
+    std::function<void(size_t, int)>               m_filament_changed;
+    ComboBox*                                      m_filament_combo{nullptr};
     wxPanel*                                       m_width_panel{nullptr};
     wxTextCtrl*                                    m_width{nullptr};
     int                                            m_width_edge{0};

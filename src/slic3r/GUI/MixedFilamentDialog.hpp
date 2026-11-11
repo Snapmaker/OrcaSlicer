@@ -42,6 +42,8 @@ public:
 private:
     void build_ui();
     void rebuild_filament_rows();
+    void                on_filament_selection_changed(size_t slot, int filament_index);
+    wxString            filament_label(int filament_index) const;
     void on_mode_changed(int mode_index);
     void update_preview();
     MixedFilament       gradient_editor_entry() const;
@@ -87,6 +89,7 @@ private:
     wxPanel*                m_strip_panel         = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
     wxPanel*                m_swatch_grid_panel   = nullptr;
+    wxStaticText*                           m_swatch_title          = nullptr;
     std::vector<int>         m_swatch_min_weights;
     wxPanel*                m_error_panel           = nullptr;
     Label*                   m_error_text            = nullptr;
@@ -184,6 +187,7 @@ private:
     struct FilamentRow {
         wxPanel*         swatch           = nullptr;
         ComboBox*        combo            = nullptr;
+        int              selected_filament = 0;
         std::vector<int> filament_indices; // combo index → actual filament index
     };
     std::vector<FilamentRow> m_filament_rows;

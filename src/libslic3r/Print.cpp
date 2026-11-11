@@ -196,8 +196,10 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
         const auto interval_it = std::find_if(intervals.begin(), intervals.end(), [layer_id](const LocalZInterval &interval) {
             return interval.layer_id == layer_id;
         });
-        if (interval_it == intervals.end() || !interval_it->has_mixed_paint || interval_it->sublayer_count <= 1 ||
-            interval_it->first_sublayer_idx >= plans.size()) {
+        const bool         independent_interval = interval_it != intervals.end() && interval_it->independent_layer_height &&
+                                          !interval_it->managed_masks.empty();
+        if (interval_it == intervals.end() || !interval_it->has_mixed_paint || interval_it->sublayer_count == 0 ||
+            (!independent_interval && interval_it->sublayer_count <= 1) || interval_it->first_sublayer_idx >= plans.size()) {
             continue;
         }
 
@@ -389,10 +391,22 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
                pass_state.remaining_extruders.end();
     };
 
-    auto choose_ready_extruder = [&](int active_extruder) -> int {
-        std::vector<unsigned int> ready_extruders;
-        for (const PassState &pass_state : pass_states) {
+    // Match the G-code scheduler: finish the lowest ready Local-Z height before
+    // choosing a tool for a higher pass, even when that tool is already active.
+    auto lowest_ready_print_z = [&]() {
+        double print_z = std::numeric_limits<double>::infinity();
+        for (const PassState& pass_state : pass_states) {
             if (!pass_state.ready || pass_state.completed)
+                continue;
+            print_z = std::min(print_z, pass_state.pass_ref->plan->print_z);
+        }
+        return print_z;
+    };
+
+    auto choose_ready_extruder = [&](int active_extruder, double ready_print_z) -> int {
+        std::vector<unsigned int> ready_extruders;
+        for (const PassState& pass_state : pass_states) {
+            if (!pass_state.ready || pass_state.completed || std::abs(pass_state.pass_ref->plan->print_z - ready_print_z) > EPSILON)
                 continue;
             for (unsigned int extruder_id : pass_state.remaining_extruders)
                 if (std::find(ready_extruders.begin(), ready_extruders.end(), extruder_id) == ready_extruders.end())
@@ -415,7 +429,7 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
                 if (pass_state.completed || !pass_contains_extruder(pass_state, extruder_id))
                     continue;
                 ++future_count;
-                if (pass_state.ready)
+                if (pass_state.ready && std::abs(pass_state.pass_ref->plan->print_z - ready_print_z) <= EPSILON)
                     ++ready_count;
             }
 
@@ -435,7 +449,8 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
     int                                    active_extruder = start_extruder;
     size_t                                 completed_passes = 0;
     while (completed_passes < pass_states.size()) {
-        const int chosen_extruder = choose_ready_extruder(active_extruder);
+        const double ready_print_z   = lowest_ready_print_z();
+        const int    chosen_extruder = choose_ready_extruder(active_extruder, ready_print_z);
         if (chosen_extruder < 0) {
             BOOST_LOG_TRIVIAL(warning) << "Local-Z wipe tower dependency scheduler deadlocked, falling back"
                                        << " start_extruder=" << start_extruder
@@ -451,7 +466,7 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
         std::vector<size_t> newly_completed;
         for (size_t pass_state_idx = 0; pass_state_idx < pass_states.size(); ++pass_state_idx) {
             PassState &pass_state = pass_states[pass_state_idx];
-            if (!pass_state.ready || pass_state.completed)
+            if (!pass_state.ready || pass_state.completed || std::abs(pass_state.pass_ref->plan->print_z - ready_print_z) > EPSILON)
                 continue;
 
             auto it_extruder = std::find(pass_state.remaining_extruders.begin(),

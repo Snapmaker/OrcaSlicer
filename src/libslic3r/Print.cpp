@@ -3396,6 +3396,32 @@ void Print::_make_wipe_tower()
         const std::vector<std::pair<coordf_t, std::vector<GCode::LayerToPrint>>> layers_to_print = GCode::collect_layers_to_print(*this);
         size_t layers_to_print_idx = 0;
 
+        // Determine precisely which print heights the ordered planner will visit.
+        // Eligibility only reads extrusion geometry; tool choices still depend
+        // on the preceding height and are deliberately deferred to the loop below.
+        std::vector<unsigned char> prepare_local_z(layers_to_print.size(), 0);
+        size_t                     prepare_idx = 0;
+        for (const auto& layer_tools : m_wipe_tower_data.tool_ordering.layer_tools()) {
+            if (!layer_tools.has_wipe_tower)
+                continue;
+            while (prepare_idx + 1 < layers_to_print.size() && layers_to_print[prepare_idx].first + EPSILON < layer_tools.print_z)
+                ++prepare_idx;
+            if (prepare_idx < layers_to_print.size() && std::abs(layers_to_print[prepare_idx].first - layer_tools.print_z) <= EPSILON)
+                prepare_local_z[prepare_idx] = 1;
+            if (&layer_tools == &m_wipe_tower_data.tool_ordering.back() || (&layer_tools + 1)->wipe_tower_partitions == 0)
+                break;
+        }
+        // Retain only pass references and eligible tool IDs, never the temporary
+        // masks or clipped paths. Geometry scratch is bounded by active workers.
+        std::vector<std::vector<LocalZWipeTowerPassRef>> local_z_passes(layers_to_print.size());
+        this->throw_if_canceled();
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, layers_to_print.size(), 8), [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t i = range.begin(); i < range.end(); ++i)
+                if (prepare_local_z[i])
+                    local_z_passes[i] = collect_local_z_wipe_tower_passes(*this, layers_to_print[i].second);
+        });
+        this->throw_if_canceled();
+
         // wipe_tower.set_retract();
         // wipe_tower.set_zhop();
 
@@ -3427,8 +3453,19 @@ void Print::_make_wipe_tower()
                 bool first_layer = &layer_tools == &m_wipe_tower_data.tool_ordering.front();
 
                 if (layers_with_same_print_z != nullptr) {
+                    if (local_z_validate_clipping()) {
+                        const auto  reference = collect_local_z_wipe_tower_passes(*this, *layers_with_same_print_z);
+                        const auto& prepared  = local_z_passes[layers_to_print_idx];
+                        if (prepared.size() != reference.size() ||
+                            !std::equal(prepared.begin(), prepared.end(), reference.begin(),
+                                        [](const LocalZWipeTowerPassRef& lhs, const LocalZWipeTowerPassRef& rhs) {
+                                            return lhs.layer_to_print_idx == rhs.layer_to_print_idx && lhs.plan == rhs.plan &&
+                                                   lhs.extruders == rhs.extruders;
+                                        }))
+                            throw std::runtime_error("Local-Z parallel wipe eligibility differs from sequential preparation");
+                    }
                     const std::vector<LocalZWipeTowerToolchange> local_z_toolchanges =
-                        collect_local_z_wipe_tower_toolchanges(collect_local_z_wipe_tower_passes(*this, *layers_with_same_print_z), int(current_extruder_id));
+                        collect_local_z_wipe_tower_toolchanges(local_z_passes[layers_to_print_idx], int(current_extruder_id));
                     for (const LocalZWipeTowerToolchange &toolchange : local_z_toolchanges) {
                         wipe_tower.plan_local_z_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
                                                            toolchange.old_tool, toolchange.new_tool, effective_wipe_tower_volume(m_config, toolchange.new_tool));

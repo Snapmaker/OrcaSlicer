@@ -48,3 +48,19 @@ TEST_CASE("Product color library identifies the shipping bundle and its TD value
     }
 }
 
+TEST_CASE("Product painting projection tools select only their screen regions", "[ProductPort][TriangleSelector]")
+{
+    const Vec3f                                 camera(0.f, 0.f, 5.f), target(0.f, 0.f, 0.f);
+    const std::array<int, 4>                    viewport{0, 0, 100, 100};
+    const TriangleSelector::ClippingPlane       clipping;
+    TriangleSelector::RectangleProjectionCursor rectangle(camera, target, Matrix4d::Identity(), viewport, Vec2f(25.f, 25.f),
+                                                          Vec2f(75.f, 75.f), Transform3d::Identity(), clipping);
+    CHECK(rectangle.is_mesh_point_inside(Vec3f(0.f, 0.f, 0.f)));
+    CHECK_FALSE(rectangle.is_mesh_point_inside(Vec3f(.8f, 0.f, 0.f)));
+    TriangleSelector::PolygonProjectionCursor polygon(camera, target, Matrix4d::Identity(), viewport,
+                                                      {Vec2f(20.f, 80.f), Vec2f(50.f, 20.f), Vec2f(80.f, 80.f)}, Transform3d::Identity(),
+                                                      clipping);
+    CHECK(polygon.is_mesh_point_inside(Vec3f(0.f, 0.f, 0.f)));
+    CHECK_FALSE(polygon.is_mesh_point_inside(Vec3f(.5f, .5f, 0.f)));
+}
+

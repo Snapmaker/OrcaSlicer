@@ -1,3 +1,4 @@
+#include "MixedColorMatchHelpers.hpp"
 #include <GL/glew.h>
 
 #include "3DScene.hpp"
@@ -643,6 +644,37 @@ void GLVolume::set_range(double min_z, double max_z)
     }
 }
 
+static bool render_product_gradient(GUI::GLModel&                    model,
+                                    const std::pair<size_t, size_t>& range,
+                                    GLShaderProgram*                 shader,
+                                    const BoundingBoxf3&             box,
+                                    const std::array<float, 2>&      z_range,
+                                    const std::vector<ColorRGBA>&    colors,
+                                    float                            alpha)
+{
+    if (!shader || !model.is_initialized() || colors.size() < 2 || box.max.z() - box.min.z() <= EPSILON)
+        return false;
+    bool rendered = false;
+    for (size_t band = 0; band + 1 < colors.size(); ++band) {
+        const double lo      = box.min.z() + (box.max.z() - box.min.z()) * double(band) / double(colors.size() - 1);
+        const double hi      = box.min.z() + (box.max.z() - box.min.z()) * double(band + 1) / double(colors.size() - 1);
+        const double clip_lo = std::max(lo, double(z_range[0])), clip_hi = std::min(hi, double(z_range[1]));
+        if (clip_hi <= clip_lo)
+            continue;
+        ColorRGBA color = adjust_color_for_rendering(band + 2 == colors.size() ? colors.back() : colors[band]);
+        color.a(alpha);
+        model.set_color(color);
+        shader->set_uniform("z_range", std::array<float, 2>{float(clip_lo), float(clip_hi)});
+        if (range == std::make_pair<size_t, size_t>(0, -1))
+            model.render();
+        else
+            model.render(range);
+        rendered = true;
+    }
+    shader->set_uniform("z_range", z_range);
+    return rendered;
+}
+
 void GLVolume::render()
 {
     if (!is_active)
@@ -658,10 +690,11 @@ void GLVolume::render()
     simple_render(shader, model_objects, colors);
 }
 // BBS add render for simple case
-void GLVolume::simple_render(GLShaderProgram*        shader,
-                             ModelObjectPtrs&        model_objects,
-                             std::vector<ColorRGBA>& extruder_colors,
-                             bool                    ban_light)
+void GLVolume::simple_render(GLShaderProgram*            shader,
+                             ModelObjectPtrs&            model_objects,
+                             std::vector<ColorRGBA>&     extruder_colors,
+                             bool                        ban_light,
+                             const std::array<float, 2>* z_range)
 {
     if (this->is_left_handed())
         glFrontFace(GL_CW);
@@ -698,6 +731,9 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
     // LOD evaluation is handled by GLVolumeCollection::render().
     // m_curLodLevel is already set before simple_render is called.
 
+    const std::array<float, 2> full_z_range{std::numeric_limits<float>::lowest(), std::numeric_limits<float>::max()};
+    const auto&                active_z_range   = z_range ? *z_range : full_z_range;
+    const bool                 gradient_allowed = !picking && !ban_light && printable && !disabled && !is_modifier && !is_wipe_tower;
     if (color_volume && !picking) {
         // when force_transparent, we need to keep the alpha
         if (force_native_color && render_color.is_transparent()) {
@@ -708,6 +744,12 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         for (int idx = 0; idx < mmuseg_models.size(); idx++) {
             GUI::GLModel& m = mmuseg_models[idx];
             if (!m.is_initialized())
+                continue;
+
+            int material = idx == 0 ? std::max(1, model_volume->extruder_id()) : idx;
+            if (gradient_allowed && size_t(material) <= preview_gradient_colors_by_extruder.size() &&
+                render_product_gradient(m, tverts_range, shader, m.get_bounding_box().transformed(world_matrix()), active_z_range,
+                                        preview_gradient_colors_by_extruder[material - 1], render_color.a()))
                 continue;
 
             if (shader) {
@@ -747,6 +789,9 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
             else
                 m.render(this->tverts_range);
         }
+    } else if (gradient_allowed && render_product_gradient(model, tverts_range, shader, transformed_bounding_box(), active_z_range,
+                                                           preview_gradient_colors, render_color.a())) {
+        // The gradient bands have already rendered this volume.
     } else {
         // Select LOD model based on current LOD level
         static int lodRenderLogCounter = 0;
@@ -1349,7 +1394,11 @@ bool GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) *
                                             model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
         shader->set_uniform("view_normal_matrix", view_normal_matrix);
-        volume.first->render();
+        {
+            auto& objects = GUI::wxGetApp().model().objects;
+            auto  colors  = get_extruders_colors();
+            volume.first->simple_render(shader, objects, colors, false, &m_z_range);
+        }
 
 #if ENABLE_ENVIRONMENT_MAP
         if (use_environment_texture)
@@ -1572,6 +1621,7 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
 {
     using ColorItem = std::pair<std::string, ColorRGBA>;
     std::vector<ColorItem> colors;
+    std::vector<std::vector<ColorRGBA>> gradients;
 
     if (static_cast<PrinterTechnology>(config->opt_int("printer_technology")) == ptSLA) {
         const std::string& txt_color = config->opt_string("material_colour").empty() ?
@@ -1589,11 +1639,26 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
         if (filament_colors.empty())
             return;
 
+        const auto context = GUI::build_mixed_filament_display_context(filament_colors);
+        gradients.resize(filament_colors.size());
         // Include enabled mixed (virtual) filament colors so volume extruder IDs
         // assigned to mixed rows render correctly in Prepare view.
         if (GUI::wxGetApp().preset_bundle != nullptr) {
             const auto mixed_colors = GUI::wxGetApp().preset_bundle->mixed_filaments.display_colors();
             filament_colors.insert(filament_colors.end(), mixed_colors.begin(), mixed_colors.end());
+            for (const auto& entry : GUI::wxGetApp().preset_bundle->mixed_filaments.mixed_filaments()) {
+                if (!entry.enabled || entry.deleted)
+                    continue;
+                std::vector<ColorRGBA> samples;
+                if (entry.gradient_enabled && entry.manual_pattern.empty()) {
+                    for (int i = 0; i <= 64; ++i) {
+                        ColorRGBA rgba;
+                        if (decode_color(mixed_gradient_display_color(entry, context, double(i) / 64.0), rgba))
+                            samples.push_back(rgba);
+                    }
+                }
+                gradients.push_back(std::move(samples));
+            }
         }
 
         colors.resize(filament_colors.size());
@@ -1614,6 +1679,10 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
         if (extruder_id < 0 || (int) colors.size() <= extruder_id)
             extruder_id = 0;
 
+        if (colors.empty())
+            continue;
+        volume->preview_gradient_colors = size_t(extruder_id) < gradients.size() ? gradients[extruder_id] : std::vector<ColorRGBA>();
+        volume->preview_gradient_colors_by_extruder = gradients;
         const ColorItem& color = colors[extruder_id];
         if (!color.first.empty()) {
             if (!is_update_alpha) {

@@ -538,7 +538,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
             size_t num_phys = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
             mf_data = pb->mixed_filaments.mixed_filament_from_id(actual_filament_id, num_phys);
         }
-        const bool is_gradient = mf_data && is_simple_gradient(*mf_data);
+        const bool is_gradient = mf_data && is_layer_gradient(*mf_data);
 
         float button_offset = start_pos_x;
         if (extruder_idx % max_filament_items_per_line != 0) {
@@ -598,7 +598,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
             if (fill_h > 0.0f) {
                 for (int y_i = 0; y_i < int(std::round(fill_h)); ++y_i) {
                     double pos = 1.0 - double(y_i) / double(fill_h);
-                    ImU32 c = interpolate_ImU32(bottom_col, top_col, pos);
+                    ImU32  c   = physical_color_to_ImU32(mixed_gradient_display_color(*mf_data, m_mixed_display_context, pos));
                     draw_list->AddRectFilled(
                         ImVec2(fill_min.x, fill_min.y + float(y_i)),
                         ImVec2(fill_max.x, fill_min.y + float(y_i + 1)), c);

@@ -3316,6 +3316,11 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         // BBS: GUI refactor: add canvas size as parameters
         _render_gcode(cnv_size.get_width(), cnv_size.get_height());
     }
+    // All-plates stats page draws no scene, but the frame still needs clearing
+    else if (m_canvas_type == ECanvasType::CanvasPreview) {
+        glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+        _render_background();
+    }
     /* assemble render*/
     else if (m_canvas_type == ECanvasType::CanvasAssembleView) {
         m_selectionHighlightValid = false;

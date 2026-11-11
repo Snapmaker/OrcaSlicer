@@ -1646,7 +1646,7 @@ void GLVolumeCollection::update_colors_by_extruder(const DynamicPrintConfig* con
         if (GUI::wxGetApp().preset_bundle != nullptr) {
             const auto mixed_colors = GUI::wxGetApp().preset_bundle->mixed_filaments.display_colors();
             filament_colors.insert(filament_colors.end(), mixed_colors.begin(), mixed_colors.end());
-            for (const auto& entry : GUI::wxGetApp().preset_bundle->mixed_filaments.mixed_filaments()) {
+            for (const auto& entry : GUI::wxGetApp().preset_bundle->mixed_filaments.mixed_filament_legacy_rows()) {
                 if (!entry.enabled || entry.deleted)
                     continue;
                 std::vector<ColorRGBA> samples;

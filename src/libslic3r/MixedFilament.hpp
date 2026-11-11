@@ -670,9 +670,10 @@ public:
     // Read-only legacy-row snapshot for persistence and compatibility tests.
     // The manager owns typed definitions; this vector is rebuilt from them on demand.
     const std::vector<MixedFilamentLegacyRow>& mixed_filament_legacy_rows() const;
+    // Compatibility-only mutable borrowing. Production edits use explicit setters;
+    // retained for external callers and compatibility regression tests.
     std::vector<MixedFilamentLegacyRow>&       mixed_filaments();
     const std::vector<MixedFilamentLegacyRow>& mixed_filaments() const;
-    MixedFilamentLegacyRow*                    mixed_filament_from_id(unsigned int filament_id, size_t num_physical);
     size_t                                     mixed_filament_count() const;
 
     size_t visible_count() const;

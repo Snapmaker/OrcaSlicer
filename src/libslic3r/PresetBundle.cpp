@@ -3789,7 +3789,7 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
     const size_t old_num_filaments = (old_num_filaments_arg != size_t(-1))
         ? old_num_filaments_arg
         : (deleting_filament ? (num_filaments + 1) : num_filaments);
-    const std::vector<MixedFilament> old_mixed = this->mixed_filaments.mixed_filaments();
+    const std::vector<MixedFilament> old_mixed         = this->mixed_filaments.mixed_filament_legacy_rows();
     m_last_filament_id_remap.clear();
 
     // Now verify if flush_volumes_matrix has proper size (it is used to deduce number of extruders in wipe tower generator):
@@ -4002,7 +4002,7 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
     // Build old->new filament ID remap for painted facet data normalization.
     // This is needed for both deletion and addition of physical filaments so
     // painted mixed states keep pointing at the same virtual mixed entries.
-    if (old_num_filaments != num_filaments || deleting_filament || old_mixed != this->mixed_filaments.mixed_filaments())
+    if (old_num_filaments != num_filaments || deleting_filament || old_mixed != this->mixed_filaments.mixed_filament_legacy_rows())
         build_filament_id_remap(old_mixed, old_num_filaments, num_filaments, deleting_filament,
                                 deleting_filament ? unsigned(to_delete_filament_id + 1) : 0u);
 }
@@ -4108,7 +4108,7 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
     std::unordered_map<uint64_t, unsigned int> new_stable_id_to_virtual_id;
     std::map<std::pair<unsigned int, unsigned int>, std::vector<unsigned int>> new_pair_to_ids;
     unsigned int next_virtual_id = unsigned(new_num_filaments + 1);
-    for (const auto &mf : this->mixed_filaments.mixed_filaments()) {
+    for (const auto& mf : this->mixed_filaments.mixed_filament_legacy_rows()) {
         if (!mf.enabled)
             continue;
         if (mf.stable_id != 0)

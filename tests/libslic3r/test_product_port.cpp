@@ -1195,6 +1195,48 @@ TEST_CASE("Gradient ramp follows moved stops and per-filament printer limits", "
     CHECK(first.height_a == Approx(.20));
 }
 
+TEST_CASE("Explicit mixed row publication matches legacy edits", "[ProductPort][Refactor][Persistence]")
+{
+    const std::vector<std::string> colors{"#FF0000", "#00FF00", "#0000FF"};
+    MixedFilamentManager           legacy, explicit_edits;
+    legacy.add_custom_filament(1, 2, 25, colors);
+    legacy.add_custom_filament(2, 3, 60, colors);
+    explicit_edits.set_mixed_filament_legacy_rows(legacy.mixed_filament_legacy_rows());
+    auto       edited    = explicit_edits.mixed_filament_legacy_rows();
+    auto&      borrowed  = legacy.mixed_filaments();
+    const auto stable_id = edited.front().stable_id;
+    SECTION("Dialog recipe and gradient stops")
+    {
+        for (auto* row : {&borrowed.front(), &edited.front()}) {
+            row->gradient_enabled           = true;
+            row->gradient_component_ids     = "123";
+            row->gradient_component_weights = "2/3/5";
+            row->gradient_stop_positions    = {0.f, 0.4f, 1.f};
+            row->gradient_solid_widths      = {0.f, 0.03f, 0.f};
+            row->ui_mode                    = 3;
+        }
+    }
+    SECTION("Manual pattern")
+    {
+        borrowed.front().manual_pattern = edited.front().manual_pattern = "123";
+        // The dialog publishes the pattern and its derived percentage together.
+        borrowed.front().mix_b_percent = edited.front().mix_b_percent = MixedFilamentManager::mix_percent_from_manual_pattern("123");
+    }
+    SECTION("Delete and remap")
+    {
+        borrowed.front().deleted = edited.front().deleted = true;
+        borrowed.front().enabled = edited.front().enabled = false;
+    }
+    // Editing the snapshot cannot change the manager until publication.
+    CHECK(explicit_edits.mixed_filament_legacy_rows().front().enabled);
+    REQUIRE(explicit_edits.set_mixed_filament_legacy_row(0, edited.front()));
+    CHECK(explicit_edits.mixed_filament_legacy_rows().front().stable_id == stable_id);
+    CHECK(explicit_edits.serialize_custom_entries() == legacy.serialize_custom_entries());
+    CHECK(explicit_edits.enabled_count() == legacy.enabled_count());
+    for (int layer = 0; layer < 20; ++layer)
+        CHECK(explicit_edits.resolve(4, 3, layer) == legacy.resolve(4, 3, layer));
+}
+
 TEST_CASE("Sliced gradients ramp on both sides of the solid zone within printer limits", "[ProductPort][LocalZ][Slice][GradientRamp]")
 {
     double white_limit = .30;

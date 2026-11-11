@@ -581,7 +581,7 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
             const size_t mixed_idx = color_idx - num_physical;
             const auto* pb = Slic3r::GUI::wxGetApp().preset_bundle;
             if (pb != nullptr) {
-                const auto &mfs = pb->mixed_filaments.mixed_filaments();
+                const auto& mfs     = pb->mixed_filaments.mixed_filament_legacy_rows();
                 size_t visible = 0;
                 for (const auto &mf : mfs) {
                     if (mf.deleted || !mf.enabled) continue;

@@ -1569,7 +1569,7 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
 
     // Add mixed filaments as merge targets
     auto& mixed_mgr = wxGetApp().preset_bundle->mixed_filaments;
-    const auto& mfs = mixed_mgr.mixed_filaments();
+    const auto&  mfs          = mixed_mgr.mixed_filament_legacy_rows();
     const size_t num_physical = filament_presets.size();
     
     // Get icon dimensions

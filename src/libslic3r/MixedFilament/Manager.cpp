@@ -999,14 +999,6 @@ std::vector<MixedFilamentLegacyRow>& MixedFilamentManager::mixed_filaments()
 
 const std::vector<MixedFilamentLegacyRow>& MixedFilamentManager::mixed_filaments() const { return mixed_filament_legacy_rows(); }
 
-MixedFilamentLegacyRow* MixedFilamentManager::mixed_filament_from_id(unsigned int filament_id, size_t num_physical)
-{
-    const int idx = mixed_index_from_filament_id(filament_id, num_physical);
-    if (idx < 0)
-        return nullptr;
-    std::vector<MixedFilamentLegacyRow>& rows = mixed_filaments();
-    return size_t(idx) < rows.size() ? &rows[size_t(idx)] : nullptr;
-}
 
 const MixedFilamentLegacyRow* MixedFilamentManager::mixed_filament_from_id(unsigned int filament_id, size_t num_physical) const
 {

@@ -3843,7 +3843,7 @@ static bool mixed_state_heights(const MixedFilamentManager& mixed_mgr,
         return false;
 
     const size_t idx = state_id - num_physical - 1;
-    const auto  &mixed = mixed_mgr.mixed_filaments();
+    const auto&  mixed = mixed_mgr.mixed_filament_legacy_rows();
     if (idx >= mixed.size())
         return false;
 

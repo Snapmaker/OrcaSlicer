@@ -1232,7 +1232,7 @@ static bool same_layer_pointillism_enabled(const MixedFilamentManager &mixed_mgr
 {
     // Deprecated: same-layer pointillism is disabled and will be removed.
 #if 0
-    for (const MixedFilament &mf : mixed_mgr.mixed_filaments())
+    for (const MixedFilament &mf : mixed_mgr.mixed_filament_legacy_rows())
         if (mf.enabled && mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
             return true;
 #endif
@@ -1503,12 +1503,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_mixed_filament_mgr.load_custom_entries(mixed_custom_definitions, physical_filament_colors);
     m_mixed_filament_mgr.apply_gradient_settings(mixed_gradient_mode, mixed_height_lower, mixed_height_upper, mixed_advanced_dither);
     size_t mixed_custom_count = 0;
-    for (const auto& mf : m_mixed_filament_mgr.mixed_filaments())
+    for (const auto& mf : m_mixed_filament_mgr.mixed_filament_legacy_rows())
         if (mf.custom)
             ++mixed_custom_count;
 
     BOOST_LOG_TRIVIAL(info) << "Print::apply mixed manager state"
-                            << ", mixed_total=" << m_mixed_filament_mgr.mixed_filaments().size()
+                            << ", mixed_total=" << m_mixed_filament_mgr.mixed_filament_legacy_rows().size()
                             << ", mixed_enabled=" << m_mixed_filament_mgr.enabled_count() << ", mixed_custom=" << mixed_custom_count;
     // Total filaments = physical extruders + enabled mixed (virtual) filaments.
     // Used for extruder ID clamping so that virtual IDs are accepted.

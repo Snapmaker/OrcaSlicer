@@ -10,6 +10,8 @@
 #include "libslic3r/TriangleSelector.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
+#include "libslic3r/Preset.hpp"
 #include <boost/filesystem.hpp>
 #include <fstream>
 #include <cmath>
@@ -19,6 +21,71 @@
 
 using namespace Slic3r;
 using Catch::Approx;
+
+TEST_CASE("Typed mixes retain product gradient order and widths", "[ProductPort][Refactor]")
+{
+    MixedFilamentLegacyRow row;
+    row.component_a                = 1;
+    row.component_b                = 3;
+    row.stable_id                  = 42;
+    row.custom                     = true;
+    row.ui_mode                    = 3;
+    row.gradient_enabled           = true;
+    row.gradient_start             = 1.f;
+    row.gradient_end               = 0.f;
+    row.gradient_component_ids     = "123";
+    row.gradient_component_weights = "23/22/55";
+    row.gradient_stop_positions    = {0.f, .2f, .5f, .8f, 1.f};
+    row.gradient_solid_widths      = {0.f, .03f, 0.f};
+    auto definition                = mixed_filament_definition_from_legacy_row(row, 3);
+    CHECK(definition.recipe.blend.component_ids() == std::vector<unsigned int>{1, 3, 2});
+    auto rebuilt = mixed_filament_legacy_row_from_definition(definition);
+    CHECK(rebuilt.gradient_component_ids == row.gradient_component_ids);
+    CHECK(rebuilt.gradient_component_weights == row.gradient_component_weights);
+    CHECK(rebuilt.gradient_stop_positions == row.gradient_stop_positions);
+    CHECK(rebuilt.gradient_solid_widths == row.gradient_solid_widths);
+    CHECK(rebuilt.gradient_start == 1.f);
+    CHECK(rebuilt.gradient_end == 0.f);
+    CHECK(rebuilt.ui_mode == 3);
+    CHECK(rebuilt.stable_id == 42);
+}
+
+TEST_CASE("Typed manual patterns retain multi-digit physical references", "[ProductPort][Refactor]")
+{
+    MixedFilamentLegacyRow row;
+    row.component_a       = 11;
+    row.component_b       = 2;
+    row.manual_pattern    = "1[10]2,[12]21";
+    const auto definition = mixed_filament_definition_from_legacy_row(row, 12);
+    REQUIRE(definition.recipe.manual_pattern);
+    CHECK(mixed_filament_manual_pattern_sequence(definition, 12) == std::vector<unsigned int>{11, 10, 2, 12, 2, 11});
+    const auto rebuilt = mixed_filament_legacy_row_from_definition(definition);
+    CHECK(rebuilt.manual_pattern == row.manual_pattern);
+}
+
+TEST_CASE("Typed and legacy edits stay coherent across manager queries", "[ProductPort][Refactor]")
+{
+    const std::vector<std::string> colors{"#00FF40", "#FFFFFF", "#FFFF59"};
+    MixedFilamentManager           manager;
+    manager.add_custom_filament(1, 2, 50, colors);
+    auto& row          = manager.mixed_filaments().front();
+    row.manual_pattern = "12,21";
+    CHECK(manager.ordered_perimeter_extruders(4, 3, 0) == std::vector<unsigned int>{1, 2});
+    CHECK(manager.ordered_perimeter_extruders(4, 3, 1) == std::vector<unsigned int>{2, 1});
+    row.manual_pattern = "21,12";
+    CHECK(manager.ordered_perimeter_extruders(4, 3, 0) == std::vector<unsigned int>{2, 1});
+    row.enabled = false;
+    CHECK(manager.enabled_count() == 0);
+    CHECK_FALSE(manager.mixed_filament_definition_from_id(4, 3));
+    row.enabled     = true;
+    auto definition = manager.mixed_filament_definition_from_id(4, 3);
+    REQUIRE(definition);
+    definition->visibility.tombstoned = true;
+    REQUIRE(manager.set_mixed_filament_definition(0, *definition, colors));
+    CHECK(manager.enabled_count() == 0);
+    manager.cleanup_deleted_entries();
+    CHECK(manager.mixed_filament_count() == 0);
+}
 
 TEST_CASE("Tower skips must not suppress required object tool changes", "[ProductPort][LocalZ][GCode]")
 {
@@ -413,12 +480,12 @@ TEST_CASE("Gradient solid widths are independent, bounded and default to three p
 TEST_CASE("SML restores direct independent heights for painted two and three filament mixes", "[ProductPort][LocalZ][Slice]")
 {
     const std::vector<std::string> colors{"#00FF00", "#FFFFFF", "#FFFF00", "#000000"};
-    MixedFilamentManager manager;
+    MixedFilamentManager           manager;
     manager.add_custom_filament(1, 2, 65, colors);
-    manager.mixed_filaments().back().gradient_component_ids = "12";
+    manager.mixed_filaments().back().gradient_component_ids     = "12";
     manager.mixed_filaments().back().gradient_component_weights = "35/65";
     manager.add_custom_filament(1, 3, 69, colors);
-    manager.mixed_filaments().back().gradient_component_ids = "123";
+    manager.mixed_filaments().back().gradient_component_ids     = "123";
     manager.mixed_filaments().back().gradient_component_weights = "13/18/69";
     for (auto& row : manager.mixed_filaments())
         row.distribution_mode = int(MixedFilament::LayerCycle);
@@ -433,16 +500,16 @@ TEST_CASE("SML restores direct independent heights for painted two and three fil
     config.set("dithering_local_z_mode", false);
     config.set("dithering_local_z_direct_multicolor", false);
     config.set("dithering_local_z_independent_layer_height", false);
-    config.option<ConfigOptionStrings>("filament_colour")->values = colors;
+    config.option<ConfigOptionStrings>("filament_colour")->values  = colors;
     config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75, 1.75, 1.75};
-    config.option<ConfigOptionFloats>("max_layer_height")->values = {.30, .30, .30, .30};
+    config.option<ConfigOptionFloats>("max_layer_height")->values  = {.30, .30, .30, .30};
 
     Model model;
     auto* object = model.add_object();
     object->config.set("extruder", 4);
-    auto* volume = object->add_volume(make_cube(8., 8., 5.));
+    auto*            volume = object->add_volume(make_cube(8., 8., 5.));
     TriangleSelector selector(volume->mesh());
-    const auto& mesh = volume->mesh().its;
+    const auto&      mesh = volume->mesh().its;
     for (size_t facet = 0; facet < mesh.indices.size(); ++facet) {
         const auto& triangle = mesh.indices[facet];
         const float center_x = (mesh.vertices[triangle[0]].x() + mesh.vertices[triangle[1]].x() + mesh.vertices[triangle[2]].x()) / 3.f;
@@ -548,4 +615,379 @@ TEST_CASE("Gradient design previews retain full transitions at the minimum print
     const auto heights = mixed_filament_local_z_pair_heights(.12, .06, 10);
     CHECK(heights.first == Approx(.06));
     CHECK(heights.second == Approx(.06));
+}
+
+TEST_CASE("Mixed filament typed definition resolves legacy manual pattern tokens", "[MixedFilament][Refactor]")
+{
+    MixedFilamentLegacyRow row;
+    row.component_a                = 4;
+    row.component_b                = 2;
+    row.stable_id                  = 123;
+    row.custom                     = true;
+    row.origin_auto                = false;
+    row.mix_b_percent              = 50;
+    row.ratio_a                    = 3;
+    row.ratio_b                    = 1;
+    row.manual_pattern             = MixedFilamentManager::normalize_manual_pattern("12,31");
+    row.local_z_max_sublayers      = 5;
+    row.component_a_surface_offset = 0.02f;
+    row.component_b_surface_offset = -0.01f;
+    row.display_color              = "#123456";
+
+    const MixedFilamentDefinition definition = mixed_filament_definition_from_legacy_row(row, 9);
+    CHECK(definition.identity.stable_id == 123);
+    CHECK(definition.source.kind == MixedFilamentSourceKind::Custom);
+    CHECK(definition.recipe.kind == MixedFilamentRecipeKind::ManualPattern);
+    REQUIRE(definition.recipe.blend.components.size() == 3);
+    CHECK(definition.recipe.blend.components[0].filament.id == 4);
+    CHECK(definition.recipe.blend.components[0].percent == 50);
+    CHECK(definition.recipe.blend.components[1].filament.id == 2);
+    CHECK(definition.recipe.blend.components[1].percent == 25);
+    CHECK(definition.recipe.blend.components[2].filament.id == 3);
+    CHECK(definition.recipe.blend.components[2].percent == 25);
+    CHECK(definition.behavior.layer_cadence.component_a_layers == 3);
+    CHECK(definition.behavior.layer_cadence.component_b_layers == 1);
+    CHECK(definition.behavior.local_z.max_sublayers == 5);
+    CHECK(definition.behavior.surface_bias.component_a_offset_mm == Approx(0.02f));
+    CHECK(definition.behavior.surface_bias.component_b_offset_mm == Approx(-0.01f));
+    CHECK(definition.presentation.display_color == "#123456");
+
+    REQUIRE(definition.recipe.manual_pattern);
+    REQUIRE(definition.recipe.manual_pattern->groups.size() == 2);
+    REQUIRE(definition.recipe.manual_pattern->groups[0].size() == 2);
+    REQUIRE(definition.recipe.manual_pattern->groups[1].size() == 2);
+    CHECK(definition.recipe.manual_pattern->groups[0][0].id == 4);
+    CHECK(definition.recipe.manual_pattern->groups[0][1].id == 2);
+    CHECK(definition.recipe.manual_pattern->groups[1][0].id == 3);
+    CHECK(definition.recipe.manual_pattern->groups[1][1].id == 4);
+
+    CHECK(mixed_filament_manual_pattern_sequence(definition, 9) == std::vector<unsigned int>{4, 2, 3, 4});
+    CHECK(mixed_filament_manual_pattern_preview_sequence(definition, 9, 2) == std::vector<unsigned int>{4, 3, 2, 4});
+
+    const MixedFilamentLegacyRow rebuilt = mixed_filament_legacy_row_from_definition(definition);
+    CHECK(rebuilt.component_a == 4);
+    CHECK(rebuilt.component_b == 2);
+    CHECK(rebuilt.manual_pattern == "12,31");
+    CHECK(rebuilt.mix_b_percent == 25);
+    CHECK(rebuilt.gradient_component_ids.empty());
+    CHECK(rebuilt.gradient_component_weights.empty());
+}
+
+TEST_CASE("Mixed filament manual pattern aggregate keeps legacy primary pair", "[MixedFilament][Refactor]")
+{
+    MixedFilamentLegacyRow row;
+    row.component_a    = 1;
+    row.component_b    = 2;
+    row.mix_b_percent  = 50;
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("2,12");
+
+    const MixedFilamentDefinition definition = mixed_filament_definition_from_legacy_row(row, 2);
+    REQUIRE(definition.recipe.manual_pattern);
+    const MixedFilamentPrimaryPairView pair = definition.recipe.blend.primary_pair_or(0, 0);
+    CHECK(pair.component_a.id == 1);
+    CHECK(pair.component_b.id == 2);
+    CHECK(definition.recipe.blend.component_ids(2) == std::vector<unsigned int>{1, 2});
+    CHECK(definition.recipe.blend.component_percents(2) == std::vector<int>{33, 67});
+
+    const MixedFilamentLegacyRow rebuilt = mixed_filament_legacy_row_from_definition(definition);
+    CHECK(rebuilt.component_a == 1);
+    CHECK(rebuilt.component_b == 2);
+    CHECK(rebuilt.manual_pattern == "2,12");
+}
+
+TEST_CASE("Mixed filament typed definition exposes weighted blend components and weights", "[MixedFilament][Refactor]")
+{
+    MixedFilamentLegacyRow row;
+    row.component_a                = 1;
+    row.component_b                = 2;
+    row.stable_id                  = 456;
+    row.custom                     = true;
+    row.gradient_component_ids     = "312";
+    row.gradient_component_weights = "50/25/25";
+    row.distribution_mode          = int(MixedFilamentLegacyRow::LayerCycle);
+
+    const MixedFilamentDefinition definition = mixed_filament_definition_from_legacy_row(row, 9);
+    CHECK(definition.recipe.kind == MixedFilamentRecipeKind::WeightedBlend);
+    CHECK(definition.behavior.distribution == MixedFilamentDistributionMode::LayerCycle);
+
+    REQUIRE(definition.recipe.blend.components.size() == 3);
+    CHECK(definition.recipe.blend.components[0].filament.id == 1);
+    CHECK(definition.recipe.blend.components[0].percent == 25);
+    CHECK(definition.recipe.blend.components[1].filament.id == 2);
+    CHECK(definition.recipe.blend.components[1].percent == 25);
+    CHECK(definition.recipe.blend.components[2].filament.id == 3);
+    CHECK(definition.recipe.blend.components[2].percent == 50);
+    CHECK(definition.recipe.blend.component_ids(9) == std::vector<unsigned int>{1, 2, 3});
+    CHECK(definition.recipe.blend.component_percents(9) == std::vector<int>{25, 25, 50});
+    CHECK(definition.recipe.blend.component_ids(2) == std::vector<unsigned int>{1, 2});
+    CHECK(definition.recipe.blend.component_percents(2) == std::vector<int>{25, 25});
+
+    const MixedFilamentLegacyRow rebuilt = mixed_filament_legacy_row_from_definition(definition);
+    CHECK(rebuilt.gradient_component_ids == "123");
+    CHECK(rebuilt.gradient_component_weights == "25/25/50");
+    CHECK(rebuilt.manual_pattern.empty());
+}
+
+TEST_CASE("Mixed filament legacy gradient decoding filters unavailable physical components", "[MixedFilament][Refactor]")
+{
+    MixedFilamentLegacyRow row;
+    row.component_a                = 1;
+    row.component_b                = 2;
+    row.mix_b_percent              = 50;
+    row.gradient_component_ids     = "1235";
+    row.gradient_component_weights = "10/20/30/40";
+    row.distribution_mode          = int(MixedFilamentLegacyRow::LayerCycle);
+
+    MixedFilamentDefinition definition = mixed_filament_definition_from_legacy_row(row, 3);
+    CHECK(definition.recipe.blend.component_ids(3) == std::vector<unsigned int>{1, 2, 3});
+    CHECK(definition.recipe.blend.component_percents(3) == std::vector<int>{17, 33, 50});
+    CHECK(definition.behavior.distribution == MixedFilamentDistributionMode::LayerCycle);
+
+    row.gradient_component_ids     = "125";
+    row.gradient_component_weights = "10/20/70";
+    definition                     = mixed_filament_definition_from_legacy_row(row, 2);
+    CHECK(definition.recipe.blend.component_ids(2) == std::vector<unsigned int>{1, 2});
+    CHECK(definition.behavior.distribution == MixedFilamentDistributionMode::LayerCycle);
+
+    row.manual_pattern = MixedFilamentManager::normalize_manual_pattern("125");
+    definition         = mixed_filament_definition_from_legacy_row(row, 2);
+    CHECK(mixed_filament_manual_pattern_sequence(definition, 2) == std::vector<unsigned int>{1, 2});
+}
+
+TEST_CASE("Mixed filament manager accepts typed definitions at the boundary", "[MixedFilament][Refactor]")
+{
+    const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF"};
+
+    MixedFilamentDefinition definition;
+    definition.recipe.kind  = MixedFilamentRecipeKind::WeightedBlend;
+    definition.recipe.blend = MixedFilamentWeightedBlend{
+        {{MixedFilamentPhysicalRef{1}, 50}, {MixedFilamentPhysicalRef{2}, 25}, {MixedFilamentPhysicalRef{3}, 25}}};
+    definition.behavior.distribution = MixedFilamentDistributionMode::LayerCycle;
+
+    MixedFilamentManager mgr;
+    REQUIRE(mgr.add_custom_filament_definition(definition, colors));
+    REQUIRE(mgr.mixed_filament_legacy_rows().size() == 1);
+
+    const std::vector<MixedFilamentDefinition> definitions = mgr.mixed_filament_definitions(colors.size());
+    REQUIRE(definitions.size() == 1);
+    CHECK(definitions.front().source.kind == MixedFilamentSourceKind::Custom);
+    CHECK(definitions.front().identity.stable_id != 0);
+    CHECK(definitions.front().recipe.blend.component_ids(colors.size()) == std::vector<unsigned int>{1, 2, 3});
+
+    MixedFilamentDefinition edited = definitions.front();
+    edited.recipe.blend.components = {{MixedFilamentPhysicalRef{1}, 35}, {MixedFilamentPhysicalRef{2}, 65}};
+    edited.recipe.kind             = MixedFilamentRecipeKind::WeightedBlend;
+    edited.behavior.distribution   = MixedFilamentDistributionMode::Simple;
+    REQUIRE(mgr.set_mixed_filament_definition(0, edited, colors));
+
+    const auto roundtrip = mgr.mixed_filament_definition_from_id(4, colors.size());
+    REQUIRE(roundtrip);
+    CHECK(roundtrip->identity.stable_id == definitions.front().identity.stable_id);
+    CHECK(roundtrip->recipe.kind == MixedFilamentRecipeKind::WeightedBlend);
+    CHECK(roundtrip->recipe.blend.is_pair());
+    CHECK(roundtrip->recipe.blend.primary_pair_or().component_b_percent == 65);
+    CHECK(roundtrip->recipe.blend.component_ids(colors.size()) == std::vector<unsigned int>{1, 2});
+}
+
+namespace {
+// Pre-refactor project syntax: compact and slash-delimited IDs, old mode flags,
+// stable IDs, gradient stops/widths, manual perimeter groups and unavailable rows.
+const std::string legacy_compat_recipes = "1,2,1,1,50,0,g1/2/12,w33/33/34,m0,u101,cm2;"
+                                          "1,2,1,1,50,0,g123,w0/0/100,m2,u102;"
+                                          "1,12,1,1,50,0,g1/3/12,w20/30/50,m0,u103,cm3,r1/1.0000/0.0000,p0/0.2/0.5/0.8/1,v0/0.03/0;"
+                                          "1,2,1,1,50,0,g,w,m0,u104,cm1,1[12]2,21[10];"
+                                          "1,2,0,1,25,0,m2,u105;"
+                                          "2,3,0,1,75,0,m2,d1,u106";
+
+void check_legacy_compat_recipes(const MixedFilamentManager& manager)
+{
+    const auto& rows = manager.mixed_filament_legacy_rows();
+    REQUIRE(rows.size() == 6);
+    for (size_t i = 0; i < rows.size(); ++i)
+        CHECK(rows[i].stable_id == 101 + i);
+    CHECK(rows[0].gradient_component_ids == "1/2/12");
+    CHECK(rows[0].gradient_component_weights == "33/33/34");
+    CHECK(rows[0].mix_b_percent == 50);
+    CHECK(rows[1].distribution_mode == int(MixedFilament::Simple));
+    CHECK(rows[1].mix_b_percent == 50);
+    CHECK(rows[1].gradient_component_ids == "123");
+    CHECK(rows[1].gradient_component_weights == "0/0/100");
+    CHECK(rows[2].gradient_enabled);
+    CHECK(rows[2].gradient_component_ids == "1/3/12");
+    CHECK(rows[2].gradient_component_weights == "20/30/50");
+    REQUIRE(rows[2].gradient_stop_positions.size() == 5);
+    CHECK(rows[2].gradient_stop_positions[1] == Approx(.2));
+    REQUIRE(rows[2].gradient_solid_widths.size() == 3);
+    CHECK(rows[2].gradient_solid_widths[1] == Approx(.03));
+    CHECK(rows[2].gradient_start == 1.f);
+    CHECK(rows[2].gradient_end == 0.f);
+    CHECK(rows[3].manual_pattern == "1[12]2,21[10]");
+    CHECK_FALSE(rows[4].enabled);
+    CHECK_FALSE(rows[4].deleted);
+    CHECK_FALSE(rows[5].enabled);
+    CHECK(rows[5].deleted);
+    CHECK(manager.filament_id_from_stable_id(101, 12) == std::optional<unsigned int>(13));
+    CHECK(manager.filament_id_from_stable_id(104, 12) == std::optional<unsigned int>(16));
+    CHECK_FALSE(manager.filament_id_from_stable_id(105, 12));
+}
+} // namespace
+
+TEST_CASE("Static typed blends preserve all supported legacy filament IDs", "[ProductPort][Refactor][Persistence]")
+{
+    for (unsigned int last : {9u, 12u, unsigned(MixedFilamentManager::kMaxPhysicalFilaments)}) {
+        CAPTURE(last);
+        MixedFilamentLegacyRow row;
+        row.component_a                = 1;
+        row.component_b                = 2;
+        row.distribution_mode          = int(MixedFilament::LayerCycle);
+        row.gradient_component_ids     = MixedFilamentManager::encode_gradient_component_ids({1, 2, last});
+        row.gradient_component_weights = "20/30/50";
+        const auto typed               = mixed_filament_definition_from_legacy_row(row, last);
+        const auto rebuilt             = mixed_filament_legacy_row_from_definition(typed);
+        CHECK(rebuilt.gradient_component_ids == row.gradient_component_ids);
+        CHECK(rebuilt.gradient_component_weights == row.gradient_component_weights);
+        CHECK(rebuilt.mix_b_percent == row.mix_b_percent);
+        CHECK_FALSE(rebuilt.gradient_enabled);
+        auto edited                    = typed;
+        edited.recipe.blend.components = {{{1}, 35}, {{2}, 65}};
+        CHECK(mixed_filament_legacy_row_from_definition(edited).mix_b_percent == 65);
+        if (last == 12) {
+            const std::vector<std::string> colors(12, "#808080");
+            MixedFilamentManager           manager;
+            REQUIRE(manager.add_custom_filament_definition(typed, colors));
+            auto changed                    = manager.mixed_filament_definitions().front();
+            changed.recipe.blend.components = {{{1}, 35}, {{2}, 65}};
+            REQUIRE(manager.set_mixed_filament_definition(0, changed, colors));
+            CHECK(manager.mixed_filament_legacy_rows().front().mix_b_percent == 65);
+            changed                         = manager.mixed_filament_definitions().front();
+            changed.recipe.blend.components = {{{1}, 70}, {{2}, 30}};
+            REQUIRE(manager.set_mixed_filament_definition(0, changed, colors));
+            CHECK(manager.mixed_filament_legacy_rows().front().mix_b_percent == 30);
+        }
+    }
+}
+
+TEST_CASE("Simple mixes retain their pair cadence with inactive multi-color weights", "[ProductPort][Refactor][Persistence]")
+{
+    const std::vector<std::string> colors(3, "#808080");
+    std::string                    saved         = "1,2,1,1,50,0,g123,w0/0/100,m2,u102";
+    int                            gradient_mode = 0;
+    SECTION("Layer-count cadence") {}
+    SECTION("Height-weighted cadence") { gradient_mode = 1; }
+    for (int generation = 0; generation < 3; ++generation) {
+        CAPTURE(generation);
+        MixedFilamentManager manager;
+        manager.load_custom_entries(saved, colors);
+        manager.apply_gradient_settings(gradient_mode, .04f, .16f, false);
+        const auto& row = manager.mixed_filament_legacy_rows().front();
+        REQUIRE(row.mix_b_percent == 50);
+        for (int layer = 0; layer < 8; ++layer)
+            CHECK(manager.resolve(4, 3, layer, .075f + .1f * layer, .1f) == unsigned(layer % 2 + 1));
+        saved = manager.serialize_custom_entries();
+        CHECK(saved.find("g123,w0/0/100,m2") != std::string::npos);
+    }
+}
+
+TEST_CASE("Old mixed recipe strings survive repeated typed manager save and load", "[ProductPort][Refactor][Persistence]")
+{
+    const std::vector<std::string> colors(12, "#808080");
+    std::string                    saved = legacy_compat_recipes;
+    for (int generation = 0; generation < 3; ++generation) {
+        CAPTURE(generation);
+        MixedFilamentManager manager;
+        manager.load_custom_entries(saved, colors);
+        manager.apply_gradient_settings(0, .04f, .16f, false);
+        check_legacy_compat_recipes(manager);
+        CHECK(manager.resolve(14, 12, 0) == 1);
+        CHECK(manager.resolve(14, 12, 1) == 2);
+        const auto next = manager.serialize_custom_entries();
+        if (generation > 0)
+            CHECK(next == saved);
+        saved = next;
+    }
+}
+
+TEST_CASE("Legacy 3MF recipes and painted assignments survive refactored resaves", "[ProductPort][Refactor][Persistence][3mf]")
+{
+    struct TemporaryProject
+    {
+        boost::filesystem::path directory = boost::filesystem::temp_directory_path() /
+                                            boost::filesystem::unique_path("mf-compat-%%%%-%%%%");
+        TemporaryProject() { boost::filesystem::create_directories(directory); }
+        ~TemporaryProject()
+        {
+            boost::system::error_code ec;
+            boost::filesystem::remove_all(directory, ec);
+        }
+    } temporary;
+    const std::vector<std::string> colors(12, "#808080");
+    auto                           config = DynamicPrintConfig::full_print_config();
+    // Full defaults need enum dictionaries before the production exporter serializes them.
+    for (const auto& key : config.keys()) {
+        if (config.option(key)->type() != coEnums)
+            continue;
+        auto* option = config.def()->get(key)->create_default_option();
+        option->set(config.option(key));
+        config.set_key_value(key, option);
+    }
+    config.option<ConfigOptionStrings>("filament_colour")->values = colors;
+    config.option<ConfigOptionFloats>("filament_diameter")->values.assign(12, 1.75);
+    config.set("mixed_filament_definitions", legacy_compat_recipes);
+    Model model;
+    auto* object = model.add_object();
+    object->config.set("extruder", 13);
+    auto*            volume = object->add_volume(make_cube(5., 5., 5.));
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(0, EnforcerBlockerType(14));
+    volume->mmu_segmentation_facets.set(selector);
+    const auto painted_triangle = volume->mmu_segmentation_facets.get_triangle_as_string(0);
+    REQUIRE_FALSE(painted_triangle.empty());
+    object->add_instance();
+    model.set_backup_path((temporary.directory / "export").string());
+
+    for (int generation = 0; generation < 2; ++generation) {
+        CAPTURE(generation);
+        const auto  path = (temporary.directory / ("project-" + std::to_string(generation) + ".3mf")).string();
+        StoreParams params;
+        params.path     = path.c_str();
+        params.model    = &model;
+        params.config   = &config;
+        params.strategy = SaveStrategy::Zip64 | SaveStrategy::Silence | SaveStrategy::SkipAuxiliary;
+        REQUIRE(store_bbs_3mf(params));
+        Model loaded_model;
+        loaded_model.set_backup_path((temporary.directory / ("import-" + std::to_string(generation))).string());
+        DynamicPrintConfig        loaded_config;
+        ConfigSubstitutionContext substitutions{ForwardCompatibilitySubstitutionRule::Enable};
+        struct LoadedExtras
+        {
+            PlateDataPtrs        plates;
+            std::vector<Preset*> presets;
+            ~LoadedExtras()
+            {
+                release_PlateData_list(plates);
+                for (auto* preset : presets)
+                    delete preset;
+            }
+        } extras;
+        bool   is_project = false;
+        Semver version;
+        REQUIRE(load_bbs_3mf(path.c_str(), &loaded_config, &substitutions, &loaded_model, &extras.plates, &extras.presets, &is_project,
+                             &version, nullptr, LoadStrategy::LoadModel | LoadStrategy::LoadConfig | LoadStrategy::Silence));
+        REQUIRE(is_project);
+        REQUIRE(loaded_model.objects.size() == 1);
+        REQUIRE(loaded_model.objects.front()->volumes.size() == 1);
+        CHECK(loaded_model.objects.front()->config.opt_int("extruder") == 13);
+        CHECK(loaded_model.objects.front()->volumes.front()->mmu_segmentation_facets.get_triangle_as_string(0) == painted_triangle);
+        REQUIRE(loaded_config.option<ConfigOptionString>("mixed_filament_definitions"));
+        CHECK(loaded_config.opt_string("mixed_filament_definitions") == config.opt_string("mixed_filament_definitions"));
+        MixedFilamentManager manager;
+        manager.load_custom_entries(loaded_config.opt_string("mixed_filament_definitions"), colors);
+        manager.apply_gradient_settings(0, .04f, .16f, false);
+        check_legacy_compat_recipes(manager);
+        CHECK(manager.resolve(14, 12, 0) == 1);
+        CHECK(manager.resolve(14, 12, 1) == 2);
+        // Save the migrated manager through the same old project setting, then reopen.
+        config.set("mixed_filament_definitions", manager.serialize_custom_entries());
+        model = std::move(loaded_model);
+    }
 }

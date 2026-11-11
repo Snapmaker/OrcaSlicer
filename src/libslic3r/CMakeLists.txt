@@ -292,7 +292,16 @@ set(lisbslic3r_sources
     MinAreaBoundingBox.hpp
     MinimumSpanningTree.cpp
     MinimumSpanningTree.hpp
-    MixedFilamentGradient.cpp
+    MixedFilament/Common.cpp
+    MixedFilament/Definition.cpp
+    MixedFilament/Display.cpp
+    MixedFilament/Gradient.cpp
+    MixedFilament/GradientPreview.cpp
+    MixedFilament/LegacyRow.cpp
+    MixedFilament/Manager.cpp
+    MixedFilament/Pattern.cpp
+    MixedFilament/Preview.cpp
+    MixedFilament/Resolver.cpp
     MixedFilament.cpp
     FullSpectrumKSPairResidual.cpp
     FullSpectrumICCPolynomialEstimator.cpp

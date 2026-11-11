@@ -372,6 +372,8 @@ set(lisbslic3r_sources
     Print.hpp
     PrintObject.cpp
     PrintObjectSlice.cpp
+    Slicing/PaintedLayerOutlineCache.hpp
+    Slicing/PreparationDiagnostics.hpp
     LocalZ/LocalZClipDecision.cpp
     LocalZ/LocalZClipDecision.hpp
     LocalZ/LocalZClipper.cpp

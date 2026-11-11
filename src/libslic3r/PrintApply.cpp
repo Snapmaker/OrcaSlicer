@@ -735,6 +735,24 @@ static bool mm_paint_applies_to_parent_region(const PrintObjectRegions::LayerRan
     return root_model_part != nullptr && root_model_part->is_mm_painted();
 }
 
+static PrintRegionConfig painted_region_config(const PrintRegionConfig& parent_config,
+                                               unsigned int             painted_extruder_id,
+                                               int                      extra_perimeters)
+{
+    PrintRegionConfig config            = parent_config;
+    config.wall_filament.value          = painted_extruder_id;
+    config.solid_infill_filament.value  = painted_extruder_id;
+    config.sparse_infill_filament.value = painted_extruder_id;
+
+    // A same-filament paint mark must keep the parent wall count. Giving it a
+    // different region configuration can make the parent and painted walls
+    // overlap even though no visible material transition exists.
+    if (extra_perimeters > 0 && painted_extruder_id != static_cast<unsigned int>(parent_config.wall_filament.value))
+        config.wall_loops.value = std::max(0, parent_config.wall_loops.value) + extra_perimeters;
+
+    return config;
+}
+
 void print_region_ref_inc(PrintRegion &r) { ++ r.m_ref_cnt; }
 void print_region_ref_reset(PrintRegion &r) { r.m_ref_cnt = 0; }
 int  print_region_ref_cnt(const PrintRegion &r) { return r.m_ref_cnt; }
@@ -743,11 +761,12 @@ int  print_region_ref_cnt(const PrintRegion &r) { return r.m_ref_cnt; }
 // Before region configs are updated, callback_invalidate() is called to possibly stop background processing.
 // Returns false if this object needs to be resliced because regions were merged or split.
 bool verify_update_print_object_regions(
-    ModelVolumePtrs                     model_volumes,
-    const PrintRegionConfig            &default_region_config,
-    size_t                              num_extruders,
-    PrintObjectRegions                 &print_object_regions,
-    const std::function<void(const PrintRegionConfig&, const PrintRegionConfig&, const t_config_option_keys&)> &callback_invalidate)
+    ModelVolumePtrs          model_volumes,
+    const PrintRegionConfig& default_region_config,
+    size_t                   num_extruders,
+    int                      painted_zone_extra_perimeters,
+    PrintObjectRegions&      print_object_regions,
+    const std::function<void(const PrintRegionConfig&, const PrintRegionConfig&, const t_config_option_keys&)>& callback_invalidate)
 {
     // Sort by ModelVolume ID.
     model_volumes_sort_by_id(model_volumes);
@@ -825,10 +844,7 @@ bool verify_update_print_object_regions(
             if (!mm_paint_applies_to_parent_region(layer_range, region.parent))
                 return false;
             const PrintObjectRegions::VolumeRegion &parent_region   = layer_range.volume_regions[region.parent];
-            PrintRegionConfig                       cfg             = parent_region.region->config();
-            cfg.wall_filament.value    = region.extruder_id;
-            cfg.solid_infill_filament.value = region.extruder_id;
-            cfg.sparse_infill_filament.value       = region.extruder_id;
+            PrintRegionConfig cfg = painted_region_config(parent_region.region->config(), region.extruder_id, painted_zone_extra_perimeters);
             if (cfg != region.region->config()) {
                 // Region configuration changed.
                 if (print_region_ref_cnt(*region.region) == 0) {
@@ -963,16 +979,16 @@ void update_volume_bboxes(
 
 // Either a fresh PrintObject, or PrintObject regions were invalidated (merged, split).
 // Generate PrintRegions from scratch.
-static PrintObjectRegions* generate_print_object_regions(
-    PrintObjectRegions                          *print_object_regions_old,
-    const ModelVolumePtrs                       &model_volumes,
-    const LayerRanges                           &model_layer_ranges,
-    const PrintRegionConfig                     &default_region_config,
-    const Transform3d                           &trafo,
-    size_t                                       num_extruders,
-    const float                                  xy_contour_compensation,
-    const std::vector<unsigned int>             &painting_extruders,
-    const bool                                   has_painted_fuzzy_skin)
+static PrintObjectRegions* generate_print_object_regions(PrintObjectRegions*              print_object_regions_old,
+                                                         const ModelVolumePtrs&           model_volumes,
+                                                         const LayerRanges&               model_layer_ranges,
+                                                         const PrintRegionConfig&         default_region_config,
+                                                         const Transform3d&               trafo,
+                                                         size_t                           num_extruders,
+                                                         const float                      xy_contour_compensation,
+                                                         const std::vector<unsigned int>& painting_extruders,
+                                                         const bool                       has_painted_fuzzy_skin,
+                                                         const int                        painted_zone_extra_perimeters)
 {
     // Reuse the old object or generate a new one.
     auto out = print_object_regions_old ? std::unique_ptr<PrintObjectRegions>(print_object_regions_old) : std::make_unique<PrintObjectRegions>();
@@ -1070,10 +1086,8 @@ static PrintObjectRegions* generate_print_object_regions(
                 if (const PrintObjectRegions::VolumeRegion &parent_region = layer_range.volume_regions[parent_region_id];
                     (parent_region.model_volume->is_model_part() || parent_region.model_volume->is_modifier()) &&
                     mm_paint_applies_to_parent_region(layer_range, parent_region_id)) {
-                    PrintRegionConfig cfg = parent_region.region->config();
-                    cfg.wall_filament.value    = painted_extruder_id;
-                    cfg.solid_infill_filament.value = painted_extruder_id;
-                    cfg.sparse_infill_filament.value       = painted_extruder_id;
+                    PrintRegionConfig cfg = painted_region_config(parent_region.region->config(), painted_extruder_id,
+                                                                  painted_zone_extra_perimeters);
                     // Keep PrintRegion config-interned. If a painted target resolves to the same
                     // config as its parent, alias it instead of creating a duplicate PrintRegion.
                     PrintRegion *painted_region = get_create_region(std::move(cfg));
@@ -1944,16 +1958,19 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 model_object_status.print_object_regions_status = ModelObjectStatus::PrintObjectRegionsStatus::PartiallyValid;
                 print_regions_reshuffled = true;
             } else if (print_object_regions &&
-                verify_update_print_object_regions(
-                    print_object.model_object()->volumes,
-                    m_default_region_config,
-                    num_total_filaments,
-                    *print_object_regions,
-                    [it_print_object, it_print_object_end, &update_apply_status](const PrintRegionConfig &old_config, const PrintRegionConfig &new_config, const t_config_option_keys &diff_keys) {
-                        for (auto it = it_print_object; it != it_print_object_end; ++it)
-                            if ((*it)->m_shared_regions != nullptr)
-                                update_apply_status((*it)->invalidate_state_by_config_options(old_config, new_config, diff_keys));
-                    })) {
+                       verify_update_print_object_regions(print_object.model_object()->volumes, m_default_region_config,
+                                                          num_total_filaments, (print_object.config().fs_surface_paint_only.value ? print_object.config().fs_painted_zone_extra_perimeters.value : 0),
+                                                          *print_object_regions,
+                                                          [it_print_object, it_print_object_end,
+                                                           &update_apply_status](const PrintRegionConfig&    old_config,
+                                                                                 const PrintRegionConfig&    new_config,
+                                                                                 const t_config_option_keys& diff_keys) {
+                                                              for (auto it = it_print_object; it != it_print_object_end; ++it)
+                                                                  if ((*it)->m_shared_regions != nullptr)
+                                                                      update_apply_status(
+                                                                          (*it)->invalidate_state_by_config_options(old_config, new_config,
+                                                                                                                    diff_keys));
+                                                          })) {
                 // Regions are valid, just keep them.
             } else {
                 // Regions were reshuffled.
@@ -1966,16 +1983,15 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         if (print_object_regions == nullptr || model_object_status.print_object_regions_status != ModelObjectStatus::PrintObjectRegionsStatus::Valid) {
             // Layer ranges with their associated configurations. Remove overlaps between the ranges
             // and create the regions from scratch.
-            print_object_regions = generate_print_object_regions(
-                print_object_regions,
-                print_object.model_object()->volumes,
-                LayerRanges(print_object.model_object()->layer_config_ranges),
-                m_default_region_config,
-                model_object_status.print_instances.front().trafo,
-                num_total_filaments ,
-                print_object.is_mm_painted() ? 0.f : float(print_object.config().xy_contour_compensation.value),
-                painting_extruders,
-                print_object.is_fuzzy_skin_painted());
+            print_object_regions = generate_print_object_regions(print_object_regions, print_object.model_object()->volumes,
+                                                                 LayerRanges(print_object.model_object()->layer_config_ranges),
+                                                                 m_default_region_config, model_object_status.print_instances.front().trafo,
+                                                                 num_total_filaments,
+                                                                 print_object.is_mm_painted() ?
+                                                                     0.f :
+                                                                     float(print_object.config().xy_contour_compensation.value),
+                                                                 painting_extruders, print_object.is_fuzzy_skin_painted(),
+                                                                 (print_object.config().fs_surface_paint_only.value ? print_object.config().fs_painted_zone_extra_perimeters.value : 0));
         }
         for (auto it = it_print_object; it != it_print_object_end; ++it)
             if ((*it)->m_shared_regions) {

@@ -852,6 +852,7 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
         config->has("dithering_local_z_mode") && config->option("dithering_local_z_mode") != nullptr &&
         config->opt_bool("dithering_local_z_mode");
     toggle_line("dithering_local_z_whole_objects", local_z_dithering_enabled);
+    toggle_line("fs_painted_zone_extra_perimeters", config->opt_bool("fs_surface_paint_only"));
     toggle_line("dithering_local_z_infill", local_z_dithering_enabled);
     toggle_line("dithering_local_z_direct_multicolor", local_z_dithering_enabled);
 

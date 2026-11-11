@@ -4,6 +4,7 @@
 #include <map>
 #include <vector>
 #include <set>
+#include <thread>
 
 #include <wx/bitmap.h>
 #include <wx/dataview.h>
@@ -171,6 +172,10 @@ private:
 
     std::vector<wxBitmap*>      m_bmp_vector;
 
+    // Worker thread of smooth_mesh(); started and joined on the UI thread only,
+    // see smooth_mesh() and ~ObjectList().
+    std::thread                m_smooth_mesh_thread;
+
     int			m_selected_object_id = -1;
     bool		m_prevent_list_events = false;		// We use this flag to avoid circular event handling Select()
                                                     // happens to fire a wxEVT_LIST_ITEM_SELECTED on OSX, whose event handler
@@ -221,6 +226,7 @@ public:
     void                create_objects_ctrl();
     // BBS
     void                update_objects_list_filament_column(size_t filaments_count);
+    void                refresh_layer_range_filament_items();
     void                update_objects_list_filament_column_when_delete_filament(size_t filament_id, size_t filaments_count, int replace_filament_id = -1);
     void                update_filament_values_for_items_when_delete_filament(const size_t filament_id, const int replace_id = -1);
     void                update_filament_colors();
@@ -424,6 +430,7 @@ public:
     void rename_item();
     void fix_through_netfabb();
     void simplify();
+    void smooth_mesh();
     void update_item_error_icon(const int obj_idx, int vol_idx) const ;
 
     void copy_layers_to_clipboard();

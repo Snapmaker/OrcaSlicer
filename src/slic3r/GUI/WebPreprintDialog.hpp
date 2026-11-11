@@ -15,6 +15,7 @@ public:
 
     void load_url(wxString &url);
     bool run();
+    void refresh_gateway_urls();
     void RunScript(const wxString &javascript);
 
     void reload();
@@ -26,6 +27,8 @@ public:
     bool is_send_page();
 
     void set_send_page(bool flag);
+
+    void set_store_id(const std::string& id) { m_store_id = id; }
 
     bool need_switch_to_device() { return m_switch_to_device; }
 
@@ -39,6 +42,8 @@ public:
     void SafeEndModal(int returnCode);
 
 private:
+    wxString build_web_url() const;
+
     void OnClose(wxCloseEvent& evt);
     void OnNavigationRequest(wxWebViewEvent &evt);
     void OnNavigationComplete(wxWebViewEvent &evt);
@@ -54,6 +59,7 @@ private:
     std::string m_display_file_name = "";
     bool        m_send_page         = false;
     bool        m_switch_to_device  = false;
+    std::string m_store_id;
 
     bool  m_finish = false;
     bool  m_modal_ended = false;  // BBS: Flag to prevent duplicate EndModal calls
@@ -62,4 +68,4 @@ private:
 
 }} // namespace Slic3r::GUI
 
-#endif 
+#endif

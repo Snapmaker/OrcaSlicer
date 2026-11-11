@@ -4,7 +4,13 @@
 // #define PRUSASLICER_TRIANGLE_SELECTOR_DEBUG
 
 
+#include <array>
 #include <cfloat>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <utility>
+#include <vector>
 #include "Point.hpp"
 #include "TriangleMesh.hpp"
 
@@ -97,6 +103,8 @@ public:
         Transform3f trafo_normal;
         float       radius;
         float       radius_sqr;
+        // Mesh units per world millimeter; 1 when checks run in world coords.
+        float       meshUnitsPerMm = 1.f;
         Vec3f       dir = Vec3f(0.f, 0.f, 0.f);
 
         ClippingPlane clipping_plane; // Clipping plane to limit painting to not clipped facets only
@@ -202,6 +210,11 @@ public:
         {
             return true;
         }
+        float GetBottomZ() const { return m_z_world; }
+        float GetHeight() const { return m_height; }
+
+        // World-Z tolerance used when testing whether a vertex lies inside the band.
+        static constexpr float VERTEX_TOLERANCE = 0.02f;
     private:
         float m_z_world;
         float m_height;
@@ -288,8 +301,45 @@ public:
         template<class Archive> void serialize(Archive &ar) { ar(triangles_to_split, bitstream, used_states); }
     };
 
-    std::pair<std::vector<Vec3i32>, std::vector<Vec3i32>> precompute_all_neighbors() const;
+    struct NeighborCache
+    {
+        uint64_t topologyRevision = 0;
+        uint64_t indexRevision = 0;
+        std::vector<Vec3i32> neighbors;
+        std::vector<Vec3i32> propagated;
+    };
+
+    /** Returns leaf-neighbor data and rebuilds it only after topology or triangle-index changes. */
+    const NeighborCache& EnsureNeighborCache() const;
     void precompute_all_neighbors_recursive(int facet_idx, const Vec3i32 &neighbors, const Vec3i32 &neighbors_propagated, std::vector<Vec3i32> &neighbors_out, std::vector<Vec3i32> &neighbors_normal_out) const;
+
+    /** Conservatively indexes original source roots by their world-space Z spans. */
+    class HeightRangeIndex
+    {
+    public:
+        void Build(const TriangleMesh& mesh, const Transform3d& effectiveTransform);
+        bool Matches(const TriangleMesh& mesh, const Transform3d& effectiveTransform) const;
+        const std::vector<uint32_t>& Query(float zBottomWorld, float zTopWorld);
+        /** World-Z (min, max) per original root; non-finite roots hold (-inf, +inf). */
+        const std::vector<std::pair<float, float>>& GetRootZSpans() const { return m_rootZSpans; }
+
+    private:
+        size_t BucketIndex(float zWorld) const;
+
+        const TriangleMesh* m_mesh = nullptr;
+        Transform3d m_effectiveTransform = Transform3d::Identity();
+        float m_minZ = 0.f;
+        float m_maxZ = 0.f;
+        float m_bucketSize = 1.f;
+        std::vector<std::vector<uint32_t>> m_buckets;
+        std::vector<uint32_t> m_longSpanRoots;
+        std::vector<std::pair<float, float>> m_rootZSpans;
+        uint32_t m_queryGeneration = 0;
+        std::vector<uint32_t> m_sourceQueryGeneration;
+        std::vector<uint32_t> m_queryCandidates;
+        size_t m_totalBucketReferences = 0;
+        bool m_initialized = false;
+    };
 
     // Set a limit to the edge length, below which the edge will not be split by select_patch().
     // Called by select_patch() internally. Made public for debugging purposes, see TriangleSelectorGUI::render_debug().
@@ -298,6 +348,35 @@ public:
     // Create new object on a TriangleMesh. The referenced mesh must
     // stay valid, a ptr to it is saved and used.
     explicit TriangleSelector(const TriangleMesh& mesh, float edge_limit = 0.6f);
+
+    enum class CleanupMode : uint8_t
+    {
+        Immediate,
+        Deferred
+    };
+
+    struct HeightRangeSelectionOptions
+    {
+        EnforcerBlockerType state = EnforcerBlockerType::NONE;
+        Transform3d transformNoTranslate = Transform3d::Identity();
+        bool triangleSplitting = true;
+        float highlightByAngleDeg = 0.f;
+        // Optional, non-owning: per-root world-Z spans in the cursor's transform, used to skip painted roots.
+        const std::vector<std::pair<float, float>>* rootZSpans = nullptr;
+    };
+
+    uint64_t GetTopologyRevision() const noexcept { return m_topologyRevision; }
+    uint64_t GetTriangleIndexRevision() const noexcept { return m_triangleIndexRevision; }
+    uint64_t GetStateRevision() const noexcept { return m_stateRevision; }
+    // Diagnostics/preview-cache identity: bumped whenever the seed-fill preview membership changes.
+    uint64_t GetSeedFillPreviewRevision() const noexcept { return m_seedFillPreviewRevision; }
+
+    /** Changes a valid leaf state and either cleans its source root immediately or records it for deferred cleanup. */
+    bool SetLeafState(int triangleIndex, EnforcerBlockerType state, CleanupMode cleanupMode = CleanupMode::Immediate);
+    /** Cleans every source root touched by deferred state changes and reports whether topology changed. */
+    bool FlushDeferredCleanup();
+    /** Returns a copy of the three vertices owned by a valid leaf. */
+    std::optional<std::array<Vec3f, 3>> GetLeafVertices(int triangleIndex) const;
 
     // Returns the facet_idx of the unsplit triangle containing the "hit". Returns -1 if the triangle isn't found.
     [[nodiscard]] int select_unsplit_triangle(const Vec3f &hit, int facet_idx) const;
@@ -310,6 +389,10 @@ public:
                       const Transform3d        &trafo_no_translate,            // matrix to get from mesh to world without translation
                       bool                      triangle_splitting,            // If triangles will be split base on the cursor or not
                       float                     highlight_by_angle_deg = 0.f); // The maximal angle of overhang. If it is set to a non-zero value, it is possible to paint only the triangles of overhang defined by this angle in degrees.
+
+    /** Applies a height-range cursor directly to indexed source-root candidates without root-neighbor traversal. */
+    void SelectHeightRange(const std::vector<uint32_t>& sourceRoots, std::unique_ptr<HeightRange>&& cursor,
+                           const HeightRangeSelectionOptions& options);
 
     void seed_fill_select_triangles(const Vec3f        &hit,                          // point where to start
                                     int                 facet_start,                  // facet of the original mesh (unsplit) that the hit point belongs to
@@ -372,9 +455,22 @@ public:
 
     // For all triangles selected by seed fill, set new EnforcerBlockerType and remove flag indicating that triangle was selected by seed fill.
     // The operation may merge split triangles if they are being assigned the same color.
-    void seed_fill_apply_on_triangles(EnforcerBlockerType new_state);
+    void seed_fill_apply_on_triangles(EnforcerBlockerType new_state, CleanupMode cleanupMode = CleanupMode::Immediate);
 
 protected:
+    enum class MutationKind : uint8_t
+    {
+        State,
+        Topology,
+        AllState,
+        IndexRebuild,
+        FullReset
+    };
+
+    virtual void OnSelectorMutation(MutationKind kind, int sourceTriangle) {}
+    /** Invalidates derived-class caches that retain current leaf indices before those indices may change. */
+    virtual void OnLeafIdentityWillChange() {}
+
     // Triangle and info about how it's split.
     class Triangle {
     public:
@@ -473,17 +569,39 @@ protected:
     int m_orig_size_vertices = 0;
     int m_orig_size_indices = 0;
 
+    uint64_t m_topologyRevision = 1;
+    uint64_t m_triangleIndexRevision = 1;
+    uint64_t m_stateRevision = 1;
+    mutable NeighborCache m_neighborCache;
+
     std::unique_ptr<Cursor> m_cursor;
     // Zero indicates an uninitialized state.
     float m_old_cursor_radius_sqr = 0;
 
     // Private functions:
 private:
+    bool PrepareSelectionCursor(std::unique_ptr<Cursor> cursor);
+    bool SetLeafStateWithoutCleanup(int triangleIndex, EnforcerBlockerType state, int* sourceTriangle = nullptr);
+    //Returns true when every valid leaf in the subtree already carries the given state.
+    bool SubtreeAllLeavesHaveState(int triangleIndex, EnforcerBlockerType state) const;
+    /** Collapses a subtree into a single leaf and bumps the State revision iff the paint state
+     *  represented by the subtree before the collapse differs from the target state. */
+    bool CollapseSubtreeToState(int triangleIndex, EnforcerBlockerType state);
+    bool SelectSeedFillLeaf(int triangleIndex);
+    /** Advances one reusable query generation and grows its stamp storage when needed. */
+    uint32_t BeginQueryGeneration(std::vector<uint32_t>& queryStamp, uint32_t& queryGeneration, size_t requiredSize);
+    void PrepareForLeafIdentityChange();
+    void RecordDeferredCleanupRoot(uint32_t sourceTriangle);
+    void ClearDeferredCleanup();
     bool select_triangle(int facet_idx, EnforcerBlockerType type, bool triangle_splitting);
     bool select_triangle_recursive(int facet_idx, const Vec3i32 &neighbors, EnforcerBlockerType type, bool triangle_splitting);
     void undivide_triangle(int facet_idx);
     void split_triangle(int facet_idx, const Vec3i32 &neighbors);
-    void remove_useless_children(int facet_idx); // No hidden meaning. Triangles are meant.
+    bool remove_useless_children(int facet_idx); // No hidden meaning. Triangles are meant.
+    void NotifyTopologyMutation(int sourceTriangle);
+    void NotifyAllStateMutation();
+    void NotifyIndexRebuild();
+    void NotifyFullReset();
     bool is_facet_clipped(int facet_idx, const ClippingPlane &clp) const;
     int  push_triangle(int a, int b, int c, int source_triangle, EnforcerBlockerType state = EnforcerBlockerType{0});
     void perform_split(int facet_idx, const Vec3i32 &neighbors, EnforcerBlockerType old_state);
@@ -520,7 +638,20 @@ private:
     void get_facets_split_by_tjoints(const Vec3i32 &vertices, const Vec3i32 &neighbors, std::vector<stl_triangle_vertex_indices> &out_triangles) const;
 
     void get_seed_fill_contour_recursive(int facet_idx, const Vec3i32 &neighbors, const Vec3i32 &neighbors_propagated, std::vector<Vec2i32> &edges_out) const;
+    /** Appends contour edges for roots that are already range-checked and unique; no copy, no sort. */
+    void AppendSeedFillContourForUniqueRoots(const std::vector<uint32_t>& sourceRoots, std::vector<Vec2i32>& edgesOut) const;
+    /** O(1) sufficient condition: the selector holds only original unsplit roots. */
+    bool CanUseOriginalMeshFillPath() const noexcept;
+    /** Contour straight from original-mesh adjacency; requires CanUseOriginalMeshFillPath(). */
+    std::vector<Vec2i32> GetOriginalMeshSeedFillContour() const;
 
+    std::vector<uint32_t> m_deferredCleanupRoots;
+    std::vector<int> m_seedFillSelectedLeaves;
+    uint64_t m_seedFillPreviewRevision = 1;
+    uint32_t m_rootQueryGeneration { 0 };
+    std::vector<uint32_t> m_rootQueryStamp;
+    uint32_t m_triangleQueryGeneration { 0 };
+    std::vector<uint32_t> m_triangleQueryStamp;
     int m_free_triangles_head { -1 };
     int m_free_vertices_head { -1 };
 };

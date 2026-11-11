@@ -531,8 +531,69 @@ EOF
 # Flatpak
 # ===============================================================
 
+# AppImage stages this inside gitlab_build_linux.sh. Flatpak compiles from the
+# source tree inside flatpak-builder and does not run that script, so stage the
+# same CLI here or /app/share/Snapmaker_Orca will not contain it.
+#
+# -F flatpak never configures CMake on the host. build_all.yml checks out
+# submodules before flatpak-builder; do the same so the sandbox can run
+# SyncSnapmakerProfiles.cmake against objects already stored in .git.
+init_snapmaker_profiles() {
+    if [[ ! -f "$REPO_DIR/.gitmodules" ]] || ! grep -q 'submodules/Profiles' "$REPO_DIR/.gitmodules"; then
+        echo -e "${YELLOW}No Snapmaker profiles submodule in this checkout; skipping${NC}"
+        return 0
+    fi
+    if [[ ! -d "$REPO_DIR/.git" && ! -f "$REPO_DIR/.git" ]]; then
+        echo -e "${RED}Profiles submodule requires a git checkout: $REPO_DIR${NC}"
+        exit 1
+    fi
+    echo -e "${YELLOW}Fetching Snapmaker profiles submodule...${NC}"
+    git -C "$REPO_DIR" submodule sync -- submodules/Profiles
+    git -C "$REPO_DIR" submodule update --init --checkout --recursive -- submodules/Profiles
+    if [[ ! -f "$REPO_DIR/submodules/Profiles/Snapmaker.json" ]]; then
+        echo -e "${RED}Profiles submodule is missing Snapmaker.json${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Snapmaker profiles submodule ready${NC}"
+}
+
+stage_snapmaker_control() {
+    local platform cli
+    case "$ARCH" in
+        x86_64)
+            platform="linux-x64"
+            cli="snapmaker_control_linux_x64"
+            ;;
+        aarch64)
+            platform="linux-arm64"
+            cli="snapmaker_control_linux_arm64"
+            ;;
+        *)
+            echo -e "${RED}Unsupported architecture for snapmaker_control: $ARCH${NC}"
+            exit 1
+            ;;
+    esac
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}python3 is required to stage snapmaker_control${NC}"
+        exit 1
+    fi
+    echo -e "${YELLOW}Staging snapmaker_control for ${platform}...${NC}"
+    python3 "${REPO_DIR}/scripts/packaging/stage_connect_bundle.py" \
+        --lock "${REPO_DIR}/.github/connect-bundle.lock.json" \
+        --platform "${platform}" \
+        --resources-dir "${REPO_DIR}/resources"
+    if [[ ! -f "${REPO_DIR}/resources/${cli}" ]]; then
+        echo -e "${RED}snapmaker_control was not staged: resources/${cli}${NC}"
+        exit 1
+    fi
+    chmod 755 "${REPO_DIR}/resources/${cli}"
+    echo -e "${GREEN}Staged resources/${cli}${NC}"
+}
+
 pack_flatpak() {
     echo -e "${BLUE}===== Flatpak =====${NC}"
+    init_snapmaker_profiles
+    stage_snapmaker_control
 
     local MANIFEST_REL="scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.gitlab.yml"
     local MANIFEST="$REPO_DIR/$MANIFEST_REL"

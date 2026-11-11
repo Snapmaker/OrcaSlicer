@@ -195,7 +195,7 @@ double Extruder::retract_restart_extra() const
 
 double Extruder::retract_length_toolchange() const
 {
-    return m_config->retract_length_toolchange.get_at(m_id);
+    return get_value_at(*m_config, m_config->retract_length_toolchange, ConfigFlowDomain::Filament, m_id);
 }
 
 double Extruder::retract_restart_extra_toolchange() const

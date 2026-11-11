@@ -230,6 +230,14 @@ public:
     const std::vector<std::string>& get_bed_type_combo_enum_values() const { return m_bed_type_combo_enum_values; }
 
 private:
+    void continue_sync_filament_dialog(bool got_machine_info, const std::string& machine_type);
+
+    // Applies a nozzle sync query result on the UI thread (async sync-button path).
+    void apply_nozzle_sync_result(bool got_machine_info, std::string machine_type,
+                                  std::vector<std::string> nozzle_diameters,
+                                  std::vector<std::string> nozzle_volume_types,
+                                  std::string device_name);
+
     struct priv;
     std::unique_ptr<priv> p;
 
@@ -346,6 +354,8 @@ public:
     void load_gcode();
     void load_gcode(const wxString& filename);
     void reload_gcode_from_disk();
+    // rebuild the gcode preview with the current pipeline preference
+    void reload_gcode_preview();
     void refresh_print();
 
     void update_nozzle_settings();
@@ -730,7 +740,7 @@ public:
     void split_volume();
     void optimize_rotation();
     // find all empty cells on the plate and won't overlap with exclusion areas
-    static std::vector<Vec2f> get_empty_cells(const Vec2f step);
+    static std::vector<Vec2f> get_empty_cells(const Vec2f step, const BoundingBoxf& safe_area_2d = BoundingBoxf());
 
     //BBS:
     void fill_color(int extruder_id);
@@ -745,6 +755,7 @@ public:
     bool can_set_instance_to_object() const;
     bool can_fix_through_netfabb() const;
     bool can_simplify() const;
+    bool can_smooth_mesh() const;
     bool can_split_to_objects() const;
     bool can_split_to_volumes() const;
     bool can_arrange() const;

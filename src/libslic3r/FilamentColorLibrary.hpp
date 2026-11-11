@@ -44,8 +44,10 @@ struct FilamentColorItem
 {
     std::unordered_map<std::string, std::string> colorNames;
     std::string sku;
+    std::string legacyPrimaryColor; // Previous catalog swatch, for migrating this exact SKU.
     double tdValue = 0.0;
     FilamentColor colorData;
+    std::string                                  fullSpectrumMaterialId; // Empty for materials without measured calibration.
 };
 
 struct FilamentColorInfo

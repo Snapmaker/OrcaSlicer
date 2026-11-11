@@ -603,6 +603,15 @@ bool FilamentColorLibrary::LoadIndex()
             nlohmann::json::const_iterator tdIt = colorJson.find("TD");
             if (tdIt != colorJson.end() && tdIt->is_number())
                 colorItem.tdValue = tdIt->get<double>();
+            if (filament.filamentId == "14170311270" &&
+                (colorItem.sku == "34265" || colorItem.sku == "34267" || colorItem.sku == "34268" || colorItem.sku == "34269")) {
+                colorItem.fullSpectrumMaterialId = "snapmaker:" + colorItem.sku;
+                colorItem.legacyPrimaryColor = colorItem.sku == "34267" ? "#00C3FF" :
+                                              colorItem.sku == "34268" ? "#F54399" :
+                                              colorItem.sku == "34269" ? "#FAE727" : "#9199A4";
+                // Bundle specification; also applies to older cached libraries.
+                colorItem.tdValue = colorItem.sku == "34265" ? 6.5 : colorItem.sku == "34269" ? 9.5 : 5.5;
+            }
             const int modeValue = JsonMode(colorJson);
 
             bool hasInvalidColor = false;
@@ -619,6 +628,14 @@ bool FilamentColorLibrary::LoadIndex()
                 continue;
             }
 
+            // Use the measured profile's primary colors even when the picker
+            // loads an older downloaded catalog. Unrelated SKUs are unchanged.
+            if (!colorItem.fullSpectrumMaterialId.empty()) {
+                const char* primary = colorItem.sku == "34267" ? "#008BB3" :
+                                      colorItem.sku == "34268" ? "#AD4A76" :
+                                      colorItem.sku == "34269" ? "#EBBE00" : "#7B7F80";
+                colorItem.colorData.colors = {primary};
+            }
             colorItem.colorData.mode = FilamentColorModeFromConfig(modeValue);
 
             if (colorItem.sku.empty() || colorItem.colorData.colors.empty())

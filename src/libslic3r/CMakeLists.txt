@@ -293,6 +293,8 @@ set(lisbslic3r_sources
     MinimumSpanningTree.cpp
     MinimumSpanningTree.hpp
     MixedFilament.cpp
+    FullSpectrumKSPairResidual.cpp
+    FullSpectrumICCPolynomialEstimator.cpp
     MixedFilament.hpp
     filament_mixer.cpp
     filament_mixer.h

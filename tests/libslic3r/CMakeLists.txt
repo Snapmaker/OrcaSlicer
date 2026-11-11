@@ -16,6 +16,8 @@ add_executable(${_TEST_NAME}_tests
 	test_geometry.cpp
 	test_icns.cpp
 	test_mixed_filament.cpp
+	test_full_spectrum_ks_pair_residual.cpp
+    test_product_port.cpp
 	test_mixed_filament_color_golden.cpp
 	test_triangle_selector.cpp
 	test_local_z_order_optimizer.cpp

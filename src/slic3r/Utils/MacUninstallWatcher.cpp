@@ -306,6 +306,8 @@ void ensure_macos_uninstall_watcher()
                     "    <string>") +
         SnapmakerUninstall::kLabel +
         "</string>\n"
+        "    <key>AssociatedBundleIdentifiers</key>\n"
+        "    <string>com.snapmaker.snapmaker-orca</string>\n"
         "    <key>ProgramArguments</key>\n"
         "    <array>\n"
         "        <string>" +

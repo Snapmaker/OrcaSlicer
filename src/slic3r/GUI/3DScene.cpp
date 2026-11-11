@@ -16,6 +16,7 @@
 #include "libslic3r/Print.hpp"
 #include "libslic3r/SLAPrint.hpp"
 #include "libslic3r/Slicing.hpp"
+#include "libslic3r/TriangleMeshSlicer.hpp"
 #include "libslic3r/Format/STL.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/AppConfig.hpp"
@@ -1080,6 +1081,31 @@ void GLVolumeCollection::load_object_auxiliary(const SLAPrintObject* print_objec
     }
 }
 
+static std::vector<ColorRGBA> wipe_tower_preview_colors(int plate_idx)
+{
+    const auto             extruder_colors = get_extruders_colors();
+    const size_t           num_physical    = std::min(extruder_colors.size(), size_t(std::max(GUI::wxGetApp().filaments_cnt(), 0)));
+    auto*                  plate           = GUI::wxGetApp().plater()->get_partplate_list().get_plate(plate_idx);
+    const Print*           print           = plate->fff_print();
+    std::vector<ColorRGBA> colors;
+    if (print != nullptr && print->is_step_done(psWipeTower)) {
+        // Once generated, exclude configured filaments that the tower never uses.
+        const auto& used_filament = print->wipe_tower_data().used_filament;
+        for (size_t i = 0; i < std::min(num_physical, used_filament.size()); ++i)
+            if (used_filament[i] > 0.f)
+                colors.push_back(extruder_colors[i]);
+    } else {
+        // get_extruders adds physical components but retains the virtual IDs.
+        for (int extruder_id : plate->get_extruders(true)) {
+            if (extruder_id > 0 && size_t(extruder_id) <= num_physical)
+                colors.push_back(extruder_colors[size_t(extruder_id - 1)]);
+        }
+    }
+    if (colors.empty())
+        colors.push_back(ColorRGBA::GRAY());
+    return colors;
+}
+
 int GLVolumeCollection::load_wipe_tower_preview(
     int obj_idx, float pos_x, float pos_y, float width, float depth, float height, float rotation_angle, bool size_unknown, float brim_width)
 {
@@ -1090,17 +1116,8 @@ int GLVolumeCollection::load_wipe_tower_preview(
     if (height == 0.0f)
         height = 0.1f;
 
-    std::vector<ColorRGBA> extruder_colors = get_extruders_colors();
-    std::vector<ColorRGBA> colors;
-    GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
-    std::vector<int> plate_extruders  = ppl.get_plate(plate_idx)->get_extruders(true);
-    TriangleMesh wipe_tower_shell = make_cube(width, depth, height);
-    for (int extruder_id : plate_extruders) {
-        if (extruder_id <= extruder_colors.size())
-            colors.push_back(extruder_colors[extruder_id - 1]);
-        else
-            colors.push_back(extruder_colors[0]);
-    }
+    std::vector<ColorRGBA> colors           = wipe_tower_preview_colors(plate_idx);
+    TriangleMesh           wipe_tower_shell = make_cube(width, depth, height);
 
     // Orca: make it transparent
     for (auto& color : colors)
@@ -1126,35 +1143,50 @@ int GLVolumeCollection::load_wipe_tower_preview(
     return int(volumes.size() - 1);
 }
 
-int GLVolumeCollection::load_real_wipe_tower_preview(int obj_idx, float pos_x, float pos_y, 
-    const TriangleMesh& wt_mesh, const TriangleMesh& brim_mesh, bool render_brim, 
-    float rotation_angle, bool size_unknown, bool opengl_initialized)
+int GLVolumeCollection::load_real_wipe_tower_preview(int                 obj_idx,
+                                                     float               pos_x,
+                                                     float               pos_y,
+                                                     const TriangleMesh& wt_mesh,
+                                                     const TriangleMesh& brim_mesh,
+                                                     bool                render_brim,
+                                                     float               rotation_angle,
+                                                     bool                size_unknown,
+                                                     bool                opengl_initialized)
 {
     int plate_idx = obj_idx - 1000;
-    if (wt_mesh.its.vertices.empty()) 
+    if (wt_mesh.its.vertices.empty())
         return int(this->volumes.size() - 1);
 
-    std::vector<Slic3r::ColorRGBA> extruder_colors = get_extruders_colors();
-    GUI::PartPlateList& ppl = GUI::wxGetApp().plater()->get_partplate_list();
-    std::vector<int> plate_extruders = ppl.get_plate(plate_idx)->get_extruders(true);
-    std::vector<Slic3r::ColorRGBA> colors;
-    if (!plate_extruders.empty()) {
-        if (plate_extruders.front() <= extruder_colors.size())
-            colors.push_back(extruder_colors[plate_extruders.front() - 1]);
-        else
-            colors.push_back(extruder_colors[0]);
-    }
-    if (colors.empty()) 
-        return int(this->volumes.size() - 1);
-    volumes.emplace_back(new GLWipeTowerVolume({ colors }));
-    GLWipeTowerVolume& v = *dynamic_cast<GLWipeTowerVolume*>(volumes.back());
-    auto mesh = wt_mesh;
+    const auto colors = wipe_tower_preview_colors(plate_idx);
+    volumes.emplace_back(new GLWipeTowerVolume(colors));
+    GLWipeTowerVolume& v    = *dynamic_cast<GLWipeTowerVolume*>(volumes.back());
+    auto               mesh = wt_mesh;
     if (render_brim) {
         mesh.merge(brim_mesh);
     }
-    if (!colors.empty()) {
-        v.model_per_colors.resize(1);
-        v.model_per_colors[0].init_from(mesh);
+    v.model_per_colors.resize(colors.size());
+    if (colors.size() == 1) {
+        v.model_per_colors.front().init_from(mesh);
+    } else {
+        // Match the estimated tower's color bands along local Y, retaining the
+        // generated taper and brim. These bands identify filaments, not toolpaths.
+        TriangleMesh remaining = mesh;
+        remaining.rotate_x(float(PI / 2.0));
+        const auto bounds = remaining.bounding_box();
+        for (size_t i = 0; i < colors.size(); ++i) {
+            TriangleMesh part;
+            if (i + 1 == colors.size()) {
+                part = std::move(remaining);
+            } else {
+                indexed_triangle_set upper, lower;
+                const float          cut_z = float(bounds.min.z() + bounds.size().z() * double(i + 1) / double(colors.size()));
+                cut_mesh(remaining.its, cut_z, &upper, &lower, false);
+                part      = TriangleMesh(std::move(lower));
+                remaining = TriangleMesh(std::move(upper));
+            }
+            part.rotate_x(float(-PI / 2.0));
+            v.model_per_colors[i].init_from(part);
+        }
     }
     TriangleMesh wipe_tower_shell = mesh.convex_hull_3d();
     v.model.init_from(wipe_tower_shell);
@@ -1162,10 +1194,10 @@ int GLVolumeCollection::load_real_wipe_tower_preview(int obj_idx, float pos_x, f
     v.set_convex_hull(wipe_tower_shell);
     v.set_volume_offset(Vec3d(pos_x, pos_y, 0.0));
     v.set_volume_rotation(Vec3d(0., 0., (M_PI / 180.) * rotation_angle));
-    v.composite_id = GLVolume::CompositeID(obj_idx, 0, 0);
-    v.geometry_id.first = 0;
-    v.geometry_id.second = wipe_tower_instance_id().id + (obj_idx - 1000);
-    v.is_wipe_tower = true;
+    v.composite_id                             = GLVolume::CompositeID(obj_idx, 0, 0);
+    v.geometry_id.first                        = 0;
+    v.geometry_id.second                       = wipe_tower_instance_id().id + (obj_idx - 1000);
+    v.is_wipe_tower                            = true;
     v.shader_outside_printer_detection_enabled = !size_unknown;
     return int(volumes.size() - 1);
 }
@@ -1394,7 +1426,11 @@ bool GLVolumeCollection::render(GLVolumeCollection::ERenderType      type,
         const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) *
                                             model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
         shader->set_uniform("view_normal_matrix", view_normal_matrix);
-        {
+        if (volume.first->is_wipe_tower) {
+            // Wipe towers own colored submeshes; the generic model is only
+            // their picking/selection hull and has no filament colors.
+            volume.first->render();
+        } else {
             auto& objects = GUI::wxGetApp().model().objects;
             auto  colors  = get_extruders_colors();
             volume.first->simple_render(shader, objects, colors, false, &m_z_range);

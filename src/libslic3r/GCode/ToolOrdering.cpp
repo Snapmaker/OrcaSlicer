@@ -694,21 +694,10 @@ void ToolOrdering::initialize_layers(std::vector<coordf_t> &zs)
 
 void ToolOrdering::collect_local_z_layers(const PrintObject& object)
 {
-    const auto& intervals = object.local_z_intervals();
-    const auto& plans     = object.local_z_sublayer_plan();
-    if (intervals.empty() || plans.empty())
-        return;
-
+    const auto& plans = object.local_z_sublayer_plan();
     for (const Layer* layer : object.layers()) {
-        const auto interval = std::find_if(intervals.begin(), intervals.end(),
-                                           [layer](const LocalZInterval& candidate) { return candidate.layer_id == size_t(layer->id()); });
-        if (interval == intervals.end() || !interval->has_mixed_paint || interval->sublayer_count <= 1 ||
-            interval->first_sublayer_idx >= plans.size())
-            continue;
-
-        const size_t first = interval->first_sublayer_idx;
-        const size_t count = std::min(interval->sublayer_count, plans.size() - first);
-        if (std::any_of(plans.begin() + first, plans.begin() + first + count, [](const SubLayerPlan& plan) { return plan.split_interval; }))
+        const LocalZInterval* interval = object.local_z_interval_for_layer(size_t(layer->id()));
+        if (interval != nullptr && interval->is_managed(plans))
             this->tools_for_layer(layer->print_z).has_local_z_subdivision = true;
     }
 }

@@ -18,6 +18,7 @@
 #include "GCode/GCodeProcessor.hpp"
 #include "MultiMaterialSegmentation.hpp"
 #include "MixedFilament.hpp"
+#include "LocalZ/LocalZPlan.hpp"
 #include "libslic3r.h"
 
 #include <Eigen/Geometry>
@@ -37,6 +38,7 @@ class ModelVolume;
 class Print;
 class PrintObject;
 class SupportLayer;
+struct LocalZPlanningInput;
 // BBS
 class TreeSupportData;
 class TreeSupport;
@@ -58,37 +60,6 @@ struct groupedVolumeSlices
     int                     groupId = -1;
     std::vector<ObjectID>   volume_ids;
     ExPolygons              slices;
-};
-
-// Phase A local-Z dithering planner cache.
-struct LocalZInterval
-{
-    size_t layer_id { 0 };
-    double z_lo { 0.0 };
-    double z_hi { 0.0 };
-    double base_height { 0.0 };
-    double sublayer_height { 0.0 };
-    bool   has_mixed_paint { false };
-    bool       independent_layer_height{false};
-    ExPolygons managed_masks;
-    size_t first_sublayer_idx { 0 };
-    size_t sublayer_count { 0 };
-};
-
-struct SubLayerPlan
-{
-    size_t layer_id { 0 };
-    size_t pass_index { 0 };
-    bool   split_interval { false };
-    double z_lo { 0.0 };
-    double z_hi { 0.0 };
-    double print_z { 0.0 };
-    double flow_height { 0.0 };
-    size_t dependency_group { 0 };
-    size_t dependency_order { 0 };
-    std::vector<ExPolygons> painted_masks_by_extruder;
-    std::vector<ExPolygons> fixed_painted_masks_by_extruder;
-    ExPolygons              base_masks;
 };
 
 enum SupportNecessaryType {
@@ -460,6 +431,12 @@ public:
     void clear_tree_support_preview_cache() { m_tree_support_preview_cache.reset(); }
     const std::vector<LocalZInterval>& local_z_intervals() const { return m_local_z_intervals; }
     const std::vector<SubLayerPlan>&   local_z_sublayer_plan() const { return m_local_z_sublayer_plan; }
+    const LocalZInterval*              local_z_interval_for_layer(size_t layer_id) const
+    {
+        const auto it = std::lower_bound(m_local_z_intervals.begin(), m_local_z_intervals.end(), layer_id,
+                                         [](const LocalZInterval& interval, size_t id) { return interval.layer_id < id; });
+        return it != m_local_z_intervals.end() && it->layer_id == layer_id ? &*it : nullptr;
+    }
     void                                set_local_z_plan(std::vector<LocalZInterval> intervals, std::vector<SubLayerPlan> sublayers)
     {
         m_local_z_intervals = std::move(intervals);
@@ -574,7 +551,7 @@ private:
     void estimate_curled_extrusions();
     void simplify_extrusion_path();
 
-    void slice_volumes();
+    void slice_volumes(LocalZPlanningInput& local_z_input);
     //BBS
     ExPolygons _shrink_contour_holes(double contour_delta, double hole_delta, const ExPolygons& polys) const;
     // BBS

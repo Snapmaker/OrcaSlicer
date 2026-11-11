@@ -32,6 +32,14 @@ Code lives in `src/libslic3r/MixedFilament/`:
 
 The public types and manager API remain in `MixedFilament.hpp`.
 
+## Local-Z planning contract
+
+Local-Z captures painted material channels during segmentation, then builds its plan after XY compensation, slicing repair, and polyhole conversion. Whole-object masks are derived from these final slices; captured painted masks are clipped to the final domain. The plan belongs to the `posSlice` stage. Filament edits affecting an existing plan invalidate that producing stage, including automatic gradients and implicit whole-object Local-Z.
+
+`LocalZInterval` and `SubLayerPlan` live in `LocalZ/LocalZPlan.hpp`. Their `layer_id` is the actual `Layer::id()`, including the raft offset, rather than an index into `PrintObject::layers()`. Consumers use `local_z_interval_for_layer()` for lookup and `LocalZInterval::is_managed()` for geometry ownership. Independent cadence owns its masks even when a nominal interval emits zero or one pass; these intervals must also exclude flushing into model/support paths.
+
+Independent cadence tracks the end of each contiguous eligible mixed domain. Before emitting a pass, terminal height fitting reserves a minimum-height final pass where possible or absorbs a shorter remainder into the current component without exceeding its printer limit. This may approximate the terminal color ratio by up to one minimum-height pass. An infeasible minimum/maximum height combination is reported as a slicing error instead of emitting an undersized pass. Regression coverage is in `tests/libslic3r/test_local_z_plan.cpp`.
+
 ## Product behavior retained
 
 This port retains Snorca's multi-digit filament and manual-pattern encoding, filament-count limits, deletion remapping, and the product's calibrated color selection. Gradient previews retain the FilamentMixer endpoint correction and 3% default solid-color width. Direct multicolor, independent Local-Z heights, first-layer protection, painting controls, and the prime-tower return-to-object-filament fix remain part of the product baseline.

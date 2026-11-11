@@ -180,18 +180,10 @@ static std::vector<LocalZWipeTowerPassRef> collect_local_z_wipe_tower_passes(con
         if (print_object == nullptr)
             continue;
 
-        const size_t       layer_id   = size_t(layer_to_print.object_layer->id());
-        const auto        &intervals  = print_object->local_z_intervals();
-        const auto        &plans      = print_object->local_z_sublayer_plan();
-        const auto interval_it = std::find_if(intervals.begin(), intervals.end(), [layer_id](const LocalZInterval &interval) {
-            return interval.layer_id == layer_id;
-        });
-        const bool         independent_interval = interval_it != intervals.end() && interval_it->independent_layer_height &&
-                                          !interval_it->managed_masks.empty();
-        if (interval_it == intervals.end() || !interval_it->has_mixed_paint || interval_it->sublayer_count == 0 ||
-            (!independent_interval && interval_it->sublayer_count <= 1) || interval_it->first_sublayer_idx >= plans.size()) {
+        const auto&           plans       = print_object->local_z_sublayer_plan();
+        const LocalZInterval* interval_it = print_object->local_z_interval_for_layer(size_t(layer_to_print.object_layer->id()));
+        if (interval_it == nullptr || !interval_it->is_managed(plans))
             continue;
-        }
 
         const size_t first_idx = interval_it->first_sublayer_idx;
         const size_t end_idx   = std::min(plans.size(), first_idx + interval_it->sublayer_count);

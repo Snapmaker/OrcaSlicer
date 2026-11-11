@@ -17,6 +17,7 @@
 #include "ElephantFootCompensation.hpp"
 #include "I18N.hpp"
 #include "Layer.hpp"
+#include "LocalZ/LocalZHeight.hpp"
 #include "MixedFilament.hpp"
 #include "MixedFilament/LayerTracker.hpp"
 #include "Slicing/PreparationDiagnostics.hpp"
@@ -916,6 +917,14 @@ template<class ThrowOnCancel> static void capture_prepared_layers(const PrintObj
 // 5) Applies size compensation (offsets the slices in XY plane)
 // 6) Replaces bad slices by the slices reconstructed from the upper/lower layer
 // Resulting expolygons of layer regions are marked as Internal.
+struct LocalZPlanningInput
+{
+    std::vector<std::vector<ExPolygons>> segmentation;
+    bool                                 whole_object_scope_active{false};
+};
+
+static void finalize_local_z_plan(PrintObject& print_object, LocalZPlanningInput input, const std::function<void()>& throw_on_cancel);
+
 void PrintObject::slice()
 {
     if (! this->set_started(posSlice))
@@ -934,7 +943,8 @@ void PrintObject::slice()
                                    << " object=" << (this->model_object() ? this->model_object()->name : std::string("<unknown>"))
                                    << " debug_file=" << surface_emboss_mixed_debug_file_path(*this);
     }
-    this->slice_volumes();
+    LocalZPlanningInput local_z_input;
+    this->slice_volumes(local_z_input);
     m_print->throw_if_canceled();
     int firstLayerReplacedBy = 0;
 
@@ -952,6 +962,9 @@ void PrintObject::slice()
 #endif
     // Detect and process holes that should be converted to polyholes
     this->_transform_hole_to_polyholes();
+
+    // Plan against final geometry and layer IDs, after compensation and repairs.
+    finalize_local_z_plan(*this, std::move(local_z_input), [this] { m_print->throw_if_canceled(); });
 
     // BBS: the actual first layer slices stored in layers are re-sorted by volume group and will be used to generate brim
     groupingVolumesForBrim(this, m_layers, firstLayerReplacedBy);
@@ -3141,6 +3154,7 @@ static void build_local_z_plan(PrintObject&                                print
     {
         bool                                     active{false};
         double                                   z_cursor{0.0};
+        double                                   z_end{0.0};
         size_t                                   cadence_index{0};
         size_t                                   emitted_passes{0};
         std::vector<LocalZIndependentDirectPass> gradient_cadence;
@@ -3160,6 +3174,7 @@ static void build_local_z_plan(PrintObject&                                print
     std::vector<uint8_t>      row_active_prev_layer(mixed_definitions.size(), uint8_t(0));
     std::vector<unsigned int> row_last_gradient_extruder(mixed_definitions.size(), 0);
 
+    std::vector<uint8_t>          independent_layers(segmentation.size(), uint8_t(0));
     std::vector<std::vector<int>> per_row_gradient_layers(mixed_definitions.size());
     for (size_t scan_layer = 0; scan_layer < segmentation.size(); ++scan_layer) {
         std::vector<uint8_t> row_active_scan(mixed_definitions.size(), uint8_t(0));
@@ -3176,6 +3191,19 @@ static void build_local_z_plan(PrintObject&                                print
                 continue;
             row_active_scan[size_t(mixed_idx)] = uint8_t(1);
         }
+        bool any_active           = false;
+        bool independent_eligible = true;
+        for (size_t row_idx = 0; row_idx < row_active_scan.size(); ++row_idx) {
+            if (row_active_scan[row_idx] == 0)
+                continue;
+            any_active           = true;
+            independent_eligible = independent_eligible &&
+                                   (row_is_gradient_definition[row_idx] != 0 ||
+                                    (local_z_independent_layer_height && !row_independent_direct_cadences[row_idx].empty()));
+        }
+        independent_layers[scan_layer] = any_active && independent_eligible &&
+                                         mixed_filament_local_z_should_subdivide_layer(scan_layer, local_z_whole_objects,
+                                                                                       local_z_preserve_first_layer);
         for (size_t row_idx = 0; row_idx < mixed_definitions.size(); ++row_idx) {
             if (row_is_gradient_definition[row_idx] == 0 || row_active_scan[row_idx] == 0)
                 continue;
@@ -3537,7 +3565,7 @@ static void build_local_z_plan(PrintObject&                                print
         }
         const Layer&   layer = *print_object.get_layer(int(layer_id));
         LocalZInterval interval;
-        interval.layer_id               = layer_id;
+        interval.layer_id               = size_t(layer.id());
         interval.z_lo                   = layer.print_z - layer.height;
         interval.z_hi                   = layer.print_z;
         interval.base_height            = layer.height;
@@ -3654,16 +3682,7 @@ static void build_local_z_plan(PrintObject&                                print
                 }
             }
 
-        bool independent_rows_eligible = active_mixed_definitions > 0;
-        for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
-            if (row_active_this_layer[row_idx] == 0)
-                continue;
-            const bool gradient_row = row_idx < row_is_gradient_definition.size() && row_is_gradient_definition[row_idx] != 0;
-            const bool direct_row   = local_z_independent_layer_height && row_idx < row_independent_direct_cadences.size() &&
-                                    !row_independent_direct_cadences[row_idx].empty();
-            independent_rows_eligible = independent_rows_eligible && (gradient_row || direct_row);
-        }
-        const bool independent_interval = interval.has_mixed_paint && subdivide_this_layer && independent_rows_eligible;
+        const bool independent_interval = interval.has_mixed_paint && independent_layers[layer_id] != 0;
 
         if (independent_interval) {
             interval.independent_layer_height = true;
@@ -3683,6 +3702,11 @@ static void build_local_z_plan(PrintObject&                                print
                     state          = IndependentCadenceState{};
                     state.active   = true;
                     state.z_cursor = interval.z_lo;
+                    size_t last_layer = layer_id;
+                    while (last_layer + 1 < print_object.layer_count() && independent_layers[last_layer + 1] != 0 &&
+                           row_is_active_on_layer(row_idx, last_layer + 1))
+                        ++last_layer;
+                    state.z_end = print_object.get_layer(int(last_layer))->print_z;
                 }
 
                 auto append_independent_pass = [&](double z_hi, double flow_height, unsigned int target_extruder) {
@@ -3690,7 +3714,7 @@ static void build_local_z_plan(PrintObject&                                print
                         return;
 
                     SubLayerPlan plan;
-                    plan.layer_id         = layer_id;
+                    plan.layer_id         = interval.layer_id;
                     plan.pass_index       = independent_plans.size();
                     plan.split_interval   = true;
                     plan.z_lo             = z_hi - flow_height;
@@ -3715,7 +3739,7 @@ static void build_local_z_plan(PrintObject&                                print
                         return true;
 
                     const auto [domain_lo, domain_hi] = per_row_gradient_z_bounds[row_idx];
-                    const double remaining_domain_height = domain_hi - state.z_cursor;
+                    const double remaining_domain_height = state.z_end - state.z_cursor;
                     if (remaining_domain_height <= EPSILON)
                         return false;
 
@@ -3749,11 +3773,20 @@ static void build_local_z_plan(PrintObject&                                print
                     const LocalZIndependentDirectPass* cadence_pass = current_cadence_pass();
                     if (cadence_pass == nullptr)
                         break;
-                    const double next_z = state.z_cursor + cadence_pass->height;
+                    const double remaining_height = state.z_end - state.z_cursor;
+                    if (remaining_height <= EPSILON)
+                        break;
+                    const double height = local_z_bounded_pass_height(cadence_pass->height, remaining_height, min_sublayer_height,
+                                                                      local_z_max_layer_height_for_extruder(print_cfg,
+                                                                                                            cadence_pass->extruder_id));
+                    if (height <= 0.0)
+                        throw SlicingError(L("Local-Z cannot fit the minimum layer height into this mixed region. Reduce the mixed "
+                                             "filament minimum layer height."));
+                    const double next_z = state.z_cursor + height;
                     if (next_z > interval.z_hi + EPSILON)
                         break;
 
-                    append_independent_pass(std::min(next_z, interval.z_hi), cadence_pass->height, cadence_pass->extruder_id);
+                    append_independent_pass(std::min(next_z, interval.z_hi), height, cadence_pass->extruder_id);
                     state.z_cursor      = next_z;
                     state.last_extruder = cadence_pass->extruder_id;
                     if (gradient_row)
@@ -3764,21 +3797,8 @@ static void build_local_z_plan(PrintObject&                                print
                         break;
                 }
 
-                const bool continues_next_layer = layer_id + 1 < print_object.layer_count() &&
-                                                  mixed_filament_local_z_should_subdivide_layer(layer_id + 1, local_z_whole_objects,
-                                                                                                local_z_preserve_first_layer) &&
-                                                  row_is_active_on_layer(row_idx, layer_id + 1);
-                if (!continues_next_layer) {
-                    const double remaining_height = interval.z_hi - state.z_cursor;
-                    if (remaining_height > EPSILON) {
-                        const LocalZIndependentDirectPass* cadence_pass = current_cadence_pass();
-                        if (cadence_pass != nullptr) {
-                            append_independent_pass(interval.z_hi, remaining_height, cadence_pass->extruder_id);
-                            state.last_extruder = cadence_pass->extruder_id;
-                        }
-                    }
+                if (interval.z_hi >= state.z_end - EPSILON)
                     state.active = false;
-                }
             }
 
             if (local_z_whole_objects && !fixed_state_masks_union.empty()) {
@@ -3787,7 +3807,7 @@ static void build_local_z_plan(PrintObject&                                print
                     if (fixed_state_masks_by_extruder[extruder_idx].empty())
                         continue;
                     SubLayerPlan plan;
-                    plan.layer_id         = layer_id;
+                    plan.layer_id         = interval.layer_id;
                     plan.pass_index       = independent_plans.size();
                     plan.split_interval   = true;
                     plan.z_lo             = interval.z_lo;
@@ -3979,7 +3999,7 @@ static void build_local_z_plan(PrintObject&                                print
                                                                   fixed_pass_count);
 
                 SubLayerPlan fixed_plan;
-                fixed_plan.layer_id         = layer_id;
+                fixed_plan.layer_id         = interval.layer_id;
                 fixed_plan.pass_index       = first_pass_index + fixed_plans.size();
                 fixed_plan.split_interval   = true;
                 fixed_plan.z_lo             = z_lo;
@@ -4066,7 +4086,7 @@ static void build_local_z_plan(PrintObject&                                print
                         const double z_next = std::min<double>(interval.z_hi, z_cursor + pass_height);
 
                         SubLayerPlan plan;
-                        plan.layer_id       = layer_id;
+                        plan.layer_id         = interval.layer_id;
                         plan.pass_index     = isolated_plans.size();
                         plan.split_interval = true;
                         plan.z_lo           = z_cursor;
@@ -4234,7 +4254,7 @@ static void build_local_z_plan(PrintObject&                                print
                     const double z_next      = std::min<double>(interval.z_hi, z_cursor + pass_height);
 
                     SubLayerPlan plan;
-                    plan.layer_id       = layer_id;
+                    plan.layer_id         = interval.layer_id;
                     plan.pass_index     = pass_idx;
                     plan.split_interval = true;
                     plan.z_lo           = z_cursor;
@@ -4339,7 +4359,7 @@ static void build_local_z_plan(PrintObject&                                print
             if (interval.has_mixed_paint)
                 ++non_split_mixed_intervals;
             SubLayerPlan plan;
-            plan.layer_id       = layer_id;
+            plan.layer_id         = interval.layer_id;
             plan.pass_index     = 0;
             plan.split_interval = false;
             plan.z_lo           = interval.z_lo;
@@ -4457,6 +4477,30 @@ static void build_local_z_plan(PrintObject&                                print
                                    << " plans=" << plans.size()
                                    << " mixed_intervals=" << mixed_intervals;
     }
+}
+
+static void finalize_local_z_plan(PrintObject& print_object, LocalZPlanningInput input, const std::function<void()>& throw_on_cancel)
+{
+    const Print* print = print_object.print();
+    if (input.segmentation.empty()) {
+        input.segmentation              = whole_object_local_z_segmentation_by_mixed_wall(print_object, local_z_enabled_mixed_rows(*print));
+        input.whole_object_scope_active = true;
+    } else {
+        // Slicing repair may discard empty layers from the bottom and renumber
+        // the remaining Layer IDs. Keep the captured paint channels aligned.
+        if (input.segmentation.size() > print_object.layer_count())
+            input.segmentation.erase(input.segmentation.begin(),
+                                     input.segmentation.begin() + (input.segmentation.size() - print_object.layer_count()));
+        for (size_t i = 0; i < input.segmentation.size(); ++i) {
+            throw_on_cancel();
+            const ExPolygons domain = collect_layer_region_slices(*print_object.get_layer(int(i)));
+            for (ExPolygons& masks : input.segmentation[i])
+                if (!masks.empty())
+                    masks = intersection_ex(masks, domain);
+        }
+    }
+    if (!input.segmentation.empty())
+        build_local_z_plan(print_object, input.segmentation, input.whole_object_scope_active, throw_on_cancel);
 }
 
 template<typename ThrowOnCancel>
@@ -5546,7 +5590,7 @@ void apply_fuzzy_skin_segmentation(PrintObject &print_object, ThrowOnCancel thro
 // Resulting expolygons of layer regions are marked as Internal.
 //
 // this should be idempotent
-void PrintObject::slice_volumes()
+void PrintObject::slice_volumes(LocalZPlanningInput& local_z_input)
 {
     BOOST_LOG_TRIVIAL(info) << "Slicing volumes..." << log_memory_info();
     const Print *print                      = this->print();
@@ -5632,18 +5676,12 @@ void PrintObject::slice_volumes()
         std::vector<std::vector<ExPolygons>> local_z_segmentation =
             local_z_planner_segmentation_with_whole_object_mixed_wall(*this, mm_segmentation, local_z_enabled_rows,
                                                                       has_whole_object_local_z_scope);
-        build_local_z_plan(*this, local_z_segmentation, has_whole_object_local_z_scope, [print]() { print->throw_if_canceled(); });
+        local_z_input.segmentation              = std::move(local_z_segmentation);
+        local_z_input.whole_object_scope_active = has_whole_object_local_z_scope;
         apply_mm_segmentation(*this, std::move(mm_segmentation), [print]() { print->throw_if_canceled(); });
     }
 
     apply_mixed_region_surface_offsets(*this);
-
-    if (this->local_z_intervals().empty()) {
-        std::vector<std::vector<ExPolygons>> whole_object_local_z_segmentation =
-            whole_object_local_z_segmentation_by_mixed_wall(*this, local_z_enabled_rows);
-        if (!whole_object_local_z_segmentation.empty())
-            build_local_z_plan(*this, whole_object_local_z_segmentation, true, [print]() { print->throw_if_canceled(); });
-    }
 
     // Is any ModelVolume fuzzy skin painted?
     if (this->model_object()->is_fuzzy_skin_painted()) {

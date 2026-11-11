@@ -1094,6 +1094,15 @@ bool PrintObject::invalidate_state_by_config_options(
     if (opt_keys.empty())
         return false;
 
+    const bool had_local_z_plan = !m_local_z_intervals.empty();
+    const auto uses_local_z     = [&](const ConfigOptionResolver& config) {
+        const auto* filament = config.option<ConfigOptionInt>("wall_filament");
+        if (filament == nullptr || filament->value <= 0)
+            return false;
+        const auto* row = m_print->mixed_filament_manager().mixed_filament_from_id(unsigned(filament->value),
+                                                                                       m_print->config().filament_diameter.size());
+        return row != nullptr && mixed_filament_definition_uses_local_z(*row, m_print->config().dithering_local_z_mode.value);
+    };
     std::vector<PrintObjectStep> steps;
     bool invalidated = false;
     for (const t_config_option_key &opt_key : opt_keys) {
@@ -1295,8 +1304,7 @@ bool PrintObject::invalidate_state_by_config_options(
             steps.emplace_back(posSupportMaterial);
             // Whole-object Local-Z masks and tool assignments are built during
             // slicing from the wall filament, not during perimeter generation.
-            if (opt_key == "wall_filament" && m_print->config().dithering_local_z_mode.value &&
-                m_print->config().dithering_local_z_whole_objects.value)
+            if (opt_key == "wall_filament" && (had_local_z_plan || uses_local_z(old_config) || uses_local_z(new_config)))
                 steps.emplace_back(posSlice);
         } else if (opt_key == "bridge_flow" || opt_key == "internal_bridge_flow") {
             if (m_config.support_top_z_distance > 0. || (has_support() && m_config.support_type == stNormalAuto)) {
@@ -1371,20 +1379,17 @@ bool PrintObject::invalidate_state_by_config_options(
         }
     }
 
+    // Local-Z is produced by posSlice. Never clear its cache while retaining a
+    // completed producer, including automatic gradients and painted-only plans.
+    if (had_local_z_plan && std::any_of(opt_keys.begin(), opt_keys.end(), [](const std::string& key) {
+            return key == "extruder" || key == "wall_filament" || key == "sparse_infill_filament" || key == "solid_infill_filament";
+        }))
+        steps.emplace_back(posSlice);
+
     sort_remove_duplicates(steps);
     for (PrintObjectStep step : steps)
         invalidated |= this->invalidate_step(step);
 
-    // Changing extruder-related filament options invalidates the local-z plan,
-    // because the plan depends on which extruders are used for each sublayer.
-    // Without this, stale local-z data referencing removed extruders can cause crashes.
-    for (const std::string &opt_key : opt_keys) {
-        if (opt_key == "extruder" || opt_key == "wall_filament" ||
-            opt_key == "sparse_infill_filament" || opt_key == "solid_infill_filament") {
-            this->clear_local_z_plan();
-            break;
-        }
-    }
     return invalidated;
 }
 

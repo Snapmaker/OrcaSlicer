@@ -281,6 +281,8 @@ set(lisbslic3r_sources
     LocalZ/LocalZClipDecision.hpp
     LocalZ/LocalZClipper.cpp
     LocalZ/LocalZClipper.hpp
+    LocalZ/LocalZHeight.hpp
+    LocalZ/LocalZPlan.hpp
     libslic3r.cpp
     libslic3r.h
     Line.cpp

@@ -5740,20 +5740,11 @@ LayerResult GCode::process_layer(const Print& print,
                 continue;
 
             const size_t layer_id = size_t(layer_to_print.object_layer->id());
-            const auto& intervals = print_object->local_z_intervals();
-            const auto& plans     = print_object->local_z_sublayer_plan();
-            if (intervals.empty() || plans.empty())
-                continue;
-
-            auto it_interval = std::find_if(intervals.begin(), intervals.end(), [layer_id](const LocalZInterval& interval) {
-                return interval.layer_id == layer_id;
-            });
-            if (it_interval == intervals.end())
+            const auto&           plans       = print_object->local_z_sublayer_plan();
+            const LocalZInterval* it_interval = print_object->local_z_interval_for_layer(layer_id);
+            if (it_interval == nullptr || !it_interval->is_managed(plans))
                 continue;
             const bool independent_layer_height = it_interval->independent_layer_height && !it_interval->managed_masks.empty();
-            if (!it_interval->has_mixed_paint ||
-                (!independent_layer_height && (it_interval->sublayer_count <= 1 || it_interval->first_sublayer_idx >= plans.size())))
-                continue;
 
             LocalZLayerContext& ctx = local_z_layer_contexts[layer_to_print_idx];
             ctx.enabled = true;
@@ -5902,12 +5893,8 @@ LayerResult GCode::process_layer(const Print& print,
             if (print_object == nullptr)
                 continue;
             const size_t layer_id = size_t(layer_to_print.object_layer->id());
-            const auto& intervals = print_object->local_z_intervals();
-            auto it_interval = std::find_if(intervals.begin(), intervals.end(), [layer_id](const LocalZInterval& interval) {
-                return interval.layer_id == layer_id;
-            });
-            if (it_interval != intervals.end() && it_interval->has_mixed_paint &&
-                (it_interval->sublayer_count > 1 || (it_interval->independent_layer_height && !it_interval->managed_masks.empty()))) {
+            const LocalZInterval* it_interval = print_object->local_z_interval_for_layer(layer_id);
+            if (it_interval != nullptr && it_interval->is_managed(print_object->local_z_sublayer_plan())) {
                 local_z_phase_b_requested_for_layer = true;
                 break;
             }

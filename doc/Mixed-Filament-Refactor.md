@@ -42,6 +42,8 @@ Independent cadence tracks the end of each contiguous eligible mixed domain. Bef
 
 `LocalZPlan` owns the interval index and pass storage together and validates layer ordering, pass ranges, and layer references before publication.
 
+`LocalZMaskPreparation` owns fixed-paint precedence and boundary expansion for both purge planning and G-code emission. `LocalZSchedule` produces ordered tool/pass phases from geometry-independent descriptors; both consumers use that scheduler, including its height-order fallback.
+
 ## Product behavior retained
 
 This port retains Snorca's multi-digit filament and manual-pattern encoding, filament-count limits, deletion remapping, and the product's calibrated color selection. Gradient previews retain the FilamentMixer endpoint correction and 3% default solid-color width. Direct multicolor, independent Local-Z heights, first-layer protection, painting controls, and the prime-tower return-to-object-filament fix remain part of the product baseline.

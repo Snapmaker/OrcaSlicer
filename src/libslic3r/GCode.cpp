@@ -5,7 +5,8 @@
 #include "libslic3r.h"
 #include "I18N.hpp"
 #include "GCode.hpp"
-#include "LocalZOrderOptimizer.hpp"
+#include "LocalZ/LocalZSchedule.hpp"
+#include "LocalZ/LocalZMaskPreparation.hpp"
 #include "LocalZ/LocalZClipper.hpp"
 #include "Exception.hpp"
 #include "ExtrusionEntity.hpp"
@@ -4342,21 +4343,7 @@ static inline void append_clipped_paths(std::vector<ExtrusionPath>&& paths, Extr
             dst.append(std::move(path));
 }
 
-static inline ExPolygons local_z_compensate_masks(const ExPolygons& src_masks,
-                                                  const float       delta_scaled,
-                                                  const bool        fallback_to_source)
-{
-    if (src_masks.empty() || std::abs(delta_scaled) <= EPSILON)
-        return src_masks;
 
-    ExPolygons compensated = offset_ex(src_masks, delta_scaled);
-    if (!compensated.empty() && compensated.size() > 1)
-        compensated = union_ex(compensated);
-
-    if (compensated.empty() && fallback_to_source)
-        return src_masks;
-    return compensated;
-}
 
 struct LocalZPathHeightStats
 {
@@ -5693,12 +5680,6 @@ LayerResult GCode::process_layer(const Print& print,
             return configured_filament_id;
         return 0;
     };
-    // Compensate perimeter clipping at mixed-mask boundaries to avoid cracks from exact centerline clipping.
-    constexpr double LOCAL_Z_PERIMETER_MASK_EXPAND_MM = 0.10;
-    // Keep base exclusion smaller than mixed-pass inclusion to guarantee a slight overlap
-    // instead of a moat at the boundary.
-    constexpr double LOCAL_Z_BASE_MASK_EXPAND_MM      = 0.04;
-    const float      local_z_perimeter_mask_expand    = float(scale_(LOCAL_Z_PERIMETER_MASK_EXPAND_MM));
     const float      local_z_base_mask_expand         = float(scale_(LOCAL_Z_BASE_MASK_EXPAND_MM));
     const bool       local_z_infill_enabled           = print.full_print_config().opt_bool("dithering_local_z_infill");
 
@@ -5764,51 +5745,13 @@ LayerResult GCode::process_layer(const Print& print,
 
                 LocalZPassBucket bucket;
                 bucket.plan = &plan;
-                const size_t plan_mask_slots = std::max(plan.painted_masks_by_extruder.size(), plan.fixed_painted_masks_by_extruder.size());
-                bucket.compensated_masks_by_extruder.assign(plan_mask_slots, ExPolygons());
-                bool pass_has_raw_masks         = false;
-                bool pass_has_compensated_masks = false;
-                ExPolygons fixed_raw_masks_union;
-                for (const ExPolygons &fixed_masks : plan.fixed_painted_masks_by_extruder)
-                    if (!fixed_masks.empty())
-                        append(fixed_raw_masks_union, fixed_masks);
-                if (!fixed_raw_masks_union.empty() && fixed_raw_masks_union.size() > 1)
-                    fixed_raw_masks_union = union_ex(fixed_raw_masks_union);
-                const ExPolygons fixed_compensated_guard =
-                    fixed_raw_masks_union.empty() ? ExPolygons() : local_z_compensate_masks(fixed_raw_masks_union, local_z_perimeter_mask_expand, true);
-
-                for (size_t extruder_id = 0; extruder_id < plan_mask_slots; ++extruder_id) {
-                    const ExPolygons mixed_raw_masks =
-                        extruder_id < plan.painted_masks_by_extruder.size() ? plan.painted_masks_by_extruder[extruder_id] : ExPolygons();
-                    const ExPolygons fixed_raw_masks =
-                        extruder_id < plan.fixed_painted_masks_by_extruder.size() ? plan.fixed_painted_masks_by_extruder[extruder_id] : ExPolygons();
-                    if (mixed_raw_masks.empty() && fixed_raw_masks.empty())
-                        continue;
-                    pass_has_raw_masks = true;
-                    raw_mask_polygon_count += mixed_raw_masks.size() + fixed_raw_masks.size();
-                    if (!mixed_raw_masks.empty())
-                        append(raw_mixed_masks_union, mixed_raw_masks);
-                    if (!fixed_raw_masks.empty())
-                        append(raw_mixed_masks_union, fixed_raw_masks);
-
-                    ExPolygons compensated;
-                    if (!mixed_raw_masks.empty()) {
-                        ExPolygons compensated_mixed = local_z_compensate_masks(mixed_raw_masks, local_z_perimeter_mask_expand, true);
-                        if (!fixed_compensated_guard.empty())
-                            compensated_mixed = diff_ex(compensated_mixed, fixed_compensated_guard);
-                        if (!compensated_mixed.empty())
-                            append(compensated, compensated_mixed);
-                    }
-                    if (!fixed_raw_masks.empty())
-                        append(compensated, fixed_raw_masks);
-                    if (!compensated.empty() && compensated.size() > 1)
-                        compensated = union_ex(compensated);
-                    if (!compensated.empty()) {
-                        pass_has_compensated_masks = true;
-                        compensated_mask_polygon_count += compensated.size();
-                    }
-                    bucket.compensated_masks_by_extruder[extruder_id] = std::move(compensated);
-                }
+                auto       prepared_masks             = prepare_local_z_pass_masks(plan);
+                const bool pass_has_raw_masks         = prepared_masks.raw_polygon_count != 0;
+                const bool pass_has_compensated_masks = prepared_masks.compensated_polygon_count != 0;
+                raw_mask_polygon_count += prepared_masks.raw_polygon_count;
+                compensated_mask_polygon_count += prepared_masks.compensated_polygon_count;
+                append(raw_mixed_masks_union, prepared_masks.raw_union);
+                bucket.compensated_masks_by_extruder = std::move(prepared_masks.by_extruder);
                 if (pass_has_raw_masks)
                     ++split_plan_with_raw_masks;
                 if (pass_has_compensated_masks) {
@@ -6349,15 +6292,6 @@ LayerResult GCode::process_layer(const Print& print,
         LocalZPassBucket* bucket { nullptr };
     };
 
-    auto same_local_z_pass_group = [](const LocalZPassRef& lhs, const LocalZPassRef& rhs) {
-        assert(lhs.bucket != nullptr && rhs.bucket != nullptr);
-        assert(lhs.bucket->plan != nullptr && rhs.bucket->plan != nullptr);
-        // Buckets that land on the same Local-Z print plane are independent even if
-        // they belong to different objects, so let phase-b order that whole plane
-        // together instead of restarting the grouping per object/layer context.
-        return std::abs(lhs.bucket->plan->print_z - rhs.bucket->plan->print_z) <= EPSILON;
-    };
-
     auto local_z_bucket_extruders = [](const LocalZPassBucket& bucket) {
         std::vector<unsigned int> extruders;
         extruders.reserve(bucket.by_extruder.size());
@@ -6366,14 +6300,6 @@ LayerResult GCode::process_layer(const Print& print,
                 extruders.push_back(by_extruder_entry.first);
         }
         return extruders;
-    };
-
-    auto shared_local_z_extruder = [](const std::vector<unsigned int>& lhs, const std::vector<unsigned int>& rhs) -> int {
-        for (unsigned int extruder_id : lhs) {
-            if (std::find(rhs.begin(), rhs.end(), extruder_id) != rhs.end())
-                return static_cast<int>(extruder_id);
-        }
-        return -1;
     };
 
     std::vector<LocalZPassRef> local_z_pass_refs;
@@ -6525,282 +6451,22 @@ LayerResult GCode::process_layer(const Print& print,
             m_last_layer_z = saved_last_layer_z;
         };
 
-        auto emit_local_z_legacy = [&](int active_extruder) {
-            size_t pass_ref_idx = 0;
-            while (pass_ref_idx < local_z_pass_refs.size()) {
-                size_t pass_group_end = pass_ref_idx + 1;
-                while (pass_group_end < local_z_pass_refs.size() &&
-                       same_local_z_pass_group(local_z_pass_refs[pass_ref_idx], local_z_pass_refs[pass_group_end])) {
-                    ++pass_group_end;
-                }
-
-                std::vector<unsigned int> pass_group_extruders;
-                struct LocalZPassTaskRef {
-                    const LocalZPassRef* pass_ref { nullptr };
-                    unsigned int         extruder_id { 0 };
-                };
-                std::vector<LocalZPassTaskRef> pass_group_tasks;
-                for (size_t group_idx = pass_ref_idx; group_idx < pass_group_end; ++group_idx) {
-                    const LocalZPassRef& pass_ref = local_z_pass_refs[group_idx];
-                    for (unsigned int extruder_id : local_z_bucket_extruders(*pass_ref.bucket)) {
-                        pass_group_tasks.push_back(LocalZPassTaskRef{ &pass_ref, extruder_id });
-                        if (std::find(pass_group_extruders.begin(), pass_group_extruders.end(), extruder_id) == pass_group_extruders.end())
-                            pass_group_extruders.push_back(extruder_id);
-                    }
-                }
-
-                std::vector<unsigned int> next_group_extruders;
-                if (pass_group_end < local_z_pass_refs.size()) {
-                    size_t next_group_end = pass_group_end + 1;
-                    while (next_group_end < local_z_pass_refs.size() &&
-                           same_local_z_pass_group(local_z_pass_refs[pass_group_end], local_z_pass_refs[next_group_end])) {
-                        ++next_group_end;
-                    }
-                    for (size_t group_idx = pass_group_end; group_idx < next_group_end; ++group_idx) {
-                        for (unsigned int extruder_id : local_z_bucket_extruders(*local_z_pass_refs[group_idx].bucket))
-                            if (std::find(next_group_extruders.begin(), next_group_extruders.end(), extruder_id) == next_group_extruders.end())
-                                next_group_extruders.push_back(extruder_id);
-                    }
-                }
-
-                const int preferred_last_extruder = shared_local_z_extruder(pass_group_extruders, next_group_extruders);
-                const std::vector<unsigned int> ordered_group_extruders =
-                    LocalZOrderOptimizer::order_bucket_extruders(pass_group_extruders,
-                                                                 active_extruder,
-                                                                 preferred_last_extruder);
-
-                for (unsigned int local_extruder_id : ordered_group_extruders) {
-                    emit_local_z_toolchange(local_extruder_id, local_z_pass_refs[pass_ref_idx].bucket->plan->print_z);
-                    for (const LocalZPassTaskRef& task_ref : pass_group_tasks) {
-                        if (task_ref.extruder_id != local_extruder_id || task_ref.pass_ref == nullptr)
-                            continue;
-                        emit_local_z_pass_for_extruder(*task_ref.pass_ref, local_extruder_id);
-                    }
-                    active_extruder = int(local_extruder_id);
-                }
-
-                pass_ref_idx = pass_group_end;
-            }
-
-            return active_extruder;
-        };
-
-        const bool dependency_chain_mode =
-            std::all_of(local_z_pass_refs.begin(), local_z_pass_refs.end(), [](const LocalZPassRef& pass_ref) {
-                return pass_ref.bucket != nullptr &&
-                       pass_ref.bucket->plan != nullptr &&
-                       pass_ref.bucket->plan->dependency_group != 0;
-            });
-
-        if (dependency_chain_mode) {
-            struct ChainKey {
-                size_t layer_to_print_idx { 0 };
-                size_t dependency_group { 0 };
-
-                bool operator<(const ChainKey& rhs) const
-                {
-                    if (layer_to_print_idx != rhs.layer_to_print_idx)
-                        return layer_to_print_idx < rhs.layer_to_print_idx;
-                    return dependency_group < rhs.dependency_group;
-                }
-            };
-            struct PassState {
-                const LocalZPassRef*    pass_ref { nullptr };
-                std::vector<unsigned int> remaining_extruders;
-                size_t                    chain_idx { 0 };
-                size_t                    chain_pos { 0 };
-                bool                      ready { false };
-                bool                      completed { false };
-            };
-
-            std::map<ChainKey, size_t> chain_index_by_key;
-            std::vector<std::vector<size_t>> chains;
-            std::vector<PassState>           pass_states;
-            pass_states.reserve(local_z_pass_refs.size());
-            for (const LocalZPassRef& pass_ref : local_z_pass_refs) {
-                ChainKey chain_key { pass_ref.layer_to_print_idx, pass_ref.bucket->plan->dependency_group };
-                auto [it_chain, inserted] = chain_index_by_key.emplace(chain_key, chains.size());
-                if (inserted)
-                    chains.emplace_back();
-
-                const size_t chain_idx = it_chain->second;
-                const size_t pass_state_idx = pass_states.size();
-                pass_states.push_back(PassState{ &pass_ref, local_z_bucket_extruders(*pass_ref.bucket), chain_idx, 0, false, false });
-                chains[chain_idx].push_back(pass_state_idx);
-            }
-
-            for (std::vector<size_t>& chain : chains) {
-                std::sort(chain.begin(), chain.end(), [&pass_states](size_t lhs_idx, size_t rhs_idx) {
-                    const SubLayerPlan& lhs = *pass_states[lhs_idx].pass_ref->bucket->plan;
-                    const SubLayerPlan& rhs = *pass_states[rhs_idx].pass_ref->bucket->plan;
-                    if (lhs.dependency_order != rhs.dependency_order)
-                        return lhs.dependency_order < rhs.dependency_order;
-                    if (std::abs(lhs.print_z - rhs.print_z) > EPSILON)
-                        return lhs.print_z < rhs.print_z;
-                    return lhs.pass_index < rhs.pass_index;
-                });
-                for (size_t chain_pos = 0; chain_pos < chain.size(); ++chain_pos)
-                    pass_states[chain[chain_pos]].chain_pos = chain_pos;
-                if (!chain.empty())
-                    pass_states[chain.front()].ready = true;
-            }
-
-            auto pass_contains_extruder = [](const PassState& pass_state, unsigned int extruder_id) {
-                return std::find(pass_state.remaining_extruders.begin(), pass_state.remaining_extruders.end(), extruder_id) !=
-                       pass_state.remaining_extruders.end();
-            };
-            auto lowest_ready_print_z = [&]() {
-                double print_z = std::numeric_limits<double>::infinity();
-                for (const PassState& pass_state : pass_states) {
-                    if (!pass_state.ready || pass_state.completed)
-                        continue;
-                    print_z = std::min(print_z, pass_state.pass_ref->bucket->plan->print_z);
-                }
-                return print_z;
-            };
-            auto choose_ready_extruder = [&](int active_extruder, double ready_print_z) -> int {
-                std::vector<unsigned int> ready_extruders;
-                for (const PassState& pass_state : pass_states) {
-                    if (!pass_state.ready || pass_state.completed ||
-                        std::abs(pass_state.pass_ref->bucket->plan->print_z - ready_print_z) > EPSILON)
-                        continue;
-                    for (unsigned int extruder_id : pass_state.remaining_extruders)
-                        if (std::find(ready_extruders.begin(), ready_extruders.end(), extruder_id) == ready_extruders.end())
-                            ready_extruders.push_back(extruder_id);
-                }
-                if (ready_extruders.empty())
-                    return -1;
-                if (active_extruder >= 0 &&
-                    std::find(ready_extruders.begin(), ready_extruders.end(), unsigned(active_extruder)) != ready_extruders.end()) {
-                    return active_extruder;
-                }
-
-                int    best_extruder = -1;
-                size_t best_ready_count = 0;
-                size_t best_future_count = 0;
-                for (unsigned int extruder_id : ready_extruders) {
-                    size_t ready_count = 0;
-                    size_t future_count = 0;
-                    for (const PassState& pass_state : pass_states) {
-                        if (pass_state.completed || !pass_contains_extruder(pass_state, extruder_id))
-                            continue;
-                        ++future_count;
-                        if (pass_state.ready && std::abs(pass_state.pass_ref->bucket->plan->print_z - ready_print_z) <= EPSILON)
-                            ++ready_count;
-                    }
-
-                    if (best_extruder < 0 ||
-                        ready_count > best_ready_count ||
-                        (ready_count == best_ready_count && future_count > best_future_count) ||
-                        (ready_count == best_ready_count && future_count == best_future_count && extruder_id < unsigned(best_extruder))) {
-                        best_extruder = int(extruder_id);
-                        best_ready_count = ready_count;
-                        best_future_count = future_count;
-                    }
-                }
-
-                return best_extruder;
-            };
-
-            struct ScheduledPhase {
-                unsigned int        extruder_id { 0 };
-                std::vector<size_t> pass_state_indices;
-            };
-
-            bool                        dependency_scheduler_ok = true;
-            size_t                      completed_passes = 0;
-            int                         simulated_active_extruder = local_z_phase_b_active_extruder;
-            std::vector<ScheduledPhase> scheduled_phases;
-            while (dependency_scheduler_ok && completed_passes < pass_states.size()) {
-                const double ready_print_z   = lowest_ready_print_z();
-                const int    chosen_extruder = choose_ready_extruder(simulated_active_extruder, ready_print_z);
-                if (chosen_extruder < 0) {
-                    dependency_scheduler_ok = false;
-                    BOOST_LOG_TRIVIAL(warning) << "Local-Z dependency scheduler deadlocked, falling back"
-                                               << " print_z=" << print_z
-                                               << " pass_count=" << local_z_pass_refs.size();
-                    break;
-                }
-
-                std::vector<size_t> ready_pass_indices;
-                for (size_t pass_state_idx = 0; pass_state_idx < pass_states.size(); ++pass_state_idx) {
-                    const PassState& pass_state = pass_states[pass_state_idx];
-                    if (!pass_state.ready || pass_state.completed ||
-                        std::abs(pass_state.pass_ref->bucket->plan->print_z - ready_print_z) > EPSILON ||
-                        !pass_contains_extruder(pass_state, unsigned(chosen_extruder)))
-                        continue;
-                    ready_pass_indices.push_back(pass_state_idx);
-                }
-                if (ready_pass_indices.empty()) {
-                    dependency_scheduler_ok = false;
-                    BOOST_LOG_TRIVIAL(warning) << "Local-Z dependency scheduler made no progress, falling back"
-                                               << " print_z=" << print_z
-                                               << " chosen_extruder=" << chosen_extruder
-                                               << " pass_count=" << local_z_pass_refs.size();
-                    break;
-                }
-
-                std::sort(ready_pass_indices.begin(), ready_pass_indices.end(), [&pass_states](size_t lhs_idx, size_t rhs_idx) {
-                    const LocalZPassRef& lhs_ref = *pass_states[lhs_idx].pass_ref;
-                    const LocalZPassRef& rhs_ref = *pass_states[rhs_idx].pass_ref;
-                    const SubLayerPlan& lhs = *lhs_ref.bucket->plan;
-                    const SubLayerPlan& rhs = *rhs_ref.bucket->plan;
-                    if (std::abs(lhs.print_z - rhs.print_z) > EPSILON)
-                        return lhs.print_z < rhs.print_z;
-                    if (lhs_ref.layer_to_print_idx != rhs_ref.layer_to_print_idx)
-                        return lhs_ref.layer_to_print_idx < rhs_ref.layer_to_print_idx;
-                    return lhs.pass_index < rhs.pass_index;
-                });
-                scheduled_phases.push_back(ScheduledPhase{ unsigned(chosen_extruder), ready_pass_indices });
-
-                std::vector<size_t> newly_completed;
-                for (size_t pass_state_idx : ready_pass_indices) {
-                    PassState& pass_state = pass_states[pass_state_idx];
-                    auto it_extruder = std::find(pass_state.remaining_extruders.begin(),
-                                                 pass_state.remaining_extruders.end(),
-                                                 unsigned(chosen_extruder));
-                    if (it_extruder == pass_state.remaining_extruders.end())
-                        continue;
-                    pass_state.remaining_extruders.erase(it_extruder);
-                    if (pass_state.remaining_extruders.empty())
-                        newly_completed.push_back(pass_state_idx);
-                }
-
-                for (size_t pass_state_idx : newly_completed) {
-                    PassState& pass_state = pass_states[pass_state_idx];
-                    if (pass_state.completed)
-                        continue;
-                    pass_state.ready = false;
-                    pass_state.completed = true;
-                    ++completed_passes;
-
-                    const std::vector<size_t>& chain = chains[pass_state.chain_idx];
-                    const size_t next_chain_pos = pass_state.chain_pos + 1;
-                    if (next_chain_pos < chain.size())
-                        pass_states[chain[next_chain_pos]].ready = true;
-                }
-
-                simulated_active_extruder = chosen_extruder;
-            }
-
-            if (!dependency_scheduler_ok) {
-                local_z_phase_b_active_extruder = emit_local_z_legacy(local_z_phase_b_active_extruder);
-            } else {
-                for (const ScheduledPhase& scheduled_phase : scheduled_phases) {
-                    emit_local_z_toolchange(scheduled_phase.extruder_id,
-                                            pass_states[scheduled_phase.pass_state_indices.front()].pass_ref->bucket->plan->print_z);
-                    for (size_t pass_state_idx : scheduled_phase.pass_state_indices)
-                        emit_local_z_pass_for_extruder(*pass_states[pass_state_idx].pass_ref, scheduled_phase.extruder_id);
-                }
-                local_z_phase_b_active_extruder = simulated_active_extruder;
-                BOOST_LOG_TRIVIAL(info) << "Local-Z dependency scheduler"
-                                        << " print_z=" << print_z
-                                        << " pass_count=" << local_z_pass_refs.size()
-                                        << " chain_count=" << chains.size();
-            }
-        } else {
-            local_z_phase_b_active_extruder = emit_local_z_legacy(local_z_phase_b_active_extruder);
+        std::vector<LocalZSchedulePass> schedule_inputs;
+        schedule_inputs.reserve(local_z_pass_refs.size());
+        for (const auto& ref : local_z_pass_refs) {
+            const auto& plan = *ref.bucket->plan;
+            schedule_inputs.push_back({ref.layer_to_print_idx, plan.pass_index, plan.print_z, plan.dependency_group, plan.dependency_order,
+                                       local_z_bucket_extruders(*ref.bucket)});
         }
+        const auto schedule = build_local_z_schedule(schedule_inputs, local_z_phase_b_active_extruder);
+        if (schedule.used_dependency_fallback)
+            BOOST_LOG_TRIVIAL(warning) << "Local-Z emission scheduler used height-order fallback";
+        for (const auto& phase : schedule.phases) {
+            emit_local_z_toolchange(phase.extruder_id, phase.print_z);
+            for (size_t pass_index : phase.passes)
+                emit_local_z_pass_for_extruder(local_z_pass_refs[pass_index], phase.extruder_id);
+        }
+        local_z_phase_b_active_extruder = schedule.final_extruder;
 
         if (has_wipe_tower && m_wipe_tower) {
             gcode += m_wipe_tower->finish_local_z_toolchanges(*this, print_z + m_config.z_offset.value);

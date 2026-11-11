@@ -284,6 +284,10 @@ set(lisbslic3r_sources
     LocalZ/LocalZHeight.hpp
     LocalZ/LocalZPlan.hpp
     LocalZ/LocalZPlan.cpp
+    LocalZ/LocalZMaskPreparation.hpp
+    LocalZ/LocalZMaskPreparation.cpp
+    LocalZ/LocalZSchedule.hpp
+    LocalZ/LocalZSchedule.cpp
     libslic3r.cpp
     libslic3r.h
     Line.cpp

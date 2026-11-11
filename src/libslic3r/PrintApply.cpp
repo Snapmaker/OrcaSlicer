@@ -1258,6 +1258,16 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     new_full_config.option("dithering_local_z_whole_objects", true);
     new_full_config.option("dithering_local_z_infill", true);
     new_full_config.option("dithering_local_z_direct_multicolor", true);
+    // SML uses the direct solver by default. Old projects may retain a false
+    // value from the former SML-off handler even after SML was re-enabled.
+    if (new_full_config.opt_bool("dithering_local_z_mode"))
+        new_full_config.option<ConfigOptionBool>("dithering_local_z_direct_multicolor")->value = true;
+    // First-layer protection is automatic, including for old projects that
+    // saved the former user-facing switch as disabled.
+    new_full_config.option<ConfigOptionBool>("dithering_local_z_preserve_first_layer", true)->value = true;
+    new_full_config.option("dithering_local_z_independent_layer_height", true);
+    new_full_config.option("dithering_local_z_gradient_layer_height", true);
+    new_full_config.option("dithering_local_z_gradient_middle_filament_window", true);
     new_full_config.option("dithering_step_painted_zones_only", true);
     new_full_config.option("mixed_filament_gradient_mode", true);
     new_full_config.option("mixed_filament_height_lower_bound", true);
@@ -1274,6 +1284,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_config.option("dithering_local_z_whole_objects", true);
     m_config.option("dithering_local_z_infill", true);
     m_config.option("dithering_local_z_direct_multicolor", true);
+    m_config.option("dithering_local_z_preserve_first_layer", true);
+    m_config.option("dithering_local_z_independent_layer_height", true);
+    m_config.option("dithering_local_z_gradient_layer_height", true);
+    m_config.option("dithering_local_z_gradient_middle_filament_window", true);
     m_config.option("dithering_step_painted_zones_only", true);
     m_config.option("mixed_filament_gradient_mode", true);
     m_config.option("mixed_filament_height_lower_bound", true);
@@ -1290,6 +1304,10 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_default_object_config.option("dithering_local_z_whole_objects", true);
     m_default_object_config.option("dithering_local_z_infill", true);
     m_default_object_config.option("dithering_local_z_direct_multicolor", true);
+    m_default_object_config.option("dithering_local_z_preserve_first_layer", true);
+    m_default_object_config.option("dithering_local_z_independent_layer_height", true);
+    m_default_object_config.option("dithering_local_z_gradient_layer_height", true);
+    m_default_object_config.option("dithering_local_z_gradient_middle_filament_window", true);
     m_default_object_config.option("dithering_step_painted_zones_only", true);
     m_default_object_config.option("mixed_filament_gradient_mode", true);
     m_default_object_config.option("mixed_filament_height_lower_bound", true);
@@ -1457,22 +1475,41 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // re-apply user custom mixed definitions.
     std::vector<std::string> physical_filament_colors = m_config.filament_colour.values;
     physical_filament_colors.resize(num_extruders, "#26A69A");
+    MixedFilamentDisplayContext mixed_display_context;
+    mixed_display_context.num_physical          = num_extruders;
+    mixed_display_context.physical_colors       = physical_filament_colors;
+    mixed_display_context.physical_tds          = m_config.filament_transmission_distance.values;
+    mixed_display_context.physical_material_ids = m_config.filament_full_spectrum_material_id.values;
+    mixed_display_context.nozzle_diameters      = m_config.nozzle_diameter.values;
+    mixed_display_context.color_engine          = MixedFilamentColorEngine::FullSpectrumKSPairResidual;
+    auto& mixed_preview                         = mixed_display_context.preview_settings;
+    mixed_preview.mixed_lower_bound             = mixed_height_lower;
+    mixed_preview.mixed_upper_bound             = mixed_height_upper;
+    mixed_preview.local_z_mode                  = m_config.dithering_local_z_mode.value;
+    mixed_preview.preferred_a_height            = m_config.mixed_color_layer_height_a.value;
+    mixed_preview.preferred_b_height            = m_config.mixed_color_layer_height_b.value;
+    mixed_preview.local_z_direct_multicolor     = m_config.dithering_local_z_direct_multicolor.value &&
+                                              mixed_preview.preferred_a_height <= EPSILON && mixed_preview.preferred_b_height <= EPSILON;
+    mixed_preview.local_z_independent_layer_height = mixed_preview.local_z_mode || m_config.dithering_local_z_independent_layer_height.value;
+    mixed_preview.gradient_cycle_height            = m_config.dithering_local_z_gradient_layer_height.value;
+    mixed_preview.gradient_middle_window           = m_config.dithering_local_z_gradient_middle_filament_window.value / 100.0;
+    if (new_full_config.has("layer_height"))
+        mixed_preview.nominal_layer_height = new_full_config.opt_float("layer_height");
+    if (new_full_config.has("wall_loops"))
+        mixed_preview.wall_loops = size_t(std::max(1, new_full_config.opt_int("wall_loops")));
+    m_mixed_filament_mgr.set_display_context(mixed_display_context);
     m_mixed_filament_mgr.clear_custom_entries();
     m_mixed_filament_mgr.auto_generate(physical_filament_colors);
     m_mixed_filament_mgr.load_custom_entries(mixed_custom_definitions, physical_filament_colors);
-    m_mixed_filament_mgr.apply_gradient_settings(mixed_gradient_mode,
-                                                 mixed_height_lower,
-                                                 mixed_height_upper,
-                                                 mixed_advanced_dither);
+    m_mixed_filament_mgr.apply_gradient_settings(mixed_gradient_mode, mixed_height_lower, mixed_height_upper, mixed_advanced_dither);
     size_t mixed_custom_count = 0;
-    for (const auto &mf : m_mixed_filament_mgr.mixed_filaments())
+    for (const auto& mf : m_mixed_filament_mgr.mixed_filaments())
         if (mf.custom)
             ++mixed_custom_count;
 
     BOOST_LOG_TRIVIAL(info) << "Print::apply mixed manager state"
                             << ", mixed_total=" << m_mixed_filament_mgr.mixed_filaments().size()
-                            << ", mixed_enabled=" << m_mixed_filament_mgr.enabled_count()
-                            << ", mixed_custom=" << mixed_custom_count;
+                            << ", mixed_enabled=" << m_mixed_filament_mgr.enabled_count() << ", mixed_custom=" << mixed_custom_count;
     // Total filaments = physical extruders + enabled mixed (virtual) filaments.
     // Used for extruder ID clamping so that virtual IDs are accepted.
     size_t num_total_filaments = m_mixed_filament_mgr.total_filaments(num_extruders);

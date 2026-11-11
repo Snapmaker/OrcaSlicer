@@ -118,6 +118,7 @@ public:
     std::string tool_change(GCode &gcodegen, int extruder_id, bool finish_layer,
                             bool local_z_unplanned = false,
                             double local_z_nominal_layer_z = -1.);
+    std::string        finish_local_z_toolchanges(GCode& gcodegen, double local_z_nominal_layer_z);
     bool is_empty_wipe_tower_gcode(GCode &gcodegen, int extruder_id, bool finish_layer);
     std::string finalize(GCode &gcodegen);
     std::vector<float> used_filament_length() const;

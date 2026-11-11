@@ -1162,63 +1162,35 @@ bool PrintObject::invalidate_state_by_config_options(
             if (this->is_mm_painted() && (opt_key == "filter_out_gap_fill" && (opt_key == "gap_infill_speed" && is_gap_fill_changed_state_due_to_speed())))
                 steps.emplace_back(posSlice);
             steps.emplace_back(posPerimeters);
-        } else if (
-               opt_key == "layer_height"
-            || opt_key == "dithering_z_step_size"
-            || opt_key == "dithering_local_z_mode"
-            || opt_key == "dithering_local_z_whole_objects"
-            || opt_key == "dithering_local_z_direct_multicolor"
-            || opt_key == "dithering_step_painted_zones_only"
-            || opt_key == "mixed_filament_component_bias_enabled"
-            || opt_key == "mixed_filament_region_collapse"
-            || opt_key == "fs_surface_paint_only" || opt_key == "fs_painted_zone_extra_perimeters"
-            || opt_key == "mmu_segmented_region_max_width"
-            || opt_key == "mmu_segmented_region_interlocking_depth"
-            || opt_key == "raft_layers"
-            || opt_key == "raft_contact_distance"
-            || opt_key == "slice_closing_radius"
-            || opt_key == "slicing_mode"
-            || opt_key == "slowdown_for_curled_perimeters"
-            || opt_key == "make_overhang_printable"
-            || opt_key == "make_overhang_printable_angle"
-            || opt_key == "make_overhang_printable_hole_size"
-            || opt_key == "interlocking_beam"
-            || opt_key == "interlocking_orientation"
-            || opt_key == "interlocking_beam_layer_count"
-            || opt_key == "interlocking_depth"
-            || opt_key == "interlocking_boundary_avoidance"
-            || opt_key == "interlocking_beam_width") {
+        } else if (opt_key == "layer_height" || opt_key == "dithering_z_step_size" || opt_key == "dithering_local_z_mode" ||
+                   opt_key == "dithering_local_z_whole_objects" || opt_key == "dithering_local_z_preserve_first_layer" ||
+                   opt_key == "dithering_local_z_direct_multicolor" || opt_key == "dithering_local_z_independent_layer_height" ||
+                   opt_key == "dithering_local_z_gradient_layer_height" || opt_key == "dithering_local_z_gradient_middle_filament_window" ||
+                   opt_key == "dithering_step_painted_zones_only" || opt_key == "mixed_filament_component_bias_enabled" ||
+                   opt_key == "mixed_filament_region_collapse" || opt_key == "mmu_segmented_region_max_width" ||
+                   opt_key == "fs_surface_paint_only" || opt_key == "fs_painted_zone_extra_perimeters" ||
+                   opt_key == "mmu_segmented_region_interlocking_depth" || opt_key == "raft_layers" || opt_key == "raft_contact_distance" ||
+                   opt_key == "slice_closing_radius" || opt_key == "slicing_mode" || opt_key == "slowdown_for_curled_perimeters" ||
+                   opt_key == "make_overhang_printable" || opt_key == "make_overhang_printable_angle" ||
+                   opt_key == "make_overhang_printable_hole_size" || opt_key == "interlocking_beam" ||
+                   opt_key == "interlocking_orientation" || opt_key == "interlocking_beam_layer_count" || opt_key == "interlocking_depth" ||
+                   opt_key == "interlocking_boundary_avoidance" || opt_key == "interlocking_beam_width") {
             steps.emplace_back(posSlice);
-        } else if (
-               opt_key == "mixed_filament_gradient_mode"
-            || opt_key == "mixed_filament_height_lower_bound"
-            || opt_key == "mixed_filament_height_upper_bound"
-            || opt_key == "mixed_filament_advanced_dithering"
-            || opt_key == "mixed_filament_component_bias_enabled"
-            || opt_key == "mixed_filament_surface_indentation"
-            || opt_key == "mixed_filament_region_collapse"
-            || opt_key == "mixed_filament_definitions") {
+        } else if (opt_key == "mixed_filament_gradient_mode" || opt_key == "mixed_filament_height_lower_bound" ||
+                   opt_key == "mixed_filament_advanced_dithering" || opt_key == "mixed_filament_component_bias_enabled" ||
+                   opt_key == "mixed_filament_surface_indentation" || opt_key == "mixed_filament_region_collapse" ||
+                   opt_key == "mixed_filament_definitions") {
             // Mixed filament gradient controls affect layer cadence and virtual
             // tool distribution, so force a re-slice prompt like other
             // layer-structure settings.
             steps.emplace_back(posSlice);
-		} else if (
-               opt_key == "elefant_foot_compensation"
-            || opt_key == "elefant_foot_compensation_layers"
-            || opt_key == "support_top_z_distance"
-            || opt_key == "support_bottom_z_distance"
-            || opt_key == "xy_hole_compensation"
-            || opt_key == "xy_contour_compensation"
-            //BBS: [Arthur] the following params affect bottomBridge surface type detection
-            || opt_key == "support_type"
-            || opt_key == "bridge_no_support"
-            || opt_key == "max_bridge_length"
-            || opt_key == "support_interface_top_layers"
-            || opt_key == "support_critical_regions_only"
-            || opt_key == "hole_to_polyhole"
-            || opt_key == "hole_to_polyhole_threshold"
-            || opt_key == "hole_to_polyhole_twisted"
-            ) {
+        } else if (opt_key == "elefant_foot_compensation" || opt_key == "elefant_foot_compensation_layers" ||
+                   opt_key == "support_top_z_distance" || opt_key == "support_bottom_z_distance" || opt_key == "xy_hole_compensation" ||
+                   opt_key == "xy_contour_compensation"
+                   // BBS: [Arthur] the following params affect bottomBridge surface type detection
+                   || opt_key == "support_type" || opt_key == "bridge_no_support" || opt_key == "max_bridge_length" ||
+                   opt_key == "support_interface_top_layers" || opt_key == "support_critical_regions_only" ||
+                   opt_key == "hole_to_polyhole" || opt_key == "hole_to_polyhole_threshold" || opt_key == "hole_to_polyhole_twisted") {
             steps.emplace_back(posSlice);
         } else if (opt_key == "enable_support") {
             steps.emplace_back(posSupportMaterial);
@@ -1229,68 +1201,34 @@ bool PrintObject::invalidate_state_by_config_options(
             	// See GH #1482 for details.
 	            steps.emplace_back(posSlice);
 	        }
-        } else if (
-        	   opt_key == "support_type"
-            || opt_key == "support_angle"
-            || opt_key == "support_on_build_plate_only"
-            || opt_key == "support_critical_regions_only"
-            || opt_key == "support_remove_small_overhang"
-            || opt_key == "enforce_support_layers"
-            || opt_key == "support_filament"
-            || opt_key == "support_line_width"
-            || opt_key == "support_interface_top_layers"
-            || opt_key == "support_interface_bottom_layers"
-            || opt_key == "support_interface_pattern"
-            || opt_key == "support_interface_loop_pattern"
-            || opt_key == "support_interface_filament"
-            || opt_key == "support_interface_not_for_body"
-            || opt_key == "support_interface_spacing"
-            || opt_key == "support_interface_min_area"
-            || opt_key == "support_bottom_interface_spacing" //BBS
-            || opt_key == "support_base_pattern"
-            || opt_key == "support_style"
-            || opt_key == "support_object_xy_distance"
-            || opt_key == "support_object_first_layer_gap"
-            || opt_key == "support_base_pattern_spacing"
-            || opt_key == "support_expansion"
-            //|| opt_key == "independent_support_layer_height" // BBS
-            || opt_key == "support_threshold_angle"
-            || opt_key == "support_threshold_overlap"
-            || opt_key == "support_ironing"
-            || opt_key == "support_ironing_pattern"
-            || opt_key == "support_ironing_flow"
-            || opt_key == "support_ironing_spacing"
-            || opt_key == "raft_expansion"
-            || opt_key == "raft_first_layer_density"
-            || opt_key == "raft_first_layer_expansion"
-            || opt_key == "bridge_no_support"
-            || opt_key == "max_bridge_length"
-            || opt_key == "initial_layer_line_width"
-            || opt_key == "tree_support_adaptive_layer_height"
-            || opt_key == "tree_support_auto_brim"
-            || opt_key == "tree_support_brim_width"
-            || opt_key == "tree_support_top_rate"
-            || opt_key == "tree_support_branch_distance"
-            || opt_key == "tree_support_branch_distance_organic"
-            || opt_key == "tree_support_tip_diameter"
-            || opt_key == "tree_support_branch_diameter"
-            || opt_key == "tree_support_branch_diameter_organic"
-            || opt_key == "tree_support_branch_diameter_angle"
-            || opt_key == "tree_support_branch_angle"
-            || opt_key == "tree_support_branch_angle_organic"
-            || opt_key == "tree_support_angle_slow"
-            || opt_key == "tree_support_wall_count"
-            || opt_key == "tree_support_transition_layers"
-            || opt_key == "support_transition_perimeter"
-            || opt_key == "support_transition_speed"
-            || opt_key == "support_transition_flow_ratio") {
+        } else if (opt_key == "support_type" || opt_key == "support_angle" || opt_key == "support_on_build_plate_only" ||
+                   opt_key == "support_critical_regions_only" || opt_key == "support_remove_small_overhang" ||
+                   opt_key == "enforce_support_layers" || opt_key == "support_filament" || opt_key == "support_line_width" ||
+                   opt_key == "support_interface_top_layers" || opt_key == "support_interface_bottom_layers" ||
+                   opt_key == "support_interface_pattern" || opt_key == "support_interface_loop_pattern" ||
+                   opt_key == "support_interface_filament" || opt_key == "support_interface_not_for_body" ||
+                   opt_key == "support_interface_spacing" || opt_key == "support_interface_min_area" ||
+                   opt_key == "support_bottom_interface_spacing" // BBS
+                   || opt_key == "support_base_pattern" || opt_key == "support_style" || opt_key == "support_object_xy_distance" ||
+                   opt_key == "support_object_first_layer_gap" || opt_key == "support_base_pattern_spacing" ||
+                   opt_key == "support_expansion"
+                   //|| opt_key == "independent_support_layer_height" // BBS
+                   || opt_key == "support_threshold_angle" || opt_key == "support_threshold_overlap" || opt_key == "support_ironing" ||
+                   opt_key == "support_ironing_pattern" || opt_key == "support_ironing_flow" || opt_key == "support_ironing_spacing" ||
+                   opt_key == "raft_expansion" || opt_key == "raft_first_layer_density" || opt_key == "raft_first_layer_expansion" ||
+                   opt_key == "bridge_no_support" || opt_key == "max_bridge_length" || opt_key == "initial_layer_line_width" ||
+                   opt_key == "tree_support_adaptive_layer_height" || opt_key == "tree_support_auto_brim" ||
+                   opt_key == "tree_support_brim_width" || opt_key == "tree_support_top_rate" ||
+                   opt_key == "tree_support_branch_distance" || opt_key == "tree_support_branch_distance_organic" ||
+                   opt_key == "tree_support_tip_diameter" || opt_key == "tree_support_branch_diameter" ||
+                   opt_key == "tree_support_branch_diameter_organic" || opt_key == "tree_support_branch_diameter_angle" ||
+                   opt_key == "tree_support_branch_angle" || opt_key == "tree_support_branch_angle_organic" ||
+                   opt_key == "tree_support_angle_slow" || opt_key == "tree_support_wall_count" ||
+                   opt_key == "tree_support_transition_layers" || opt_key == "support_transition_perimeter" ||
+                   opt_key == "support_transition_speed" || opt_key == "support_transition_flow_ratio") {
             steps.emplace_back(posSupportMaterial);
-        } else if (
-               opt_key == "bottom_shell_layers"
-            || opt_key == "top_shell_layers"
-            || opt_key == "bottom_color_penetration_layers"
-            || opt_key == "top_color_penetration_layers") {
-
+        } else if (opt_key == "bottom_shell_layers" || opt_key == "top_shell_layers" || opt_key == "bottom_color_penetration_layers" ||
+                   opt_key == "top_color_penetration_layers") {
             steps.emplace_back(posSlice);
 #if (0)
             const auto *old_shell_layers = old_config.option<ConfigOptionInt>(opt_key);
@@ -1309,55 +1247,27 @@ bool PrintObject::invalidate_state_by_config_options(
                 steps.emplace_back(posSlice);
             }
 #endif
-        } else if (
-               opt_key == "interface_shells"
-            || opt_key == "infill_multiline"
-            || opt_key == "infill_combination"
-            || opt_key == "infill_combination_max_layer_height"
-            || opt_key == "bottom_shell_thickness"
-            || opt_key == "top_shell_thickness"
-            || opt_key == "minimum_sparse_infill_area"
-            || opt_key == "sparse_infill_filament"
-            || opt_key == "solid_infill_filament"
-            || opt_key == "sparse_infill_line_width"
-            || opt_key == "skin_infill_line_width"
-            || opt_key == "skeleton_infill_line_width"
-            || opt_key == "infill_direction"
-            || opt_key == "solid_infill_direction"
-            || opt_key == "align_infill_direction_to_model" 
-            || opt_key == "extra_solid_infills"
-            || opt_key == "ensure_vertical_shell_thickness"
-            || opt_key == "bridge_angle"
-            || opt_key == "internal_bridge_angle" // ORCA: Internal bridge angle override
-            //BBS
-            || opt_key == "bridge_density"
-            || opt_key == "internal_bridge_density") {
+        } else if (opt_key == "interface_shells" || opt_key == "infill_multiline" || opt_key == "infill_combination" ||
+                   opt_key == "infill_combination_max_layer_height" || opt_key == "bottom_shell_thickness" ||
+                   opt_key == "top_shell_thickness" || opt_key == "minimum_sparse_infill_area" || opt_key == "sparse_infill_filament" ||
+                   opt_key == "solid_infill_filament" || opt_key == "sparse_infill_line_width" || opt_key == "skin_infill_line_width" ||
+                   opt_key == "skeleton_infill_line_width" || opt_key == "infill_direction" || opt_key == "solid_infill_direction" ||
+                   opt_key == "align_infill_direction_to_model" || opt_key == "extra_solid_infills" ||
+                   opt_key == "ensure_vertical_shell_thickness" || opt_key == "bridge_angle" ||
+                   opt_key == "internal_bridge_angle" // ORCA: Internal bridge angle override
+                   // BBS
+                   || opt_key == "bridge_density" || opt_key == "internal_bridge_density") {
             steps.emplace_back(posPrepareInfill);
-        } else if (
-               opt_key == "top_surface_pattern"
-            || opt_key == "bottom_surface_pattern"
-            || opt_key == "internal_solid_infill_pattern"
-            || opt_key == "external_fill_link_max_length"
-            || opt_key == "infill_anchor"
-            || opt_key == "infill_anchor_max"
-            || opt_key == "top_surface_line_width"
-            || opt_key == "top_surface_density"
-            || opt_key == "bottom_surface_density"
-            || opt_key == "initial_layer_line_width"
-            || opt_key == "small_area_infill_flow_compensation"
-            || opt_key == "lateral_lattice_angle_1"
-            || opt_key == "lateral_lattice_angle_2"
-            || opt_key == "infill_overhang_angle") {
+        } else if (opt_key == "top_surface_pattern" || opt_key == "bottom_surface_pattern" || opt_key == "internal_solid_infill_pattern" ||
+                   opt_key == "external_fill_link_max_length" || opt_key == "infill_anchor" || opt_key == "infill_anchor_max" ||
+                   opt_key == "top_surface_line_width" || opt_key == "top_surface_density" || opt_key == "bottom_surface_density" ||
+                   opt_key == "initial_layer_line_width" || opt_key == "small_area_infill_flow_compensation" ||
+                   opt_key == "lateral_lattice_angle_1" || opt_key == "lateral_lattice_angle_2" || opt_key == "infill_overhang_angle") {
             steps.emplace_back(posInfill);
-        } else if (opt_key == "sparse_infill_pattern"
-                   || opt_key == "symmetric_infill_y_axis"
-                   || opt_key == "infill_shift_step"
-                   || opt_key == "sparse_infill_rotate_template"
-                   || opt_key == "solid_infill_rotate_template"
-                   || opt_key == "skeleton_infill_density"
-                   || opt_key == "skin_infill_density"
-                   || opt_key == "infill_lock_depth"
-                   || opt_key == "skin_infill_depth") {
+        } else if (opt_key == "sparse_infill_pattern" || opt_key == "symmetric_infill_y_axis" || opt_key == "infill_shift_step" ||
+                   opt_key == "sparse_infill_rotate_template" || opt_key == "solid_infill_rotate_template" ||
+                   opt_key == "skeleton_infill_density" || opt_key == "skin_infill_density" || opt_key == "infill_lock_depth" ||
+                   opt_key == "skin_infill_depth") {
             steps.emplace_back(posPrepareInfill);
         } else if (opt_key == "sparse_infill_density") {
             // One likely wants to reslice only when switching between zero infill to simulate boolean difference (subtracting volumes),
@@ -1374,26 +1284,13 @@ bool PrintObject::invalidate_state_by_config_options(
             // This value is used for calculating perimeter - infill overlap, thus perimeters need to be recalculated.
             steps.emplace_back(posPerimeters);
             steps.emplace_back(posPrepareInfill);
-        } else if (
-               opt_key == "outer_wall_line_width"
-            || opt_key == "wall_filament"
-            || opt_key == "fuzzy_skin"
-            || opt_key == "fuzzy_skin_thickness"
-            || opt_key == "fuzzy_skin_point_distance"
-            || opt_key == "fuzzy_skin_first_layer"
-            || opt_key == "fuzzy_skin_mode"
-            || opt_key == "fuzzy_skin_noise_type"
-            || opt_key == "fuzzy_skin_scale"
-            || opt_key == "fuzzy_skin_octaves"
-            || opt_key == "fuzzy_skin_persistence"
-            || opt_key == "detect_overhang_wall"
-            || opt_key == "overhang_reverse"
-            || opt_key == "overhang_reverse_internal_only"
-            || opt_key == "overhang_reverse_threshold"
-            || opt_key == "wall_direction"
-            || opt_key == "enable_overhang_speed"
-            || opt_key == "detect_thin_wall"
-            || opt_key == "precise_outer_wall") {
+        } else if (opt_key == "outer_wall_line_width" || opt_key == "wall_filament" || opt_key == "fuzzy_skin" ||
+                   opt_key == "fuzzy_skin_thickness" || opt_key == "fuzzy_skin_point_distance" || opt_key == "fuzzy_skin_first_layer" ||
+                   opt_key == "fuzzy_skin_mode" || opt_key == "fuzzy_skin_noise_type" || opt_key == "fuzzy_skin_scale" ||
+                   opt_key == "fuzzy_skin_octaves" || opt_key == "fuzzy_skin_persistence" || opt_key == "detect_overhang_wall" ||
+                   opt_key == "overhang_reverse" || opt_key == "overhang_reverse_internal_only" ||
+                   opt_key == "overhang_reverse_threshold" || opt_key == "wall_direction" || opt_key == "enable_overhang_speed" ||
+                   opt_key == "detect_thin_wall" || opt_key == "precise_outer_wall") {
             steps.emplace_back(posPerimeters);
             steps.emplace_back(posSupportMaterial);
             // Whole-object Local-Z masks and tool assignments are built during
@@ -1408,15 +1305,9 @@ bool PrintObject::invalidate_state_by_config_options(
             	steps.emplace_back(posInfill);
 	            steps.emplace_back(posSupportMaterial);
 	        }
-        } else if (
-                opt_key == "wall_generator"
-            || opt_key == "wall_transition_length"
-            || opt_key == "wall_transition_filter_deviation"
-            || opt_key == "wall_transition_angle"
-            || opt_key == "wall_distribution_count"
-            || opt_key == "min_feature_size"
-            || opt_key == "min_length_factor"
-            || opt_key == "min_bead_width") {
+        } else if (opt_key == "wall_generator" || opt_key == "wall_transition_length" || opt_key == "wall_transition_filter_deviation" ||
+                   opt_key == "wall_transition_angle" || opt_key == "wall_distribution_count" || opt_key == "min_feature_size" ||
+                   opt_key == "min_length_factor" || opt_key == "min_bead_width") {
             steps.emplace_back(posSlice);
         } else if (
                opt_key == "seam_position"
@@ -1469,11 +1360,8 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "spiral_starting_flow_ratio"
             || opt_key == "spiral_finishing_flow_ratio") {
             invalidated |= m_print->invalidate_step(psGCodeExport);
-        } else if (
-               opt_key == "flush_into_infill"
-            || opt_key == "flush_into_objects"
-            || opt_key == "flush_into_support"
-            || opt_key == "dithering_local_z_infill") {
+        } else if (opt_key == "flush_into_infill" || opt_key == "flush_into_objects" || opt_key == "flush_into_support" ||
+                   opt_key == "dithering_local_z_infill") {
             invalidated |= m_print->invalidate_step(psWipeTower);
             invalidated |= m_print->invalidate_step(psGCodeExport);
         } else {
@@ -3938,13 +3826,13 @@ static t_layer_config_ranges layer_ranges_with_dithering(const t_layer_config_ra
     return out;
 }
 
-static bool mixed_state_heights(const MixedFilamentManager &mixed_mgr,
-                                size_t                     num_physical,
-                                size_t                     state_id,
-                                coordf_t                   lower_bound,
-                                coordf_t                   upper_bound,
-                                coordf_t                  &height_a,
-                                coordf_t                  &height_b)
+static bool mixed_state_heights(const MixedFilamentManager& mixed_mgr,
+                                size_t                      num_physical,
+                                size_t                      state_id,
+                                coordf_t                    nominal_layer_height,
+                                coordf_t                    min_sublayer_height,
+                                coordf_t&                   height_a,
+                                coordf_t&                   height_b)
 {
     if (state_id <= num_physical)
         return false;
@@ -3954,14 +3842,9 @@ static bool mixed_state_heights(const MixedFilamentManager &mixed_mgr,
     if (idx >= mixed.size())
         return false;
 
-    const int mix_b = std::clamp(mixed[idx].mix_b_percent, 0, 100);
-    const coordf_t pct_b = coordf_t(mix_b) / coordf_t(100.f);
-    const coordf_t pct_a = coordf_t(1.f) - pct_b;
-    const coordf_t lo = std::max<coordf_t>(0.01f, lower_bound);
-    const coordf_t hi = std::max<coordf_t>(lo, upper_bound);
-
-    height_a = std::max<coordf_t>(0.01f, lo + pct_a * (hi - lo));
-    height_b = std::max<coordf_t>(0.01f, lo + pct_b * (hi - lo));
+    const auto heights = mixed_filament_local_z_pair_heights(nominal_layer_height, min_sublayer_height, mixed[idx].mix_b_percent);
+    height_a           = coordf_t(heights.first);
+    height_b           = coordf_t(heights.second);
     return true;
 }
 
@@ -3996,15 +3879,13 @@ static void append_state_cadence_boundaries(std::vector<coordf_t> &boundaries,
     }
 }
 
-static t_layer_config_ranges layer_ranges_with_height_weighted_mixed(
-    const t_layer_config_ranges &base_ranges_map,
-    coordf_t                     object_height,
-    coordf_t                     default_layer_height,
-    const std::vector<MixedStateZRanges> &mixed_state_ranges,
-    const MixedFilamentManager  &mixed_mgr,
-    size_t                       num_physical,
-    coordf_t                     lower_bound,
-    coordf_t                     upper_bound)
+static t_layer_config_ranges layer_ranges_with_height_weighted_mixed(const t_layer_config_ranges&          base_ranges_map,
+                                                                     coordf_t                              object_height,
+                                                                     coordf_t                              default_layer_height,
+                                                                     const std::vector<MixedStateZRanges>& mixed_state_ranges,
+                                                                     const MixedFilamentManager&           mixed_mgr,
+                                                                     size_t                                num_physical,
+                                                                     coordf_t                              min_sublayer_height)
 {
     if (object_height <= EPSILON || mixed_state_ranges.empty())
         return base_ranges_map;
@@ -4016,7 +3897,8 @@ static t_layer_config_ranges layer_ranges_with_height_weighted_mixed(
     for (const MixedStateZRanges &state_ranges : mixed_state_ranges) {
         coordf_t height_a = 0.f;
         coordf_t height_b = 0.f;
-        if (!mixed_state_heights(mixed_mgr, num_physical, state_ranges.state_id, lower_bound, upper_bound, height_a, height_b))
+        if (!mixed_state_heights(mixed_mgr, num_physical, state_ranges.state_id, default_layer_height, min_sublayer_height, height_a,
+                                 height_b))
             continue;
         states.push_back({ state_ranges.state_id, height_a, height_b, state_ranges.ranges });
     }
@@ -4123,27 +4005,19 @@ bool PrintObject::update_layer_height_profile(const ModelObject          &model_
                 height_weighted_mode = (opt->value != 0);
         }
 
-        coordf_t mixed_lower = coordf_t(print_cfg.mixed_filament_height_lower_bound.value);
-        coordf_t mixed_upper = coordf_t(print_cfg.mixed_filament_height_upper_bound.value);
+        coordf_t min_sublayer_height = coordf_t(print_cfg.mixed_filament_height_lower_bound.value);
         if (full_cfg.has("mixed_filament_height_lower_bound"))
-            mixed_lower = coordf_t(full_cfg.opt_float("mixed_filament_height_lower_bound"));
-        if (full_cfg.has("mixed_filament_height_upper_bound"))
-            mixed_upper = coordf_t(full_cfg.opt_float("mixed_filament_height_upper_bound"));
-        mixed_lower = std::max<coordf_t>(0.01f, mixed_lower);
-        mixed_upper = std::max<coordf_t>(mixed_lower, mixed_upper);
+            min_sublayer_height = coordf_t(full_cfg.opt_float("mixed_filament_height_lower_bound"));
+        min_sublayer_height = std::max<coordf_t>(0.01f, min_sublayer_height);
 
         if (height_weighted_mode) {
             const coordf_t object_height = slicing_parameters.object_print_z_uncompensated_height();
             const auto mixed_states = collect_mixed_painted_z_ranges_by_state(*print_object, object_height);
             if (!mixed_states.empty()) {
-                mixed_gradient_ranges = layer_ranges_with_height_weighted_mixed(*ranges_to_use,
-                                                                                object_height,
-                                                                                slicing_parameters.layer_height,
-                                                                                mixed_states,
+                mixed_gradient_ranges = layer_ranges_with_height_weighted_mixed(*ranges_to_use, object_height,
+                                                                                slicing_parameters.layer_height, mixed_states,
                                                                                 print_object->print()->mixed_filament_manager(),
-                                                                                print_cfg.filament_colour.size(),
-                                                                                mixed_lower,
-                                                                                mixed_upper);
+                                                                                print_cfg.filament_colour.size(), min_sublayer_height);
                 ranges_to_use = &mixed_gradient_ranges;
             }
         }

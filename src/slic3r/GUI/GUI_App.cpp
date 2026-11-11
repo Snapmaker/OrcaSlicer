@@ -6999,26 +6999,29 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
         }
 
     if (printer_technology == ptFFF && preset_bundle != nullptr) {
-        static const t_config_option_keys mixed_project_option_keys = {
-            "mixed_filament_gradient_mode",
-            "mixed_filament_height_lower_bound",
-            "mixed_filament_height_upper_bound",
-            "mixed_filament_advanced_dithering",
-            "mixed_filament_component_bias_enabled",
-            "mixed_filament_surface_indentation",
-            "mixed_filament_region_collapse",
-            "mixed_color_layer_height_a",
-            "mixed_color_layer_height_b",
-            "dithering_z_step_size",
-            "dithering_local_z_mode",
-            "dithering_local_z_whole_objects",
-            "dithering_local_z_infill",
-            "dithering_local_z_direct_multicolor",
-            "dithering_step_painted_zones_only",
-            "mixed_filament_pointillism_pixel_size",
-            "mixed_filament_pointillism_line_gap",
-            "mixed_filament_definitions"
-        };
+        static const t_config_option_keys mixed_project_option_keys = {"mixed_filament_calibrated_colors",
+                                                                       "mixed_filament_gradient_mode",
+                                                                       "mixed_filament_height_lower_bound",
+                                                                       "mixed_filament_height_upper_bound",
+                                                                       "mixed_filament_advanced_dithering",
+                                                                       "mixed_filament_component_bias_enabled",
+                                                                       "mixed_filament_surface_indentation",
+                                                                       "mixed_filament_region_collapse",
+                                                                       "mixed_color_layer_height_a",
+                                                                       "mixed_color_layer_height_b",
+                                                                       "dithering_z_step_size",
+                                                                       "dithering_local_z_mode",
+                                                                       "dithering_local_z_whole_objects",
+                                                                       "dithering_local_z_infill",
+                                                                       "dithering_local_z_direct_multicolor",
+                                                                       "dithering_local_z_preserve_first_layer",
+                                                                       "dithering_local_z_independent_layer_height",
+                                                                       "dithering_local_z_gradient_layer_height",
+                                                                       "dithering_local_z_gradient_middle_filament_window",
+                                                                       "dithering_step_painted_zones_only",
+                                                                       "mixed_filament_pointillism_pixel_size",
+                                                                       "mixed_filament_pointillism_line_gap",
+                                                                       "mixed_filament_definitions"};
 
         // Keep the Mixed Filaments sidebar state in sync when presets are reloaded
         // programmatically (for example after New Project). These options are also

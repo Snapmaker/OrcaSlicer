@@ -69,6 +69,8 @@ struct LocalZInterval
     double base_height { 0.0 };
     double sublayer_height { 0.0 };
     bool   has_mixed_paint { false };
+    bool       independent_layer_height{false};
+    ExPolygons managed_masks;
     size_t first_sublayer_idx { 0 };
     size_t sublayer_count { 0 };
 };

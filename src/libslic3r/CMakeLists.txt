@@ -277,6 +277,10 @@ set(lisbslic3r_sources
     Layer.cpp
     Layer.hpp
     LayerRegion.cpp
+    LocalZ/LocalZClipDecision.cpp
+    LocalZ/LocalZClipDecision.hpp
+    LocalZ/LocalZClipper.cpp
+    LocalZ/LocalZClipper.hpp
     libslic3r.cpp
     libslic3r.h
     Line.cpp
@@ -292,11 +296,13 @@ set(lisbslic3r_sources
     MinAreaBoundingBox.hpp
     MinimumSpanningTree.cpp
     MinimumSpanningTree.hpp
+    MixedFilament/ChannelMap.hpp
     MixedFilament/Common.cpp
     MixedFilament/Definition.cpp
     MixedFilament/Display.cpp
     MixedFilament/Gradient.cpp
     MixedFilament/GradientPreview.cpp
+    MixedFilament/LayerTracker.hpp
     MixedFilament/LegacyRow.cpp
     MixedFilament/Manager.cpp
     MixedFilament/Pattern.cpp
@@ -372,12 +378,6 @@ set(lisbslic3r_sources
     Print.hpp
     PrintObject.cpp
     PrintObjectSlice.cpp
-    Slicing/PaintedLayerOutlineCache.hpp
-    Slicing/PreparationDiagnostics.hpp
-    LocalZ/LocalZClipDecision.cpp
-    LocalZ/LocalZClipDecision.hpp
-    LocalZ/LocalZClipper.cpp
-    LocalZ/LocalZClipper.hpp
     PrintRegion.cpp
     ProjectSchemaVersion.cpp
     ProjectSchemaVersion.hpp
@@ -392,6 +392,9 @@ set(lisbslic3r_sources
     ShortEdgeCollapse.hpp
     ShortestPath.cpp
     ShortestPath.hpp
+    Slicing/LayerGeometryBatch.hpp
+    Slicing/PaintedLayerOutlineCache.hpp
+    Slicing/PreparationDiagnostics.hpp
     SLA/AGGRaster.hpp
     SLA/BoostAdapter.hpp
     SLA/Clustering.cpp

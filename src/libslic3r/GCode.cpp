@@ -4407,8 +4407,7 @@ static inline void finalize_local_z_path_height_stats(LocalZPathHeightStats& sta
 static inline LocalZPathHeightStats collect_local_z_path_height_stats(const ExtrusionEntityCollection& source)
 {
     LocalZPathHeightStats stats;
-    ExtrusionEntityCollection flattened = source.flatten(false);
-    for (const ExtrusionEntity* entity : flattened.entities)
+    for (const ExtrusionEntity* entity : source.flatten_refs())
         if (entity != nullptr)
             collect_local_z_path_height_stats(*entity, stats);
     finalize_local_z_path_height_stats(stats);
@@ -4428,8 +4427,7 @@ static inline LocalZPathHeightStats collect_local_z_path_height_stats(const Extr
 static inline Polylines collect_local_z_polylines(const ExtrusionEntityCollection& source)
 {
     Polylines lines;
-    ExtrusionEntityCollection flattened = source.flatten(false);
-    for (const ExtrusionEntity* entity : flattened.entities) {
+    for (const ExtrusionEntity* entity : source.flatten_refs()) {
         if (const auto* path = dynamic_cast<const ExtrusionPath*>(entity)) {
             lines.emplace_back(path->polyline);
         } else if (const auto* multipath = dynamic_cast<const ExtrusionMultiPath*>(entity)) {
@@ -4464,8 +4462,7 @@ static std::unique_ptr<ExtrusionEntityCollection> clip_extrusion_collection_for_
     auto out = std::make_unique<ExtrusionEntityCollection>();
     out->no_sort = source.no_sort;
 
-    ExtrusionEntityCollection flattened = source.flatten(false);
-    for (const ExtrusionEntity* entity : flattened.entities) {
+    for (const ExtrusionEntity* entity : source.flatten_refs()) {
         if (const auto* path = dynamic_cast<const ExtrusionPath*>(entity)) {
             std::vector<ExtrusionPath> clipped_paths;
             append_clipped_path(*path, include_masks, exclude_masks, flow_height_override, clipped_paths);
@@ -4820,8 +4817,7 @@ static bool split_extrusion_collection_for_pointillism_paths(
         ++out_stats.segment_count;
     };
 
-    ExtrusionEntityCollection flattened = source.flatten(false);
-    for (const ExtrusionEntity* entity : flattened.entities) {
+    for (const ExtrusionEntity* entity : source.flatten_refs()) {
         auto split_one_path = [&](const ExtrusionPath& path) {
             Polylines pieces;
             split_polyline_by_length_for_pointillism(path.polyline, split_length_scaled, pieces);
@@ -4873,8 +4869,7 @@ static bool split_extrusion_collection_for_multi_perimeter_pattern(
         return false;
 
     size_t split_entities = 0;
-    ExtrusionEntityCollection flattened = source.flatten(false);
-    for (const ExtrusionEntity* entity : flattened.entities) {
+    for (const ExtrusionEntity* entity : source.flatten_refs()) {
         if (entity == nullptr)
             continue;
 

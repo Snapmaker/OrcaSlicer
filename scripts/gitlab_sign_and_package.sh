@@ -646,3 +646,82 @@ echo "  1. Open the DMG: open $FINAL_DMG_PATH"
 echo "  2. Drag $APP_NAME_EX.app into Applications"
 echo "  3. Launch the app from Applications"
 echo "=========================================="
+
+# Packaging is already finished. Missing symbols or a Sentry failure must not
+# change this script's exit status.
+archive_and_upload_dsym() {
+    local dsym_dir="$BUILD_DIR/Snapmaker_Orca/dSYM"
+    local zip_path="$BUILD_DIR/Snapmaker_Orca_dSYM.zip"
+    local bundle=""
+    local found=0
+    local cli=""
+    local sentry_env_rc=0
+
+    echo ""
+    echo "=========================================="
+    echo "dSYM archive and Sentry upload"
+    echo "=========================================="
+
+    if [ ! -d "$dsym_dir" ]; then
+        echo "warning: dSYM directory missing ($dsym_dir); skip zip and Sentry upload"
+        return 0
+    fi
+
+    for bundle in "$dsym_dir"/*.dSYM; do
+        if [ -d "$bundle" ]; then
+            found=1
+            break
+        fi
+    done
+    if [ "$found" -ne 1 ]; then
+        echo "warning: no .dSYM bundles in $dsym_dir; skip zip and Sentry upload"
+        return 0
+    fi
+
+    rm -f "$zip_path"
+    if ! ditto -c -k --keepParent "$dsym_dir" "$zip_path"; then
+        echo "warning: failed to zip dSYM; packaging result unchanged"
+        rm -f "$zip_path"
+        return 0
+    fi
+    echo "dSYM zip: $zip_path"
+
+    if [ -z "${SENTRY_AUTH_TOKEN:-}" ] && [ -f "${HOME}/.sentry-build.env" ]; then
+        set +e
+        set -a
+        # shellcheck disable=SC1091
+        . "${HOME}/.sentry-build.env"
+        sentry_env_rc=$?
+        set +a
+        set -e
+        if [ "$sentry_env_rc" -ne 0 ]; then
+            echo "warning: failed to read ${HOME}/.sentry-build.env; skip Sentry upload"
+            return 0
+        fi
+    fi
+
+    if [ -x "${SENTRY_CLI:-}" ]; then
+        cli="$SENTRY_CLI"
+    elif [ -x "${HOME}/bin/sentry-cli" ]; then
+        cli="${HOME}/bin/sentry-cli"
+    elif [ -x /usr/local/bin/sentry-cli ]; then
+        cli=/usr/local/bin/sentry-cli
+    fi
+    if [ -z "$cli" ]; then
+        echo "warning: sentry-cli not found; skip Sentry upload"
+        return 0
+    fi
+    if [ -z "${SENTRY_AUTH_TOKEN:-}" ] || [ -z "${SENTRY_ORG:-}" ] || [ -z "${SENTRY_PROJECT:-}" ]; then
+        echo "warning: Sentry org/project/token is incomplete; skip Sentry upload"
+        return 0
+    fi
+
+    if "$cli" upload-dif --org "$SENTRY_ORG" --project "$SENTRY_PROJECT" "$zip_path"; then
+        echo "Sentry dSYM upload succeeded"
+    else
+        echo "warning: Sentry dSYM upload failed; packaging result unchanged"
+    fi
+    return 0
+}
+
+archive_and_upload_dsym || echo "warning: dSYM step returned nonzero; packaging result unchanged"

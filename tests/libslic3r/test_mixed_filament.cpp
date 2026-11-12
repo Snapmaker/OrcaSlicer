@@ -814,7 +814,6 @@ TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[Mi
     config.set("dithering_local_z_whole_objects", true);
     config.set("dithering_local_z_infill", true);
     config.option<ConfigOptionFloats>("min_layer_height")->values.assign(4, 0.04);
-    config.set("mixed_filament_height_upper_bound", 0.16);
     config.set("enable_prime_tower", false);
     config.set("flush_into_infill", true);
 
@@ -864,21 +863,20 @@ TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height b
         double layer_height;
         int    mix_b_percent;
         double lower_bound;
-        double upper_bound;
         double preferred_a = 0.0;
         double preferred_b = 0.0;
     };
     const RatioCase cases[] = {
-        {0.20, 67, 0.04, 0.16}, {0.20, 33, 0.04, 0.16},
-        {0.24, 67, 0.04, 0.16}, {0.24, 33, 0.04, 0.16},
-        {0.20, 75, 0.04, 0.16}, {0.20, 25, 0.04, 0.16},
-        {0.24, 50, 0.04, 0.16}, {0.24, 51, 0.04, 0.16},
-        {0.24, 49, 0.04, 0.16}, {0.20, 95, 0.04, 0.16},
-        {0.24, 75, 0.04, 0.16}, {0.24, 75, 0.02, 0.16},
-        {0.20, 67, 0.02, 0.18}, {0.24, 67, 0.04, 0.16, 0.075, 0.090},
+        {0.20, 67, 0.04}, {0.20, 33, 0.04},
+        {0.24, 67, 0.04}, {0.24, 33, 0.04},
+        {0.20, 75, 0.04}, {0.20, 25, 0.04},
+        {0.24, 50, 0.04}, {0.24, 51, 0.04},
+        {0.24, 49, 0.04}, {0.20, 95, 0.04},
+        {0.24, 75, 0.04}, {0.24, 75, 0.02},
+        {0.20, 67, 0.02}, {0.24, 67, 0.04, 0.075, 0.090},
     };
     for (const RatioCase& test : cases) {
-        CAPTURE(test.layer_height, test.mix_b_percent, test.lower_bound, test.upper_bound);
+        CAPTURE(test.layer_height, test.mix_b_percent, test.lower_bound);
         const std::vector<std::string> colors = {"#FF00FF", "#FFFFFF", "#0000FF", "#FFFF00"};
         MixedFilamentManager           manager;
         manager.add_custom_filament(1, 2, test.mix_b_percent, colors);
@@ -915,7 +913,6 @@ TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height b
         config.set("dithering_local_z_infill", true);
         config.set("dithering_local_z_direct_multicolor", direct_multicolor);
         config.option<ConfigOptionFloats>("min_layer_height")->values.assign(4, test.lower_bound);
-        config.set("mixed_filament_height_upper_bound", test.upper_bound);
         config.set("mixed_color_layer_height_a", test.preferred_a);
         config.set("mixed_color_layer_height_b", test.preferred_b);
         config.set("enable_prime_tower", false);
@@ -979,8 +976,6 @@ TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height b
             preview.local_z_direct_multicolor        = true; // SML normalizes old disabled direct-multicolor settings.
             preview.local_z_independent_layer_height = true;
             preview.nominal_layer_height             = test.layer_height;
-            preview.mixed_lower_bound                = test.lower_bound;
-            preview.mixed_upper_bound                = test.upper_bound;
             CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(manager.mixed_filaments().front(), preview) == test.mix_b_percent);
         }
     }
@@ -2450,7 +2445,7 @@ TEST_CASE("Mixed filament apply_gradient_settings modes", "[MixedFilament][Gradi
     mgr.add_custom_filament(1, 2, 50, colors);
 
     // Mode 0: layer-cycle
-    mgr.apply_gradient_settings(0, 0.04f, 0.16f, false);
+    mgr.apply_gradient_settings(0, false);
     for (const auto &mf : mgr.mixed_filaments()) {
         if (!mf.custom) {
             CHECK(mf.ratio_a == 1);
@@ -2459,7 +2454,7 @@ TEST_CASE("Mixed filament apply_gradient_settings modes", "[MixedFilament][Gradi
     }
 
     // Mode 1: height-weighted
-    mgr.apply_gradient_settings(1, 0.04f, 0.16f, false);
+    mgr.apply_gradient_settings(1, false);
     for (const auto &mf : mgr.mixed_filaments()) {
         CHECK(mf.ratio_a >= 0);
         CHECK(mf.ratio_b >= 0);
@@ -2530,7 +2525,7 @@ TEST_CASE("Mixed filament resolve advanced dithering", "[MixedFilament][Resolve]
 {
     const std::vector<std::string> colors = {"#FF0000", "#00FF00"};
     MixedFilamentManager mgr;
-    mgr.apply_gradient_settings(0, 0.04f, 0.16f, true);
+    mgr.apply_gradient_settings(0, true);
     mgr.add_custom_filament(1, 2, 50, colors);
 
     const size_t num_physical = 2;
@@ -2805,8 +2800,6 @@ TEST_CASE("Mixed filament effective_local_z_preview_mix_b_percent", "[MixedFilam
 
     preview.local_z_mode = true;
     preview.nominal_layer_height = 0.2;
-    preview.mixed_lower_bound = 0.04;
-    preview.mixed_upper_bound = 0.16;
     preview.preferred_a_height = 0.0;
     preview.preferred_b_height = 0.0;
 
@@ -2899,8 +2892,6 @@ TEST_CASE("Mixed filament apparent pair percentages bias on vs off", "[MixedFila
     MixedFilamentPreviewSettings preview;
     preview.local_z_mode = false;
     preview.nominal_layer_height = 0.2;
-    preview.mixed_lower_bound = 0.04;
-    preview.mixed_upper_bound = 0.16;
 
     const std::vector<double> nozzles = {0.4, 0.6};
 

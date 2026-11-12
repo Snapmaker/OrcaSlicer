@@ -708,7 +708,6 @@ TEST_CASE("Gradient design previews retain full transitions at the minimum print
     MixedFilamentDisplayContext context;
     context.num_physical                           = 3;
     context.color_engine                           = MixedFilamentColorEngine::FullSpectrumKSPairResidual;
-    context.preview_settings.mixed_lower_bound     = .06;
     context.preview_settings.gradient_cycle_height = .12;
     bool calibrated                                = false;
     SECTION("Generic green white yellow from the reported preview") { context.physical_colors = {"#00FF00", "#FFFFFF", "#FFFF00"}; }
@@ -1017,8 +1016,14 @@ TEST_CASE("Simple mixes retain their pair cadence with inactive multi-color weig
     for (int generation = 0; generation < 3; ++generation) {
         CAPTURE(generation);
         MixedFilamentManager manager;
+        // Height-weighted cadence spans the nozzles' layer height limits.
+        MixedFilamentDisplayContext context;
+        context.num_physical = colors.size();
+        context.preview_settings.nozzle_min_layer_heights.assign(colors.size(), .04);
+        context.preview_settings.nozzle_max_layer_heights.assign(colors.size(), .16);
+        manager.set_display_context(context);
         manager.load_custom_entries(saved, colors);
-        manager.apply_gradient_settings(gradient_mode, .04f, .16f, false);
+        manager.apply_gradient_settings(gradient_mode, false);
         const auto& row = manager.mixed_filament_legacy_rows().front();
         REQUIRE(row.mix_b_percent == 50);
         for (int layer = 0; layer < 8; ++layer)
@@ -1036,7 +1041,7 @@ TEST_CASE("Old mixed recipe strings survive repeated typed manager save and load
         CAPTURE(generation);
         MixedFilamentManager manager;
         manager.load_custom_entries(saved, colors);
-        manager.apply_gradient_settings(0, .04f, .16f, false);
+        manager.apply_gradient_settings(0, false);
         check_legacy_compat_recipes(manager);
         CHECK(manager.resolve(14, 12, 0) == 1);
         CHECK(manager.resolve(14, 12, 1) == 2);
@@ -1123,7 +1128,7 @@ TEST_CASE("Legacy 3MF recipes and painted assignments survive refactored resaves
               mixed_filaments_to_legacy(mixed_filaments_from_project_config(config, colors.size())));
         MixedFilamentManager manager;
         manager.load_custom_entries(loaded_config.opt_string("mixed_filament_definitions"), colors);
-        manager.apply_gradient_settings(0, .04f, .16f, false);
+        manager.apply_gradient_settings(0, false);
         check_legacy_compat_recipes(manager);
         CHECK(manager.resolve(14, 12, 0) == 1);
         CHECK(manager.resolve(14, 12, 1) == 2);

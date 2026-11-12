@@ -308,8 +308,6 @@ bool mixed_filament_local_z_should_subdivide_layer(size_t layer_id, bool whole_o
 struct MixedFilamentPreviewSettings
 {
     double nominal_layer_height{0.2};
-    double mixed_lower_bound{0.06};
-    double mixed_upper_bound{0.16};
     double preferred_a_height{0.0};
     double preferred_b_height{0.0};
     bool   local_z_mode{false};
@@ -319,7 +317,13 @@ struct MixedFilamentPreviewSettings
     double gradient_cycle_height{0.20};
     double gradient_middle_window{0.03};
     std::vector<double> nozzle_min_layer_heights;
+    std::vector<double> nozzle_max_layer_heights;
 };
+
+// Thinnest sublayer that every listed nozzle can print; 0.07 mm when no nozzle is known.
+double mixed_filament_min_sublayer_height(const std::vector<double>& nozzle_min_layer_heights);
+// Thickest sublayer that every listed nozzle can print; 0.30 mm when no nozzle is known.
+double mixed_filament_max_sublayer_height(const std::vector<double>& nozzle_max_layer_heights);
 
 // Preview config precedence: project overrides, then print settings, then defaults.
 MixedFilamentPreviewSettings mixed_filament_preview_settings(const DynamicPrintConfig& project_config,
@@ -341,7 +345,6 @@ struct MixedFilamentDisplayContext
     std::vector<std::string>                physical_material_ids;
     std::optional<MixedFilamentColorEngine> color_engine;
     std::vector<std::vector<bool>>          compatible_filaments;
-    std::vector<double>                     max_layer_heights;
 };
 
 int  mixed_filament_effective_local_z_preview_mix_b_percent(const MixedFilament& mf, const MixedFilamentPreviewSettings& preview_settings);
@@ -486,7 +489,8 @@ public:
 
     // Recompute cadence ratios from gradient settings.
     // gradient_mode: 0 = Layer cycle weighted, 1 = Height weighted.
-    void apply_gradient_settings(int gradient_mode, float lower_bound, float upper_bound, bool advanced_dithering = false);
+    // Height weighted heights span the nozzle layer height limits held in the display context.
+    void apply_gradient_settings(int gradient_mode, bool advanced_dithering = false);
 
     // Persist mixed rows, including auto/deleted state, into the compact
     // project-settings string.
@@ -724,8 +728,8 @@ private:
     mutable bool                                m_legacy_cache_dirty            = true;
     mutable bool                                m_legacy_cache_mutable_borrowed = false;
     int                                         m_gradient_mode                 = 0;
-    float                                       m_height_lower_bound            = 0.04f;
-    float                                       m_height_upper_bound            = 0.16f;
+    float                                       m_height_lower_bound            = 0.07f;
+    float                                       m_height_upper_bound            = 0.30f;
     bool                                        m_advanced_dithering            = false;
     uint64_t                                    m_next_stable_id                = 1;
     MixedFilamentDisplayContext                 m_display_context;

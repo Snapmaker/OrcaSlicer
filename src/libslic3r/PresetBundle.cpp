@@ -6,6 +6,7 @@
 #include "libslic3r.h"
 #include "Utils.hpp"
 #include "Model.hpp"
+#include "Slicing.hpp"
 #include "format.hpp"
 #include "common_func/common_func.hpp"
 
@@ -219,8 +220,6 @@ static std::vector<std::string> s_project_options{
     "flush_multiplier",
     // Mixed filament / local-Z settings
     "mixed_filament_gradient_mode",
-    "mixed_filament_height_lower_bound",
-    "mixed_filament_height_upper_bound",
     "mixed_filament_advanced_dithering",
     "mixed_filament_component_bias_enabled",
     "mixed_filament_surface_indentation",
@@ -3959,20 +3958,23 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
                 this->project_config.set_key_value("filament_full_spectrum_material_id", new ConfigOptionStrings(physical_material_ids));
 
             int   gradient_mode = get_mixed_mode(false) ? 1 : 0;
-            float lower_bound = get_mixed_float("mixed_filament_height_lower_bound", 0.04f);
-            float upper_bound = get_mixed_float("mixed_filament_height_upper_bound", 0.16f);
             bool advanced_dithering = get_mixed_bool("mixed_filament_advanced_dithering", false);
             gradient_mode = std::clamp(gradient_mode, 0, 1);
-            lower_bound = std::max(0.01f, lower_bound);
-            upper_bound = std::max(lower_bound, upper_bound);
 
             MixedFilamentDisplayContext context;
             context.num_physical                       = num_filaments;
             context.physical_colors                    = color_opt->values;
             context.physical_tds                       = physical_tds;
             context.physical_material_ids              = physical_material_ids;
-            context.preview_settings.mixed_lower_bound = lower_bound;
-            context.preview_settings.mixed_upper_bound = upper_bound;
+            if (const DynamicPrintConfig& printer_config = this->printers.get_edited_preset().config;
+                printer_config.has("min_layer_height") && printer_config.has("max_layer_height") && printer_config.has("nozzle_diameter")) {
+                context.preview_settings.nozzle_min_layer_heights.resize(num_filaments);
+                context.preview_settings.nozzle_max_layer_heights.resize(num_filaments);
+                for (size_t i = 0; i < num_filaments; ++i) {
+                    context.preview_settings.nozzle_min_layer_heights[i] = Slicing::min_layer_height_from_nozzle(printer_config, int(i + 1));
+                    context.preview_settings.nozzle_max_layer_heights[i] = Slicing::max_layer_height_from_nozzle(printer_config, int(i + 1));
+                }
+            }
             context.component_bias_enabled             = get_mixed_bool("mixed_filament_component_bias_enabled", false);
             MixedFilamentManager::set_color_engine(MixedFilamentColorEngine::FullSpectrumKSPairResidual);
             context.color_engine = MixedFilamentColorEngine::FullSpectrumKSPairResidual;
@@ -3983,7 +3985,7 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
             this->mixed_filaments.load_custom_entries(
                 deleting_filament ? post_delete_mixed_defs : get_mixed_string("mixed_filament_definitions"),
                 color_opt->values);
-            this->mixed_filaments.apply_gradient_settings(gradient_mode, lower_bound, upper_bound, advanced_dithering);
+            this->mixed_filaments.apply_gradient_settings(gradient_mode, advanced_dithering);
 
             const std::string serialized = this->mixed_filaments.serialize_custom_entries();
             set_mixed_string("mixed_filament_definitions", serialized);

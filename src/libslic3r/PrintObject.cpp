@@ -1205,7 +1205,6 @@ bool PrintObject::invalidate_state_by_config_options(
             steps.emplace_back(posSlice);
         } else if (
                opt_key == "mixed_filament_gradient_mode"
-            || opt_key == "mixed_filament_height_lower_bound"
             || opt_key == "mixed_filament_advanced_dithering"
             || opt_key == "mixed_filament_component_bias_enabled"
             || opt_key == "mixed_filament_surface_indentation"
@@ -4126,15 +4125,14 @@ bool PrintObject::update_layer_height_profile(const ModelObject          &model_
                 height_weighted_mode = (opt->value != 0);
         }
 
-        coordf_t min_sublayer_height = coordf_t(print_cfg.mixed_filament_height_lower_bound.value);
-        if (full_cfg.has("mixed_filament_height_lower_bound"))
-            min_sublayer_height = coordf_t(full_cfg.opt_float("mixed_filament_height_lower_bound"));
-        min_sublayer_height = std::max<coordf_t>(0.01f, min_sublayer_height);
-
         if (height_weighted_mode) {
             const coordf_t object_height = slicing_parameters.object_print_z_uncompensated_height();
             const auto mixed_states = collect_mixed_painted_z_ranges_by_state(*print_object, object_height);
             if (!mixed_states.empty()) {
+                std::vector<double> nozzle_minimums(print_cfg.filament_colour.size());
+                for (size_t i = 0; i < nozzle_minimums.size(); ++i)
+                    nozzle_minimums[i] = Slicing::min_layer_height_from_nozzle(print_cfg, int(i + 1));
+                const coordf_t min_sublayer_height = coordf_t(mixed_filament_min_sublayer_height(nozzle_minimums));
                 mixed_gradient_ranges = layer_ranges_with_height_weighted_mixed(*ranges_to_use, object_height,
                                                                                 slicing_parameters.layer_height, mixed_states,
                                                                                 print_object->print()->mixed_filament_manager(),

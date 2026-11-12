@@ -1491,8 +1491,6 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              mixed_color_layer_height_a))
     ((ConfigOptionFloat,              mixed_color_layer_height_b))
     ((ConfigOptionBool,               mixed_filament_gradient_mode))
-    ((ConfigOptionFloat,              mixed_filament_height_lower_bound))
-    ((ConfigOptionFloat,              mixed_filament_height_upper_bound))
     ((ConfigOptionBool,               mixed_filament_advanced_dithering))
     ((ConfigOptionFloat,              mixed_filament_pointillism_pixel_size))
     ((ConfigOptionFloat,              mixed_filament_pointillism_line_gap))

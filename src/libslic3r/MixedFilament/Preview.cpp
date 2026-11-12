@@ -193,13 +193,30 @@ std::string blend_display_color_from_sequence(const std::vector<std::string>&   
 }} // namespace Slic3r::MixedFilamentInternal
 
 namespace Slic3r {
+double mixed_filament_min_sublayer_height(const std::vector<double>& nozzle_min_layer_heights)
+{
+    double minimum = 0.0;
+    for (const double height : nozzle_min_layer_heights)
+        minimum = std::max(minimum, height);
+    return minimum > EPSILON ? std::max(0.01, minimum) : 0.07;
+}
+
+double mixed_filament_max_sublayer_height(const std::vector<double>& nozzle_max_layer_heights)
+{
+    double maximum = 0.0;
+    for (const double height : nozzle_max_layer_heights)
+        if (height > EPSILON && (maximum <= EPSILON || height < maximum))
+            maximum = height;
+    return maximum > EPSILON ? maximum : 0.30;
+}
+
 std::vector<double> mixed_filament_preview_pass_heights(const MixedFilamentPreviewSettings& settings,
                                                         int                                 mix_b_percent,
                                                         int                                 max_sublayers_limit)
 {
     const double nominal_layer_height = settings.nominal_layer_height;
-    const double lower_bound          = settings.mixed_lower_bound;
-    const double upper_bound          = settings.mixed_upper_bound;
+    const double lower_bound          = mixed_filament_min_sublayer_height(settings.nozzle_min_layer_heights);
+    const double upper_bound          = mixed_filament_max_sublayer_height(settings.nozzle_max_layer_heights);
     const double preferred_a_height   = settings.preferred_a_height;
     const double preferred_b_height   = settings.preferred_b_height;
 
@@ -464,8 +481,6 @@ MixedFilamentPreviewSettings mixed_filament_preview_settings(const DynamicPrintC
         return fallback;
     };
 
-    settings.mixed_lower_bound  = std::max(0.01, double(get_mixed_float("mixed_filament_height_lower_bound", 0.06f)));
-    settings.mixed_upper_bound  = std::max(settings.mixed_lower_bound, double(get_mixed_float("mixed_filament_height_upper_bound", 0.16f)));
     settings.preferred_a_height = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_a", 0.f)));
     settings.preferred_b_height = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_b", 0.f)));
     settings.nominal_layer_height = 0.2;

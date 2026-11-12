@@ -2293,7 +2293,6 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     // override the edited print preset value from the Others panel.
     if (m_type == Preset::TYPE_PRINT &&
         (opt_key == "mixed_filament_gradient_mode" ||
-         opt_key == "mixed_filament_height_lower_bound" || opt_key == "mixed_filament_height_upper_bound" ||
          opt_key == "mixed_color_layer_height_a" || opt_key == "mixed_color_layer_height_b" ||
          opt_key == "mixed_filament_advanced_dithering" || opt_key == "mixed_filament_pointillism_pixel_size" ||
          opt_key == "mixed_filament_pointillism_line_gap" || opt_key == "mixed_filament_component_bias_enabled" ||

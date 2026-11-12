@@ -109,8 +109,8 @@ TEST_CASE("Local-Z publication rejects invalid interval references", "[LocalZ][L
 TEST_CASE("Mixed preview retains the GUI recipe calculation", "[MixedFilament][Preview]")
 {
     MixedFilamentPreviewSettings settings;
-    settings.mixed_lower_bound    = 0.04;
-    settings.mixed_upper_bound    = 0.16;
+    settings.nozzle_min_layer_heights = {0.04};
+    settings.nozzle_max_layer_heights = {0.16};
     settings.nominal_layer_height = 0.2;
     const auto passes             = mixed_filament_preview_pass_heights(settings, 25);
     REQUIRE(passes.size() == 2);
@@ -129,18 +129,18 @@ TEST_CASE("Mixed preview retains the GUI recipe calculation", "[MixedFilament][P
 TEST_CASE("Mixed preview settings preserve override precedence", "[MixedFilament][Preview]")
 {
     DynamicPrintConfig project, print;
-    print.set_key_value("mixed_filament_height_lower_bound", new ConfigOptionFloat(0.04));
+    print.set_key_value("dithering_local_z_gradient_layer_height", new ConfigOptionFloat(0.24));
     print.set_key_value("layer_height", new ConfigOptionFloat(0.12));
-    project.set_key_value("mixed_filament_height_lower_bound", new ConfigOptionFloat(0.07));
+    project.set_key_value("dithering_local_z_gradient_layer_height", new ConfigOptionFloat(0.30));
     project.set_key_value("dithering_local_z_mode", new ConfigOptionBool(true));
     auto settings = mixed_filament_preview_settings(project, &print);
-    CHECK(settings.mixed_lower_bound == Approx(0.07));
+    CHECK_THAT(settings.gradient_cycle_height, Catch::Matchers::WithinAbs(0.30, 1e-6));
     CHECK(settings.nominal_layer_height == Approx(0.12));
     CHECK(settings.local_z_independent_layer_height);
     project.set_key_value("mixed_color_layer_height_a", new ConfigOptionFloat(0.08));
     settings = mixed_filament_preview_settings(project, &print);
     CHECK_FALSE(settings.local_z_direct_multicolor);
-    CHECK(mixed_filament_preview_settings(DynamicPrintConfig{}, nullptr).mixed_upper_bound == Approx(0.16));
+    CHECK_THAT(mixed_filament_preview_settings(DynamicPrintConfig{}, nullptr).gradient_cycle_height, Catch::Matchers::WithinAbs(0.20, 1e-6));
 }
 
 TEST_CASE("Local-Z raft plans use actual layer IDs and preserve object Z", "[LocalZ][LocalZPlan]")
@@ -347,7 +347,7 @@ TEST_CASE("Local-Z terminal height fitting reserves or absorbs short remainders"
     CHECK(local_z_bounded_pass_height(0.06, 0.08, 0.04, 0.12, 0.10) == Approx(0.08));
 }
 
-TEST_CASE("Local-Z uses participating nozzle limits and ignores the legacy minimum", "[LocalZ][LocalZPlan][NozzleLimits]")
+TEST_CASE("Local-Z uses participating nozzle limits", "[LocalZ][LocalZPlan][NozzleLimits]")
 {
     LocalZTestSettings settings;
     bool               gradient = false;
@@ -360,40 +360,96 @@ TEST_CASE("Local-Z uses participating nozzle limits and ignores the legacy minim
     const std::vector<double> maximums{0.12, 0.28, 0.30, 0.30};
     config.option<ConfigOptionFloats>("min_layer_height")->values = minimums;
     config.option<ConfigOptionFloats>("max_layer_height")->values = maximums;
-    std::vector<std::pair<double, double>> baseline;
-    for (double legacy_minimum : {0.01, 0.16}) {
-        config.set("mixed_filament_height_lower_bound", legacy_minimum);
-        Print print;
-        print.set_status_silent();
-        print.apply(model, config);
-        auto* object = print.get_object(0);
-        object->slice();
-        double                                 cursor            = object->layers().front()->print_z;
-        bool                                   thin_first_nozzle = false;
-        std::vector<std::pair<double, double>> actual;
-        std::set<size_t>                       used;
-        for (const auto& pass : object->local_z_sublayer_plan()) {
-            if (!pass.split_interval)
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    auto* object = print.get_object(0);
+    object->slice();
+    double           cursor            = object->layers().front()->print_z;
+    bool             thin_first_nozzle = false;
+    std::set<size_t> used;
+    for (const auto& pass : object->local_z_sublayer_plan()) {
+        if (!pass.split_interval)
+            continue;
+        CHECK(pass.z_lo == Approx(cursor).margin(1e-6));
+        cursor = pass.z_hi;
+        for (size_t tool = 0; tool < pass.painted_masks_by_extruder.size(); ++tool) {
+            if (pass.painted_masks_by_extruder[tool].empty())
                 continue;
-            CHECK(pass.z_lo == Approx(cursor).margin(1e-6));
-            cursor = pass.z_hi;
-            actual.emplace_back(pass.print_z, pass.flow_height);
-            for (size_t tool = 0; tool < pass.painted_masks_by_extruder.size(); ++tool) {
-                if (pass.painted_masks_by_extruder[tool].empty())
-                    continue;
-                used.insert(tool);
-                CHECK(pass.flow_height >= minimums[tool] - 1e-6);
-                CHECK(pass.flow_height <= maximums[tool] + 1e-6);
-                thin_first_nozzle |= tool == 0 && pass.flow_height < minimums[1] - 1e-6;
-            }
+            used.insert(tool);
+            CHECK(pass.flow_height >= minimums[tool] - 1e-6);
+            CHECK(pass.flow_height <= maximums[tool] + 1e-6);
+            thin_first_nozzle |= tool == 0 && pass.flow_height < minimums[1] - 1e-6;
         }
-        CHECK(used == std::set<size_t>{0, 1});
-        CHECK(thin_first_nozzle);
-        CHECK(cursor == Approx(object->layers().back()->print_z).margin(1e-6));
-        if (baseline.empty())
-            baseline = actual;
-        else
-            CHECK(actual == baseline);
+    }
+    CHECK(used == std::set<size_t>{0, 1});
+    CHECK(thin_first_nozzle);
+    CHECK(cursor == Approx(object->layers().back()->print_z).margin(1e-6));
+}
+
+TEST_CASE("Saved settings with the removed mixed filament height bounds still load", "[MixedFilament][Config]")
+{
+    for (const char* removed : {"mixed_filament_height_lower_bound", "mixed_filament_height_upper_bound"}) {
+        CAPTURE(removed);
+        CHECK_FALSE(DynamicPrintConfig::full_print_config().has(removed));
+        t_config_option_key key   = removed;
+        std::string         value = "0.1";
+        PrintConfigDef::handle_legacy(key, value);
+        CHECK(key.empty());
+    }
+}
+
+namespace {
+
+// Tools that print the mixed region on the first layer, which Local-Z leaves unsplit.
+std::set<size_t> first_layer_tools(const DynamicPrintConfig& config)
+{
+    Model model;
+    add_mixed_cube(model);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    auto* object = print.get_object(0);
+    object->slice();
+    const size_t     first_layer = size_t(object->layers().front()->id());
+    size_t           passes      = 0;
+    std::set<size_t> tools;
+    for (const auto& pass : object->local_z_sublayer_plan()) {
+        if (pass.layer_id != first_layer)
+            continue;
+        ++passes;
+        CHECK_FALSE(pass.split_interval);
+        for (size_t tool = 0; tool < pass.painted_masks_by_extruder.size(); ++tool)
+            if (!pass.painted_masks_by_extruder[tool].empty())
+                tools.insert(tool);
+    }
+    CHECK(passes == 1);
+    return tools;
+}
+
+} // namespace
+
+TEST_CASE("Local-Z prints the preserved first layer with the majority component", "[LocalZ][LocalZPlan]")
+{
+    LocalZTestSettings settings;
+    // Share of the second component, and the tool expected on the first layer. A tie goes to the first component.
+    const std::vector<std::pair<int, size_t>> cases{{70, 1}, {50, 0}, {30, 0}};
+    for (const auto& test : cases) {
+        CAPTURE(test.first);
+        CHECK(first_layer_tools(local_z_config(false, test.first)) == std::set<size_t>{test.second});
+    }
+}
+
+TEST_CASE("Local-Z prints a gradient's preserved first layer with the component the gradient starts on", "[LocalZ][LocalZPlan]")
+{
+    LocalZTestSettings settings;
+    // Share of the first component at the bottom and top of the gradient, and the tool expected on the first layer.
+    const std::vector<std::pair<std::string, size_t>> cases{{"0.8000/0.2000", 0}, {"0.2000/0.8000", 1}};
+    for (const auto& test : cases) {
+        CAPTURE(test.first);
+        auto config = local_z_config(true);
+        config.set("mixed_filament_definitions", "1,2,1,1,50,0,g,w,m0,z2,xa0,xb0,d0,o0,u101,cm3,r1/" + test.first);
+        CHECK(first_layer_tools(config) == std::set<size_t>{test.second});
     }
 }
 
@@ -474,10 +530,7 @@ TEST_CASE("Layer-aligned mixed previews use nozzle minima", "[MixedFilament][Pre
     preview.local_z_mode                     = true;
     preview.local_z_independent_layer_height = false;
     preview.nozzle_min_layer_heights         = {0.04, 0.10};
-    for (double legacy_minimum : {0.01, 0.16}) {
-        preview.mixed_lower_bound = legacy_minimum;
-        CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(row, preview) == 50);
-    }
+    CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(row, preview) == 50);
     preview.nozzle_min_layer_heights = {0.04, 0.04};
     CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(row, preview) == 20);
 }

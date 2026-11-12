@@ -968,7 +968,7 @@ void MixedFilamentDialog::build_ui()
                     const auto                      sample   = sample_mixed_gradient_local_z(entry, context.num_physical, progress,
                                                                                              context.preview_settings.gradient_middle_window, nominal,
                                                                                              context.preview_settings.nozzle_min_layer_heights,
-                                                                                             context.max_layer_heights);
+                                                                                             context.preview_settings.nozzle_max_layer_heights);
                     std::pair<unsigned int, double> passes[] = {{sample.mix.component_b, sample.height_b},
                                                                 {sample.mix.component_a, sample.height_a}};
                     if (previous == sample.mix.component_b && sample.mix.component_a != sample.mix.component_b)

@@ -516,12 +516,13 @@ void MixedFilamentManager::clear_custom_entries()
     invalidate_legacy_cache();
 }
 
-void MixedFilamentManager::apply_gradient_settings(int gradient_mode, float lower_bound, float upper_bound, bool advanced_dithering)
+void MixedFilamentManager::apply_gradient_settings(int gradient_mode, bool advanced_dithering)
 {
     sync_mutable_legacy_cache_to_definitions(m_display_context.num_physical);
     m_gradient_mode      = gradient_mode != 0 ? 1 : 0;
-    m_height_lower_bound = std::max(.01f, lower_bound);
-    m_height_upper_bound = std::max(m_height_lower_bound, upper_bound);
+    m_height_lower_bound = float(mixed_filament_min_sublayer_height(m_display_context.preview_settings.nozzle_min_layer_heights));
+    m_height_upper_bound = std::max(m_height_lower_bound,
+                                    float(mixed_filament_max_sublayer_height(m_display_context.preview_settings.nozzle_max_layer_heights)));
     m_advanced_dithering = advanced_dithering;
     for (auto& definition : m_definitions) {
         if (definition.behavior.distribution == MixedFilamentDistributionMode::RetiredSameLayer)

@@ -472,7 +472,6 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "dithering_local_z_gradient_middle_filament_window"
             || opt_key == "dithering_step_painted_zones_only"
             || opt_key == "mixed_filament_gradient_mode"
-            || opt_key == "mixed_filament_height_lower_bound"
             || opt_key == "mixed_filament_advanced_dithering"
             || opt_key == "mixed_filament_component_bias_enabled"
             || opt_key == "mixed_filament_surface_indentation"

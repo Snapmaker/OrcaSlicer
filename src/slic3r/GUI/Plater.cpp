@@ -6392,12 +6392,6 @@ void Sidebar::update_color_mix_panel()
                 nozzle_diameters[i] = std::max(0.05, opt->get_at(unsigned(std::min(i, opt_count - 1))));
     }
 
-    float lower_bound = 0.04f, upper_bound = 0.16f;
-    if (preset_bundle->project_config.has("mixed_filament_height_lower_bound"))
-        lower_bound = std::max(0.01f, float(preset_bundle->project_config.opt_float("mixed_filament_height_lower_bound")));
-    if (preset_bundle->project_config.has("mixed_filament_height_upper_bound"))
-        upper_bound = std::max(lower_bound, float(preset_bundle->project_config.opt_float("mixed_filament_height_upper_bound")));
-
     bool local_z_mode = false;
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
         local_z_mode = opt->value;
@@ -7137,8 +7131,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     };
     const bool height_weighted_mode = get_mixed_mode(false);
     int   gradient_mode = height_weighted_mode ? 1 : 0;
-    double lower_bound   = std::max(0.01, get_mixed_float("mixed_filament_height_lower_bound", 0.06));
-    double upper_bound   = std::max(lower_bound, get_mixed_float("mixed_filament_height_upper_bound", 0.16));
     double preferred_local_z_a = std::max(0.0, get_mixed_float("mixed_color_layer_height_a", 0.0));
     double preferred_local_z_b = std::max(0.0, get_mixed_float("mixed_color_layer_height_b", 0.0));
     float nominal_layer_height = 0.2f;
@@ -7197,7 +7189,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         mixed_mgr.auto_generate(physical_colors);
         mixed_mgr.clear_custom_entries();
         mixed_mgr.load_custom_entries(mixed_definitions, physical_colors);
-        mixed_mgr.apply_gradient_settings(gradient_mode, lower_bound, upper_bound, advanced_dithering);
+        mixed_mgr.apply_gradient_settings(gradient_mode, advanced_dithering);
     }
 
     if (component_bias_enabled) {
@@ -7217,8 +7209,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     if (num_physical >= 2) {
         set_mixed_mode(height_weighted_mode);
         set_mixed_bool("mixed_filament_component_bias_enabled", component_bias_enabled);
-        set_mixed_float("mixed_filament_height_lower_bound", lower_bound);
-        set_mixed_float("mixed_filament_height_upper_bound", upper_bound);
         set_mixed_float("mixed_color_layer_height_a", preferred_local_z_a);
         set_mixed_float("mixed_color_layer_height_b", preferred_local_z_b);
         set_mixed_float("mixed_filament_pointillism_pixel_size", pointillism_pixel_size);
@@ -11051,8 +11041,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "dithering_local_z_gradient_layer_height",
                                     "dithering_local_z_gradient_middle_filament_window",
                                     "mixed_filament_gradient_mode",
-                                    "mixed_filament_height_lower_bound",
-                                    "mixed_filament_height_upper_bound",
                                     "mixed_filament_advanced_dithering",
                                     "mixed_filament_pointillism_pixel_size",
                                     "mixed_filament_pointillism_line_gap",

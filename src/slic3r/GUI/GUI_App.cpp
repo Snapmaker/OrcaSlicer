@@ -7001,8 +7001,6 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
     if (printer_technology == ptFFF && preset_bundle != nullptr) {
         static const t_config_option_keys mixed_project_option_keys = {
                                                                        "mixed_filament_gradient_mode",
-                                                                       "mixed_filament_height_lower_bound",
-                                                                       "mixed_filament_height_upper_bound",
                                                                        "mixed_filament_advanced_dithering",
                                                                        "mixed_filament_component_bias_enabled",
                                                                        "mixed_filament_surface_indentation",

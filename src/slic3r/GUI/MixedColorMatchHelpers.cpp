@@ -986,10 +986,10 @@ MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vect
     context.preview_settings       = mixed_filament_preview_settings(preset_bundle->project_config, print_cfg);
     const auto& printer_config     = preset_bundle->printers.get_edited_preset().config;
     context.preview_settings.nozzle_min_layer_heights.resize(context.num_physical);
-    context.max_layer_heights.resize(context.num_physical);
+    context.preview_settings.nozzle_max_layer_heights.resize(context.num_physical);
     for (size_t i = 0; i < context.num_physical; ++i) {
         context.preview_settings.nozzle_min_layer_heights[i] = Slicing::min_layer_height_from_nozzle(printer_config, int(i + 1));
-        context.max_layer_heights[i]                         = Slicing::max_layer_height_from_nozzle(printer_config, int(i + 1));
+        context.preview_settings.nozzle_max_layer_heights[i] = Slicing::max_layer_height_from_nozzle(printer_config, int(i + 1));
     }
     context.component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
     if (const auto* opt = preset_bundle->project_config.option<ConfigOptionFloats>("filament_transmission_distance"))

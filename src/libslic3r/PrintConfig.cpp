@@ -4663,27 +4663,6 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
-    def = this->add("mixed_filament_height_lower_bound", coFloat);
-    def->label    = L("Mixed filament lower height bound (legacy)");
-    def->category = L("Others");
-    def->tooltip  = L("Lower height bound retained for legacy mixed-filament layer patterns. "
-                       "Local-Z uses each printing nozzle's minimum and maximum layer heights from the printer settings.");
-    def->sidetext = "mm";
-    def->min = 0.01;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(0.06));
-
-    def = this->add("mixed_filament_height_upper_bound", coFloat);
-    def->label = L("Local-Z upper height bound");
-    def->category = L("Others");
-    def->tooltip = L("Upper bound used when Local-Z mixed-filament dithering chooses per-color sublayer heights.\n\n"
-                     "Larger values let Local-Z use thicker sublayers for a color when needed.\n\n"
-                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
-    def->sidetext = "mm";
-    def->min = 0.01;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(0.16));
-
     def = this->add("mixed_filament_advanced_dithering", coBool);
     def->label = L("Advanced dithering");
     def->category = L("Others");
@@ -8111,6 +8090,8 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         "smooth_coefficient", "overhang_totally_speed", "silent_mode",
         // Removed hidden toggle: calibrated color prediction is always used.
         "mixed_filament_calibrated_colors",
+        // Removed: the nozzles' minimum and maximum layer heights bound mixed sublayers.
+        "mixed_filament_height_lower_bound", "mixed_filament_height_upper_bound",
     };
 
     if (ignore.find(opt_key) != ignore.end()) {

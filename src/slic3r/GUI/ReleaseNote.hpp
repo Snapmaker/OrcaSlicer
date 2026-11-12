@@ -86,11 +86,13 @@ public:
     ~UpdateVersionDialog();
 
     wxWebView* CreateTipView(wxWindow* parent);
-    void OnLoaded(wxWebViewEvent& event);
     void OnTitleChanged(wxWebViewEvent& event);
     void OnError(wxWebViewEvent& event);
     bool ShowReleaseNote(std::string content);
     void RunScript(std::string script);
+    // Push the pending markdown into the webview once its shell page is ready;
+    // no-op when called before the page finished loading.
+    void inject_release_note();
     void on_dpi_changed(const wxRect& suggested_rect) override;
     void update_version_info(wxString release_note, wxString version);
     std::vector<std::string> splitWithStl(std::string str, std::string pattern);
@@ -111,8 +113,11 @@ public:
     CheckBox*         m_cb_stable_only;
     Button*           m_button_download;
     Button*           m_button_cancel;
-    std::string       url_line;
     bool              isModal = true;
+    // Markdown (UTF-8) to push into the webview; kept so a page reload re-injects it.
+    std::string       m_pending_release_note;
+    // Shell page reported its summary height (numeric document.title); safe to RunScript.
+    bool              m_webview_loaded{false};
 };
 
 class SecondaryCheckDialog : public DPIFrame

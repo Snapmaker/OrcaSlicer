@@ -3,10 +3,10 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-        <link rel="stylesheet" href="./main.css" />
+        <link rel="stylesheet" href="./releasenote.css" />
         <script src="./main.js"></script>
     </head>
-    <body style="background-color: #F8F8F8;">
+    <body>
         <div class="container markdown-body" id="contents"></div>
     </body>
     <script>
@@ -20,5 +20,86 @@
                 window.showMarkdown(encodeURIComponent(data));
             });
         }
+        // Feishu exports merged table cells as "value in first row, empty cells below";
+        // GFM has no merge concept, so rebuild real rowSpans from that pattern.
+        // Columns are processed right-to-left: removing a cell shifts the rest of its row
+        // left, which would corrupt the column index of every later column.
+        window.fixFeishuMerges = function () {
+            document.querySelectorAll('#contents table').forEach(function (table) {
+                var rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr'));
+                if (!rows.length) return;
+                var colCount = 0;
+                rows.forEach(function (row) { colCount = Math.max(colCount, row.children.length); });
+                for (var c = colCount - 1; c >= 0; c--) {
+                    var anchor = null;
+                    rows.forEach(function (row) {
+                        var cells = Array.prototype.slice.call(row.children);
+                        if (cells.length && cells.every(function (td) { return td.textContent.trim() === ''; })) return;
+                        var cell = row.children[c];
+                        if (!cell) return;
+                        if (cell.textContent.trim() === '' && anchor) {
+                            anchor.rowSpan = anchor.rowSpan + 1;
+                            cell.remove();
+                        } else if (cell.textContent.trim() !== '') {
+                            anchor = cell;
+                        }
+                    });
+                }
+            });
+        };
+        // GFM task lists ("- [ ] ", "- [x] ") are not part of markdown-it core. The
+        // bundle exposes window.usePlugin(md-it plugin), so register a small inline
+        // rule here instead of rebuilding main.js. This runs at page parse time,
+        // before the C++ side injects any markdown.
+        (function () {
+            if (!window.usePlugin) return;
+            window.usePlugin(function (md) {
+                md.core.ruler.after('inline', 'sm_task_lists', function (state) {
+                    var tokens = state.tokens;
+                    for (var i = 2; i < tokens.length; i++) {
+                        if (tokens[i].type !== 'inline') continue;
+                        var liOpen = tokens[i - 2], text = tokens[i].children[0];
+                        if (!liOpen || liOpen.type !== 'list_item_open') continue;
+                        if (!text || text.type !== 'text') continue;
+                        var m = /^\[([ xX])\] +/.exec(text.content);
+                        if (!m) continue;
+                        text.content = text.content.slice(m[0].length);
+                        var checkbox = new state.Token('sm_checkbox_input', 'input', 0);
+                        checkbox.attrs = [['type', 'checkbox'], ['disabled', 'true']];
+                        var done = m[1] !== ' ';
+                        if (done) checkbox.attrPush(['checked', 'true']);
+                        tokens[i].children.unshift(checkbox);
+                        liOpen.attrJoin('class', 'task-list-item');
+                        // Feishu marks completed todos with struck-through text; match
+                        // that so checked items read as done in the update dialog.
+                        if (done) liOpen.attrJoin('class', 'task-done');
+                    }
+                });
+                md.renderer.rules.sm_checkbox_input = function (tokens, idx) {
+                    return '<input type="checkbox" disabled' +
+                        (tokens[idx].attrGet('checked') ? ' checked' : '') + '>';
+                };
+            });
+        })();
+        // Embedded Feishu sheets export as empty <sheet> placeholders; html:true
+        // would make them silently disappear. Swap in a visible notice so authors
+        // catch them instead of shipping a note with missing tables.
+        window.fixFeishuSheetPlaceholder = function () {
+            document.querySelectorAll('#contents sheet').forEach(function (el) {
+                var notice = document.createElement('blockquote');
+                notice.className = 'unsupported-block';
+                notice.textContent = '⚠️ Embedded Feishu sheet cannot be rendered here; please use a native table in the release note.';
+                el.replaceWith(notice);
+            });
+        };
+        // Run the fix-ups automatically after every markdown render.
+        (function () {
+            var original = window.showMarkdown;
+            window.showMarkdown = function (data, keepImages) {
+                if (original) original(data, keepImages);
+                window.fixFeishuMerges();
+                window.fixFeishuSheetPlaceholder();
+            };
+        })();
     </script>
 </html>

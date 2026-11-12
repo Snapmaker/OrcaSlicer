@@ -1,4 +1,5 @@
 #include "ReleaseNote.hpp"
+
 #include "I18N.hpp"
 
 #include "libslic3r/Utils.hpp"
@@ -285,16 +286,19 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
     m_vebview_release_note->SetSize(wxSize(FromDIP(560), FromDIP(430)));
     m_vebview_release_note->SetMinSize(wxSize(FromDIP(560), FromDIP(430)));
     //m_vebview_release_note->SetMaxSize(wxSize(FromDIP(560), FromDIP(430)));
-    m_vebview_release_note->Bind(wxEVT_WEBVIEW_NAVIGATING,[=](wxWebViewEvent& event){
-        static bool load_url_first = false;
-        if(load_url_first){
-            // Orca: not used in Snapmaker Orca
-            // wxLaunchDefaultBrowser(url_line);
-            event.Veto();
-        }else{
-            load_url_first = true;
+    m_vebview_release_note->Bind(wxEVT_WEBVIEW_NAVIGATING,[this](wxWebViewEvent& event){
+        const wxString nav_url = event.GetURL();
+        if (nav_url.StartsWith("file://")) {
+            // The local shell page (releasenote.html) is the only in-dialog navigation;
+            // backends may also emit an initial about:blank, which falls through to Veto.
+            return;
         }
-        
+        if (nav_url.StartsWith("http://") || nav_url.StartsWith("https://")) {
+            // Links clicked inside the note open in the external browser (same as
+            // upstream OrcaSlicer) and never navigate inside the update dialog.
+            wxLaunchDefaultBrowser(nav_url);
+        }
+        event.Veto();
     });
 
 	fs::path ph(data_dir());
@@ -427,20 +431,23 @@ UpdateVersionDialog::~UpdateVersionDialog() {}
 wxWebView* UpdateVersionDialog::CreateTipView(wxWindow* parent)
 {
 	wxWebView* tipView = WebView::CreateWebView(parent, "");
-	tipView->Bind(wxEVT_WEBVIEW_LOADED, &UpdateVersionDialog::OnLoaded, this);
-	tipView->Bind(wxEVT_WEBVIEW_NAVIGATED, &UpdateVersionDialog::OnTitleChanged, this);
+	tipView->Bind(wxEVT_WEBVIEW_TITLE_CHANGED, &UpdateVersionDialog::OnTitleChanged, this);
 	tipView->Bind(wxEVT_WEBVIEW_ERROR, &UpdateVersionDialog::OnError, this);
 	return tipView;
 }
 
-void UpdateVersionDialog::OnLoaded(wxWebViewEvent& event)
-{
-    event.Skip();
-}
-
 void UpdateVersionDialog::OnTitleChanged(wxWebViewEvent& event)
 {
-    //ShowReleaseNote();
+    // The shell page reports its rendered height through document.title. Only a numeric
+    // title proves its DOM (and #contents) exists; the initial file-name title can arrive
+    // before the body is parsed, and injecting then would make showMarkdown() throw.
+    // wxEVT_WEBVIEW_LOADED is not used: on the Edge backend it can fire before the page
+    // body exists as well.
+    double height = 0;
+    if (event.GetString().ToDouble(&height)) {
+        m_webview_loaded = true;
+        inject_release_note();
+    }
     event.Skip();
 }
 void UpdateVersionDialog::OnError(wxWebViewEvent& event)
@@ -467,8 +474,9 @@ static std::string url_encode(const std::string& value) {
 	for (std::string::const_iterator i = value.begin(), n = value.end(); i != n; ++i) {
 		std::string::value_type c = (*i);
 
-		// Keep alphanumeric and other accepted characters intact
-		if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+		// Keep alphanumeric and other accepted characters intact. The cast avoids
+		// passing a negative value for UTF-8 lead bytes to isalnum() (undefined behavior).
+		if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~') {
 			escaped << c;
 			continue;
 		}
@@ -483,15 +491,26 @@ static std::string url_encode(const std::string& value) {
 
 bool UpdateVersionDialog::ShowReleaseNote(std::string content)
 {
-	auto script = "window.showMarkdown('" + url_encode(content) + "', true);";
-    RunScript(script);
+	// keepImages=true: inline images of the release note are rendered inside the dialog.
+	// fixFeishuMerges runs from the showMarkdown wrapper installed by releasenote.html.
+	RunScript("window.showMarkdown('" + url_encode(content) + "', true);");
     return true;
 }
 
 void UpdateVersionDialog::RunScript(std::string script)
 {
     WebView::RunScript(m_vebview_release_note, script);
-    script.clear();
+}
+
+void UpdateVersionDialog::inject_release_note()
+{
+    if (!m_webview_loaded || m_pending_release_note.empty())
+        return;
+    // Inject once: the page updates document.title again when the rendered height changes,
+    // which fires further title events; those must not re-run the render.
+    std::string note;
+    note.swap(m_pending_release_note);
+    ShowReleaseNote(note);
 }
 
 void UpdateVersionDialog::on_dpi_changed(const wxRect &suggested_rect) {
@@ -521,35 +540,26 @@ std::vector<std::string> UpdateVersionDialog::splitWithStl(std::string str,std::
 
 void UpdateVersionDialog::update_version_info(wxString release_note, wxString version)
 {
-    //bbs check whether the web display is used
-    bool use_web_link = false;
-    url_line          = "";
+    // Rich-text rendering with inline images (OrcaSlicer style): switch to the webview
+    // page and inject the markdown there. The plain-text page stays in the simplebook
+    // but is no longer used. Buttons are untouched.
+    m_pending_release_note = release_note.ToUTF8().data();
 
-    if (use_web_link) {
-        m_brand->Hide();
-        m_text_up_info->Hide();
-        m_simplebook_release_note->SetSelection(1);
-        m_vebview_release_note->LoadURL(from_u8(url_line));
-    }
-    else {
-        m_simplebook_release_note->SetMaxSize(wxSize(FromDIP(560), FromDIP(430)));
-        m_simplebook_release_note->SetSelection(0);
-        m_text_up_info->SetLabel(wxString::Format(_L("Click to download new version in default browser: %s"), version));
-        wxBoxSizer* sizer_text_release_note = new wxBoxSizer(wxVERTICAL);
-        auto        m_staticText_release_note = new ::Label(m_scrollwindows_release_note, release_note, LB_AUTO_WRAP);
-        m_staticText_release_note->SetMinSize(wxSize(FromDIP(560), -1));
-        m_staticText_release_note->SetMaxSize(wxSize(FromDIP(560), -1));
-        sizer_text_release_note->Add(m_staticText_release_note, 0, wxALL, 5);
-        m_scrollwindows_release_note->SetSizer(sizer_text_release_note);
-        m_scrollwindows_release_note->Layout();
-        m_scrollwindows_release_note->Fit();
-        SetMinSize(GetSize());
-        SetMaxSize(GetSize());
-    }
+    m_simplebook_release_note->SetMaxSize(wxSize(FromDIP(560), FromDIP(430)));
+    m_simplebook_release_note->SetSelection(1);
+    m_text_up_info->SetLabel(wxString::Format(_L("Click to download new version in default browser: %s"), version));
+    // If the shell page is already ready (title event seen), inject right away;
+    // otherwise OnTitleChanged catches up once the page reports it is alive.
+    inject_release_note();
 
     wxGetApp().UpdateDlgDarkUI(this);
     Layout();
     Fit();
+    // Pin the frame at its settled size (min == max), as the old plain-text version
+    // did: the dialog is not user-resizable, and the note area stays 560x430 with
+    // scrolling inside the webview page.
+    SetMinSize(GetSize());
+    SetMaxSize(GetSize());
 }
 
 SecondaryCheckDialog::SecondaryCheckDialog(wxWindow* parent, wxWindowID id, const wxString& title, enum ButtonStyle btn_style, const wxPoint& pos, const wxSize& size, long style, bool not_show_again_check)

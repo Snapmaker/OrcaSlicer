@@ -18267,6 +18267,38 @@ void Plater::add_model(bool imperial_units, std::string fname)
         paths.emplace_back(fname);
     }
 
+    if (fname.empty()) {
+        const auto first_3mf = std::find_if(paths.begin(), paths.end(), [](const fs::path& path) {
+            return boost::algorithm::iends_with(path.filename().string(), ".3mf");
+        });
+        if (first_3mf != paths.end()) {
+            const wxString project_filename_before = get_project_filename(".3mf");
+            const size_t object_count_before = model().objects.size();
+            if (!open_3mf_file(*first_3mf))
+                return;
+
+            const bool opened_as_project = get_project_filename(".3mf") != project_filename_before;
+            const size_t object_count_after_3mf = model().objects.size();
+            std::vector<fs::path> remaining_paths;
+            remaining_paths.reserve(paths.size() - 1);
+            remaining_paths.insert(remaining_paths.end(), paths.begin(), first_3mf);
+            remaining_paths.insert(remaining_paths.end(), first_3mf + 1, paths.end());
+            if (!remaining_paths.empty())
+                load_files(remaining_paths, LoadStrategy::LoadModel);
+
+            const bool loaded_objects = !opened_as_project &&
+                (model().objects.size() > object_count_after_3mf || object_count_after_3mf > object_count_before);
+            if (loaded_objects && get_project_name() == _L("Untitled") && !paths.empty()) {
+                boost::filesystem::path full_path(paths[0].string());
+                p->set_project_name(from_u8(full_path.stem().string()));
+            }
+            if (loaded_objects)
+                wxGetApp().mainframe->update_title();
+
+            return;
+        }
+    }
+
     std::string snapshot_label;
     assert(! paths.empty());
     if (paths.size() == 1) {
@@ -19683,7 +19715,7 @@ ProjectDropDialog::ProjectDropDialog(const std::string &filename)
                 wxDefaultPosition,
                 wxDefaultSize,
                 wxCAPTION | wxCLOSE_BOX)
-    , m_action(2)
+    , m_action(static_cast<int>(LoadType::OpenProject))
 {
     // def setting
     SetBackgroundColour(m_def_color);

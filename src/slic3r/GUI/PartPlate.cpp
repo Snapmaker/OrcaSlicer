@@ -1224,12 +1224,16 @@ void PartPlate::render_grid(bool bottom) {
 		else
             color = m_partplate_list->m_is_dark ? LINE_TOP_DARK_COLOR : LINE_TOP_COLOR;
 	}
+    // Fix: like the plate background, grid lines do not write depth; at low view angles their line depth
+    // came closer than the soft shadow receiver drawn over the plate and cut holes into the shadow
+    glsafe(::glDepthMask(GL_FALSE));
     m_gridlines.set_color(color);
     m_gridlines.render();
 
 	glsafe(::glLineWidth(2.0f * m_scale_factor));
     m_gridlines_bolder.set_color(color);
     m_gridlines_bolder.render();
+    glsafe(::glDepthMask(GL_TRUE));
 }
 
 void PartPlate::render_height_limit(PartPlate::HeightLimitMode mode)
@@ -1406,7 +1410,8 @@ void PartPlate::ShowRightIconTooltip(int hoverId)
         show_tooltip(is_locked() ? _u8L("Unlock current plate") : _u8L("Lock current plate"));
         break;
     case 5:
-        show_tooltip(_u8L("Customize current plate"));
+        if (m_partplate_list != nullptr && m_partplate_list->render_plate_settings)
+            show_tooltip(_u8L("Customize current plate"));
         break;
     case 6:
         show_tooltip(_u8L("Edit current plate name"));
@@ -1470,29 +1475,23 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
             if (useIconAtlas) {
                 const RightIconBatchKey key = BuildRightIconBatchKey(hover_id, hasPlateSettings);
                 rightIconsRendered = RenderRightIconBatch(key);
-                if (rightIconsRendered) {
-                    ShowRightIconTooltip(hover_id);
-                }
             }
 
             if (!rightIconsRendered) {
                 if (hover_id == 1) {
                     render_icon_texture(m_del_icon.model, m_partplate_list->m_del_hovered_texture);
-                    show_tooltip(_u8L("Remove current plate (if not last one)"));
                 }
                 else
                     render_icon_texture(m_del_icon.model, m_partplate_list->m_del_texture);
 
                 if (hover_id == 2) {
                     render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_hovered_texture);
-                    show_tooltip(_u8L("Auto orient objects on current plate"));
                 }
                 else
                     render_icon_texture(m_orient_icon.model, m_partplate_list->m_orient_texture);
 
                 if (hover_id == 3) {
                     render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_hovered_texture);
-                    show_tooltip(_u8L("Arrange objects on current plate"));
                 }
                 else
                     render_icon_texture(m_arrange_icon.model, m_partplate_list->m_arrange_texture);
@@ -1500,11 +1499,9 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
                 if (hover_id == 4) {
                     if (this->is_locked()) {
                         render_icon_texture(m_lock_icon.model, m_partplate_list->m_locked_hovered_texture);
-                        show_tooltip(_u8L("Unlock current plate"));
                     }
                     else {
                         render_icon_texture(m_lock_icon.model, m_partplate_list->m_lockopen_hovered_texture);
-                        show_tooltip(_u8L("Lock current plate"));
                     }
                 } else {
                     if (this->is_locked())
@@ -1516,14 +1513,12 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
                 if (hover_id == 6) {
                     render_icon_texture(m_plate_name_edit_icon.model,
                                         m_partplate_list->m_plate_name_edit_hovered_texture);
-                    show_tooltip(_u8L("Edit current plate name"));
                 }
                 else
                     render_icon_texture(m_plate_name_edit_icon.model, m_partplate_list->m_plate_name_edit_texture);
 
                 if (hover_id == 7) {
                     render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_hovered_texture);
-                    show_tooltip(_u8L("Move plate to the front"));
                 } else
                     render_icon_texture(m_move_front_icon.model, m_partplate_list->m_move_front_texture);
 
@@ -1535,8 +1530,6 @@ void PartPlate::render_icons(bool bottom, bool only_name, int hover_id)
                         else
                             render_icon_texture(m_plate_settings_icon.model,
                                                 m_partplate_list->m_plate_settings_changed_hovered_texture);
-
-                        show_tooltip(_u8L("Customize current plate"));
                     } else {
                         if (!hasPlateSettings)
                             render_icon_texture(m_plate_settings_icon.model,
@@ -2222,7 +2215,7 @@ Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, con
     double filament_change_volume = 0.5;
     {
         std::vector<double> filament_change_volumes;
-        auto filament_change_opt = m_print->config().option<ConfigOptionFloats>("filament_multitool_ramming_volume");
+        auto filament_change_opt = config.option<ConfigOptionFloats>("filament_multitool_ramming_volume");
         if (filament_change_opt) {
             filament_change_volumes = filament_change_opt->values;
         }
@@ -2231,12 +2224,15 @@ Vec3d PartPlate::estimate_wipe_tower_size(const DynamicPrintConfig & config, con
         }
     }
     double volume = wipe_volume * plate_extruder_size + filament_change_volume * (plate_extruder_size - 1);
-    
+
     if (use_rib_wall) {
         depth = std::sqrt(volume / layer_height * extra_spacing);
         if (need_wipe_tower || plate_extruder_size > 1) {
             rib_width = std::min(rib_width, depth / 2);
-            depth = rib_width + std::max(depth + m_print->config().wipe_tower_extra_rib_length.value, depth);
+            double extra_rib_length = 0.;
+            if (auto* extra_rib_length_opt = config.option<ConfigOptionFloat>("wipe_tower_extra_rib_length"))
+                extra_rib_length = extra_rib_length_opt->value;
+            depth = rib_width + std::max(depth + extra_rib_length, depth);
             wipe_tower_size(0) = wipe_tower_size(1) = depth;
         }
     }
@@ -2886,9 +2882,12 @@ void PartPlate::update_object_index(int obj_idx_removed, int obj_idx_max)
 	std::set<std::pair<int, int>> temp_set;
 	std::set<std::pair<int, int>>::iterator it;
 	//update the obj_to_instance_set
+	//the caller must have removed every instance of obj_idx_removed beforehand, so only
+	//objects AFTER it shift back (a leftover == entry would be mis-attributed to the
+	//previous object and corrupted into a negative index when obj_idx_removed is 0)
 	for (it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); ++it)
 	{
-		if (it->first >= obj_idx_removed)
+		if (it->first > obj_idx_removed)
 			temp_set.insert(std::pair(it->first-1, it->second));
 		else
 			temp_set.insert(std::pair(it->first, it->second));
@@ -2900,7 +2899,7 @@ void PartPlate::update_object_index(int obj_idx_removed, int obj_idx_max)
 	temp_set.clear();
 	for (it = instance_outside_set.begin(); it != instance_outside_set.end(); ++it)
 	{
-		if (it->first >= obj_idx_removed)
+		if (it->first > obj_idx_removed)
 			temp_set.insert(std::pair(it->first - 1, it->second));
 		else
 			temp_set.insert(std::pair(it->first, it->second));
@@ -2908,6 +2907,26 @@ void PartPlate::update_object_index(int obj_idx_removed, int obj_idx_max)
 	instance_outside_set.clear();
 	instance_outside_set = temp_set;
 
+}
+
+void PartPlate::remove_object(int obj_id)
+{
+	//remove every instance registration of obj_id from this plate: an object may
+	//have several instances spread over this plate (and over different plates)
+	for (auto it = obj_to_instance_set.begin(); it != obj_to_instance_set.end(); )
+	{
+		if (it->first == obj_id)
+			it = obj_to_instance_set.erase(it);
+		else
+			++it;
+	}
+	for (auto it = instance_outside_set.begin(); it != instance_outside_set.end(); )
+	{
+		if (it->first == obj_id)
+			it = instance_outside_set.erase(it);
+		else
+			++it;
+	}
 }
 
 void PartPlate::set_vase_mode_related_object_config(int obj_id) {
@@ -3778,7 +3797,8 @@ void PartPlateList::init()
 	assert(first_plate != NULL);
 	m_plate_list.push_back(first_plate);
 
-	m_print_index = 0;
+    // reset(false) keeps old prints (undo path), so never restart from an occupied index
+    m_print_index = NextFreePrintIndex();
 	if (printer_technology == ptFFF)
 	{
 		Print* print = new Print();
@@ -3803,6 +3823,21 @@ void PartPlateList::init()
 	unprintable_plate.set_index(1);
 
 	m_intialized = true;
+}
+
+int PartPlateList::NextFreePrintIndex() const
+{
+    int freeIndex = 0;
+    // std::map keys are sorted, rbegin() is the largest used index
+    if (!m_print_list.empty())
+    {
+        freeIndex = std::max(freeIndex, m_print_list.rbegin()->first + 1);
+    }
+    if (!m_gcode_result_list.empty())
+    {
+        freeIndex = std::max(freeIndex, m_gcode_result_list.rbegin()->first + 1);
+    }
+    return freeIndex;
 }
 
 //compute the origin for printable plate with index i
@@ -4180,7 +4215,6 @@ void PartPlateList::reset(bool do_init)
         init();
         m_plate_list[0]->set_filament_count(m_filament_count);
 	}
-		init();
 
 	return;
 }
@@ -4236,6 +4270,12 @@ int PartPlateList::create_plate(bool adjust_position)
 	{
 		Print* print = new Print();
 		GCodeResult* gcode = new GCodeResult();
+        // An occupied index would bind a print not owned by m_print_list
+        if (m_print_list.count(m_print_index) > 0 || m_gcode_result_list.count(m_print_index) > 0)
+        {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": print index %1% already in use") % m_print_index;
+            m_print_index = NextFreePrintIndex();
+        }
 		m_print_list.emplace(m_print_index, print);
 		m_gcode_result_list.emplace(m_print_index, gcode);
 		plate->set_print(print, gcode, m_print_index);
@@ -5002,6 +5042,24 @@ int PartPlateList::notify_instance_removed(int obj_id, int instance_id)
 	}
 
 	if (instance_id == -1) {
+		//the whole object is gone: drop every instance registration of obj_id (an
+		//object may have instances registered on different plates, and instance_id
+		//-1 only removed the (obj_id, 0) pair above), invalidate the plates, then
+		//shift back the registration indices of all objects after obj_id
+		for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
+		{
+			PartPlate* plate = m_plate_list[i];
+			assert(plate != NULL);
+
+			plate->remove_object(obj_id);
+			plate->update_slice_result_valid_state();
+			plate->thumbnail_data.reset();
+			plate->no_light_thumbnail_data.reset();
+			plate->top_thumbnail_data.reset();
+			plate->pick_thumbnail_data.reset();
+		}
+		unprintable_plate.remove_object(obj_id);
+
 		//update all the obj_ids which is bigger
 		for (unsigned int i = 0; i < (unsigned int)m_plate_list.size(); ++i)
 		{
@@ -5488,6 +5546,31 @@ void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& pr
                 (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, PartPlate::HEIGHT_LIMIT_NONE, -1, render_cali, show_grid);
 		}
 	}
+}
+
+void PartPlateList::RenderShadowReceivers()
+{
+    const std::lock_guard<std::mutex> localLock(m_plates_mutex);
+    for (PartPlate* plate : m_plate_list)
+    {
+        if (plate == nullptr || !plate->m_triangles.model.is_initialized())
+            continue;
+        plate->m_triangles.model.render();
+    }
+}
+
+void PartPlateList::RenderHoverTooltip(int hoverId)
+{
+    if (hoverId < 0)
+        return;
+
+    const std::lock_guard<std::mutex> localLock(m_plates_mutex);
+    const int plateIndex = hoverId / static_cast<int>(PartPlate::GRABBER_COUNT);
+    const int hoverAction = hoverId % static_cast<int>(PartPlate::GRABBER_COUNT);
+    if (plateIndex >= static_cast<int>(m_plate_list.size()) || m_plate_list[plateIndex] == nullptr)
+        return;
+
+    m_plate_list[plateIndex]->ShowRightIconTooltip(hoverAction);
 }
 
 /*int PartPlateList::select_plate_by_hover_id(int hover_id)

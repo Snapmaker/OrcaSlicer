@@ -71,6 +71,7 @@
 #include <wx/textctrl.h>
 #include <wx/splash.h>
 #include <wx/fontutil.h>
+#include <GL/glew.h>
 #include <wx/glcanvas.h>
 #include <wx/utils.h>
 #include <wx/thread.h>
@@ -101,6 +102,7 @@
 #include "../Utils/GatewayProtocol.hpp"
 #include "../Utils/GatewayService.hpp"
 #include "../Utils/GatewayDevice.hpp"
+#include "../Utils/MoonRaker.hpp"
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
 #include "../Utils/SnapLogClient.hpp"
@@ -981,7 +983,12 @@ static void generic_exception_handle()
 //#endif
 }
 
-std::atomic<bool> GUI_App::m_app_alive{true};
+// Written only on the main thread: set true at the top of on_init_inner()
+// (wxTheApp is valid from wxEntryStart on), cleared first thing in ~GUI_App.
+// Initializing false keeps worker-thread guards (SSWCP/Moonraker/versions
+// check) rejecting during the pre-OnInit startup window and in processes that
+// never run OnInit (the GUI-less gateway binary), where wxTheApp stays null.
+std::atomic<bool> GUI_App::m_app_alive{false};
 std::atomic<int>  GUI_App::m_version_check_cbs_inflight{0};
 
 void GUI_App::toggle_show_gcode_window()
@@ -2418,6 +2425,13 @@ int GUI_App::OnExit()
     stop_gateway_service();
     stop_sync_user_preset();
 
+    // Join the SSWCP / MoonRaker TimeoutMap workers while the app is still
+    // alive: their timeout callbacks dereference wxGetApp(), and the static
+    // maps otherwise live until process-exit static destruction, past the app
+    // object's lifetime (Sentry SNAPMAKER_ORCA-MG).
+    SSWCP::shutdown_timeout_workers();
+    Moonraker_Mqtt::shutdown_timeout_workers();
+
     if (m_device_manager) {
         delete m_device_manager;
         m_device_manager = nullptr;
@@ -2481,10 +2495,11 @@ bool GUI_App::on_init_inner()
 {
 #if defined(__linux__) || defined(__LINUX__)
     // Set the C library locale from environment variables so that character
-    // encoding conversions work correctly for non-ASCII text (e.g. Chinese).
+    // encoding conversions work correctly for non-ASCII text (e.g., Chinese).
     // This must be done early before any wxWidgets locale-sensitive operations.
     std::setlocale(LC_ALL, "");
 #endif
+    m_app_alive.store(true); // guards in worker threads accept calls from here on (single atomic, main-thread writes only)
     StartupProfiler profiler("GUI_App::on_init_inner");
 
     wxLog::SetActiveTarget(new wxBoostLog());
@@ -6247,7 +6262,7 @@ static const wxLanguageInfo* linux_get_existing_locale_language(const wxLanguage
         if (! it->empty()) {
             const std::string &locale = *it;
             const wxLanguageInfo* lang = wxLocale::FindLanguageInfo(from_u8(locale));
-            if (wxLocale::IsAvailable(lang->Language))
+            if (lang != nullptr && wxLocale::IsAvailable(lang->Language))
                 return lang;
         }
     return language;
@@ -6448,6 +6463,8 @@ bool GUI_App::load_language(wxString language, bool initial)
     }
 #endif
 
+    // On Linux a missing locale is tolerated by the check below instead of rewriting the requested language.
+#ifndef __linux__
     if (! wxLocale::IsAvailable(language_info->Language)&&initial) {
         language_info = wxLocale::GetLanguageInfo(wxLANGUAGE_ENGLISH_UK);
         app_config->set("language", language_info->CanonicalName.ToUTF8().data());
@@ -6485,27 +6502,35 @@ bool GUI_App::load_language(wxString language, bool initial)
         //        app_config->erase("app", "language");
         //}
     }
+#endif
 
     if (! wxLocale::IsAvailable(language_info->Language)) {
+#ifdef __linux__
+        // Dictionaries ship with the application, so a missing system locale must not
+        // abort startup: keep the current locale and load the bundled dictionary below.
+        // Do not return early: callers ignore the result and expect m_wxLocale set.
+        BOOST_LOG_TRIVIAL(warning) << boost::format("Locale %1% is not available on this system, "
+                                                    "keeping the current locale and loading the bundled dictionary.")
+                                    % language_info->CanonicalName.ToUTF8().data();
+#else
     	// Loading the language dictionary failed.
         wxString message = "Switching Snapmaker Orca to language " + language_info->CanonicalName + " failed.";
-#if !defined(_WIN32) && !defined(__APPLE__)
-        // likely some linux system
-        message += "\nYou may need to reconfigure the missing locales, likely by running the \"locale-gen\" and \"dpkg-reconfigure locales\" commands.\n";
-#endif
         if (initial)
-        	message + "\n\nApplication will close.";
+        	message += "\n\nApplication will close.";
         wxMessageBox(message, "Snapmaker Orca - Switching language failed", wxOK | wxICON_ERROR);
         if (initial)
 			std::exit(EXIT_FAILURE);
 		else
 			return false;
+#endif
     }
 
     // Release the old locales, create new locales.
     //FIXME wxWidgets cause havoc if the current locale is deleted. We just forget it causing memory leaks for now.
     m_wxLocale.release();
     m_wxLocale = Slic3r::make_unique<wxLocale>();
+    // Init may fail when the requested system locale is missing; keep the object anyway: the constructor
+    // installs the instance-owned wxTranslations, and Init() records the canonical name before setlocale.
     m_wxLocale->Init(language_info->Language);
     // Override language at the active wxTranslations class (which is stored in the active m_wxLocale)
     // to load possibly different dictionary, for example, load Czech dictionary for Slovak language.
@@ -6680,6 +6705,10 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
         else if (dlg.seq_top_layer_only_changed())
 #endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
             this->plater_->refresh_print();
+        // GPU accel toggle: applied once after the dialog closes instead of
+        // rebuilding the toolpaths inside every checkbox click
+        if (dlg.gcode_gpu_accel_changed())
+            this->plater_->reload_gcode_preview();
 #ifdef _WIN32
         if (is_editor()) {
             if (app_config->get("associate_3mf") == "true")
@@ -7794,6 +7823,12 @@ void GUI_App::check_updates(const bool verbose)
 	try {
 		updater_result = preset_updater->config_update(app_config->orig_version(), verbose ? PresetUpdater::UpdateParams::SHOW_TEXT_BOX : PresetUpdater::UpdateParams::SHOW_NOTIFICATION);
 		if (updater_result == PresetUpdater::R_INCOMPAT_EXIT) {
+			// This close may be vetoed by the modal-dialog guard when the
+			// update check completes while a dialog is open (CallAfter
+			// dispatches inside modal loops too); the user must then dismiss
+			// the dialog and quit again.
+			BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+				<< ": [R_INCOMPAT_EXIT] requesting app close after incompatible config update";
 			mainframe->Close();
 		}
 		else if (updater_result == PresetUpdater::R_INCOMPAT_CONFIGURED) {

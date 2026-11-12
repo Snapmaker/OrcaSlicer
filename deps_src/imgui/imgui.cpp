@@ -4476,13 +4476,26 @@ void ImGui::ClearInputTextInitialData(const char* label, double new_value)
         memcpy(g.InputTextState.InitialTextA.Data, buf, buf_len + 1);
 
         // Start edition
-        int buf_size = sizeof(new_value);
+        // Note: must be the real buffer size, not sizeof(new_value) (== 8 for a double),
+        // which truncated the edit buffer to 8 chars while the stb undo stack still
+        // referenced the longer text.
+        int buf_size = IM_ARRAYSIZE(buf);
         const char* buf_end = NULL;
         g.InputTextState.TextW.resize(buf_size + 1);          // wchar count <= UTF-8 count. we use +1 to make sure that .Data is always pointing to at least an empty string.
         g.InputTextState.TextA.resize(0);
         g.InputTextState.TextAIsValid = false;                // TextA is not valid yet (we will display buf until then)
         g.InputTextState.CurLenW = ImTextStrFromUtf8(g.InputTextState.TextW.Data, buf_size, buf, NULL, &buf_end);
         g.InputTextState.CurLenA = (int)(buf_end - buf);      // We can't get the result from ImStrncpy() above because it is not UTF-8 aware. Here we'll cut off malformed UTF-8.
+        // The text was replaced under the editor: drop the stale cursor/undo state so
+        // subsequent edits/undo operate on the new text (mirrors stb_textedit_clear_state for a
+        // single-line field; the stb functions themselves are static inside ImStb, unreachable here).
+        g.InputTextState.Stb.undostate.undo_point = 0;
+        g.InputTextState.Stb.undostate.undo_char_point = 0;
+        g.InputTextState.Stb.undostate.redo_point = STB_TEXTEDIT_UNDOSTATECOUNT;
+        g.InputTextState.Stb.undostate.redo_char_point = STB_TEXTEDIT_UNDOCHARCOUNT;
+        g.InputTextState.Stb.select_start = g.InputTextState.Stb.select_end = 0;
+        g.InputTextState.Stb.cursor = 0;
+        g.InputTextState.CursorClamp();
         //*/
         //g.InputTextState.ClearText();
     }

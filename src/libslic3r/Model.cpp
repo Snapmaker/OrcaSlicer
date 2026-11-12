@@ -504,6 +504,22 @@ ModelObject* Model::add_object(const ModelObject &other)
     return new_object;
 }
 
+bool assemble_transform_is_sane(const Transform3d& transform)
+{
+    if (!transform.matrix().allFinite())
+        return false;
+    if (transform.translation().cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT)
+        return false;
+    // Bound the overall scale before decomposition, then reject collapsed axes
+    // and linearly dependent columns. The norm alone cannot detect either.
+    const double linear_norm = transform.linear().norm();
+    if (linear_norm <= 1e-6 || linear_norm >= 1e6)
+        return false;
+    // Singular values are non-negative, so valid mirrored transforms remain valid.
+    const Eigen::JacobiSVD<Eigen::Matrix3d> svd(transform.linear());
+    return svd.singularValues().minCoeff() > 1e-6;
+}
+
 void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
 {
     constexpr double ASSEMBLY_OBJECT_GAP = 10.0;
@@ -531,6 +547,35 @@ void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
         }
 
         validatedObjects.push_back(modelObject);
+    }
+
+    // BBS: sanitize corrupted assemble transforms before they are used as layout
+    // input. sceneBox below is computed from the *existing* (not laid-out here)
+    // objects too, so any insane value would be amplified into the offsets of
+    // every newly loaded object (feedback loop of this very algorithm).
+    for (ModelObject* modelObject : objects) {
+        if (modelObject == nullptr)
+            continue;
+        for (ModelInstance* instance : modelObject->instances) {
+            if (instance == nullptr)
+                continue;
+            if (instance->is_assemble_initialized() &&
+                !assemble_transform_is_sane(instance->get_assemble_transformation().get_matrix())) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "InitializeAssemblyPositions: reset insane assemble transform for object '"
+                    << modelObject->name << "'";
+                instance->set_assemble_transformation(instance->get_transformation());
+            }
+            // The explosion-slider offset is nullified at ratio 1 but would fling
+            // parts to astronomic distances once the slider moves; sanitize it too.
+            const Vec3d ofs2ass = instance->get_offset_to_assembly();
+            if (!ofs2ass.allFinite() || ofs2ass.cwiseAbs().maxCoeff() > ASSEMBLY_TRANSFORM_SANITY_LIMIT) {
+                BOOST_LOG_TRIVIAL(warning)
+                    << "InitializeAssemblyPositions: reset insane offset_to_assembly for object '"
+                    << modelObject->name << "'";
+                instance->set_offset_to_assembly(Vec3d::Zero());
+            }
+        }
     }
 
     BoundingBoxf3 sceneBox = CalculateAssemblyBoundingBox(validatedObjects);
@@ -593,7 +638,17 @@ void Model::InitializeAssemblyPositions(const ModelObjectPtrs& modelObjects)
                                            previousInstanceMaxY + ASSEMBLY_OBJECT_GAP + instanceBox.size().y() * 0.5;
             const Vec3d assemblyOffset(objectCenterX - instanceBox.center().x(),
                                        instanceCenterY - instanceBox.center().y(), -instanceBox.min.z());
-            instance->set_assemble_offset(assemblyOffset);
+            // BBS: refuse to write an insane offset out of the layout; fall back
+            // to the plate transformation instead of feeding the amplifier further.
+            if (assemblyOffset.allFinite() && assemblyOffset.cwiseAbs().maxCoeff() <= ASSEMBLY_TRANSFORM_SANITY_LIMIT) {
+                instance->set_assemble_offset(assemblyOffset);
+            }
+            else {
+                BOOST_LOG_TRIVIAL(error)
+                    << "InitializeAssemblyPositions: refused insane assembly offset for object '"
+                    << modelObject->name << "', x=" << assemblyOffset.x();
+                instance->set_assemble_transformation(instance->get_transformation());
+            }
             previousInstanceMaxY = instanceCenterY + instanceBox.size().y() * 0.5;
             firstValidInstance = false;
         }
@@ -2705,24 +2760,22 @@ std::vector<int> ModelVolume::get_extruders() const
         return std::vector<int>();
 
     if (mmu_segmentation_facets.timestamp() != mmuseg_ts) {
-        std::vector<indexed_triangle_set> its_per_type;
-        mmuseg_extruders.clear();
-        mmuseg_ts = mmu_segmentation_facets.timestamp();
-        mmu_segmentation_facets.get_facets(*this, its_per_type);
-        for (int idx = 1; idx < its_per_type.size(); idx++) {
-            indexed_triangle_set& its = its_per_type[idx];
-            if (its.indices.empty())
-                continue;
-
-            mmuseg_extruders.push_back(idx);
+        // Read painted-extruder presence from the encoded used_states flags.
+        // Materializing facets geometry here would build a full temporary selector.
+        const auto&               usedStates = mmu_segmentation_facets.get_data().used_states;
+        const auto                annotationTimestamp = mmu_segmentation_facets.timestamp();
+        std::vector<int>          paintedExtruders;
+        paintedExtruders.reserve(usedStates.size());
+        for (size_t idx = 1; idx < usedStates.size(); idx++) {
+            if (usedStates[idx])
+                paintedExtruders.push_back(static_cast<int>(idx));
         }
-
-        if (its_per_type.size() > 0 && its_per_type[0].indices.size() == 0) {
-            m_mmuseg_extruders_has_0_extruder = false;
-        }
-        else {
-            m_mmuseg_extruders_has_0_extruder = true;
-        }
+        mmuseg_extruders = std::move(paintedExtruders);
+        mmuseg_ts = annotationTimestamp;
+        // Roots that were never painted or split are not serialized and keep the default state 0.
+        const size_t serializedRootCount = mmu_segmentation_facets.get_data().triangles_to_split.size();
+        m_mmuseg_extruders_has_0_extruder = (!usedStates.empty() && usedStates[0]) ||
+            serializedRootCount < this->mesh().its.indices.size();
     }
 
     std::vector<int> volume_extruders = mmuseg_extruders;
@@ -3299,6 +3352,7 @@ bool Model::obj_import_vertex_color_deal(const std::vector<unsigned char> &verte
             auto volume = obj->volumes[0];
             volume->config.set("extruder", first_extruder_id);
             auto face_count = volume->mesh().its.indices.size();
+            volume->mmu_segmentation_facets.reset();
             volume->mmu_segmentation_facets.reserve(face_count);
             if (volume->mesh().its.vertices.size() != vertex_filament_ids.size()) {
                 return false;
@@ -3308,7 +3362,7 @@ bool Model::obj_import_vertex_color_deal(const std::vector<unsigned char> &verte
                 auto filament_id0 = vertex_filament_ids[face[0]];
                 auto filament_id1 = vertex_filament_ids[face[1]];
                 auto filament_id2 = vertex_filament_ids[face[2]];
-                if (filament_id0 <= 1 && filament_id1 <= 1 && filament_id2 <= 2) {
+                if (filament_id0 == first_extruder_id && filament_id1 == first_extruder_id && filament_id2 == first_extruder_id) {
                     continue;
                 }
                 if (i == 0) {
@@ -3392,12 +3446,13 @@ bool Model::obj_import_face_color_deal(const std::vector<unsigned char> &face_fi
             auto volume        = obj->volumes[0];
             volume->config.set("extruder", first_extruder_id);
             auto face_count    = volume->mesh().its.indices.size();
+            volume->mmu_segmentation_facets.reset();
             volume->mmu_segmentation_facets.reserve(face_count);
             if (volume->mesh().its.indices.size() != face_filament_ids.size()) { return false; }
             for (size_t i = 0; i < volume->mesh().its.indices.size(); i++) {
                 auto face         = volume->mesh().its.indices[i];
                 auto filament_id = face_filament_ids[i];
-                if (filament_id <= 1) { continue; }
+                if (filament_id == first_extruder_id) { continue; }
                 std::string result;
                 get_real_filament_id(filament_id, result);
                 volume->mmu_segmentation_facets.set_triangle_from_string(i, result);
@@ -3749,6 +3804,7 @@ void FacetsAnnotation::reset()
 {
     m_data.triangles_to_split.clear();
     m_data.bitstream.clear();
+    m_data.reset_used_states();
     this->touch();
 }
 

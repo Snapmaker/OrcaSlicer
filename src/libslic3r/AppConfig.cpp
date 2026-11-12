@@ -216,6 +216,9 @@ void AppConfig::set_defaults()
     if (get("gcode_preview_gpu_accel").empty())
         set_bool("gcode_preview_gpu_accel", true);
 
+    if (get("enable_soft_shadows").empty())
+        set_bool("enable_soft_shadows", false);
+
 //#ifdef SUPPORT_SHOW_HINTS
     if (get("show_hints").empty())
         set_bool("show_hints", true);
@@ -457,6 +460,9 @@ void AppConfig::set_defaults()
 
     if (get("enable_step_mesh_setting").empty()) {
         set_bool("enable_step_mesh_setting", true);
+    }
+    if (get("show_memory_usage_warning").empty()) {
+        set_bool("show_memory_usage_warning", true);
     }
     if (get("linear_defletion", "angle_defletion").empty()) {
         set("linear_defletion", "0.003");

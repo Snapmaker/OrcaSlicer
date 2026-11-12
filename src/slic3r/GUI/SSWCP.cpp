@@ -66,6 +66,30 @@ namespace Slic3r { namespace GUI {
 
 namespace {
 
+/// \brief Whether the wx application object is still usable from a worker thread.
+///
+/// SSWCP timeout/completion callbacks run on worker threads (the static
+/// TimeoutMap, Http, m_work_thread) that can outlive the wx app in helper
+/// processes and at process exit; touching wxGetApp() then dereferences a
+/// null wxTheApp (Sentry SNAPMAKER_ORCA-MG).
+///
+/// Single seq_cst atomic, written only on the main thread: set true at the
+/// top of GUI_App::on_init_inner(), cleared first thing in ~GUI_App. False
+/// therefore covers both the pre-OnInit startup window and processes that
+/// never run OnInit (the GUI-less gateway binary, where wxTheApp stays
+/// null). Reading wxTheApp itself here would be a data race ([intro.races]
+/// has no "benign" category), which is why the flag exists at all.
+///
+/// SSWCP::shutdown_timeout_workers() joins the TimeoutMap workers at
+/// GUI_App::OnExit before the app dies, which closes the reported crash
+/// path structurally; these guards remain as defense-in-depth for threads
+/// OnExit does not own (detached workers, Http IO, Paho, Bonjour) and still
+/// only narrow their check-then-act window.
+bool gui_app_available()
+{
+    return GUI_App::m_app_alive.load();
+}
+
 long long preprint_color_to_int(const std::string& color)
 {
     auto hex_digit = [](char digit) {
@@ -837,34 +861,45 @@ void SSWCP_Instance::sw_GetActiveFile()
             m_work_thread.join();
 
         m_work_thread          = std::thread([file_path, file_name, weak_self]() {
-            auto        self       = weak_self.lock();
+            auto self = weak_self.lock();
+            if (!self) { // the instance can time out (DEFAULT_INSTANCE_TIMEOUT) before this worker starts
+                return;
+            }
             std::string zipname    = generate_zip_path(file_path, file_name);
             json        res        = get_or_create_zip_json(file_path, file_name, zipname);
             size_t      name_index = file_name.find_last_of(".");
             size_t      path_index = file_path.find_last_of(".");
             if (!(name_index == std::string::npos || path_index == std::string::npos)) {
-                self->m_res_data["file_name"] = file_name.substr(0, name_index) + ".zip";
-                self->m_res_data["file_path"] = wxString(zipname).ToUTF8();
-                SSWCP::m_file_size_mutex.lock();
-                self->m_res_data["origin_size"] = SSWCP::m_active_file_size;
                 std::string url_zip_path = std::string(wxString(zipname).ToUTF8());
                 std::replace(url_zip_path.begin(), url_zip_path.end(), '\\', '/');
+                if (!gui_app_available()) // right before the wxGetApp() uses; the zip work above can be slow
+                    return;
+                self->m_res_data["file_name"] = file_name.substr(0, name_index) + ".zip";
+                self->m_res_data["file_path"] = wxString(zipname).ToUTF8();
                 self->m_res_data["url"] = wxGetApp().gateway_localfile_url(url_zip_path);
-                SSWCP::m_file_size_mutex.unlock();
+                {
+                    std::lock_guard<std::mutex> lock(SSWCP::m_file_size_mutex);
+                    self->m_res_data["origin_size"] = SSWCP::m_active_file_size;
+                }
 
                 // checksum: SHA-256 digest as standard Base64, for Flutter-side integrity verification
                 self->m_res_data["checksum"] = calc_sha256_base64(file_path);
 
+                if (!gui_app_available()) // hashing a large file can outlive the app; re-check before posting
+                    return;
                 wxGetApp().CallAfter([weak_self]() {
-                    if (weak_self.lock()) {
-                        weak_self.lock()->send_to_js();
-                        weak_self.lock()->finish_job();
+                    auto self = weak_self.lock(); // one lock keeps the instance alive across both calls
+                    if (self) {
+                        self->send_to_js();
+                        self->finish_job();
                     }
                 });
             } else {
+                if (!gui_app_available())
+                    return;
                 wxGetApp().CallAfter([weak_self]() {
-                    if (weak_self.lock()) {
-                        weak_self.lock()->handle_general_fail();
+                    if (auto self = weak_self.lock()) {
+                        self->handle_general_fail();
                     }
                 });
                 return;
@@ -985,6 +1020,8 @@ void SSWCP_Instance::sw_GetFileStream() {
                 size_t name_index = file_name.find_last_of(".");
                 size_t path_index = file_path.find_last_of(".");
                 if (name_index == std::string::npos || path_index == std::string::npos) {
+                    if (!gui_app_available())
+                        return;
                     wxGetApp().CallAfter([weak_self]() {
                         auto self = weak_self.lock();
                         if (self) {
@@ -998,6 +1035,8 @@ void SSWCP_Instance::sw_GetFileStream() {
                 long long   file_size     = boost::filesystem::file_size(file_path);
                 std::string sha256_base64 = calc_sha256_base64(file_path);
 
+                if (!gui_app_available())
+                    return;
                 wxGetApp().CallAfter([weak_self, zipname, zip_file_name, file_size, sha256_base64]() {
                     auto self = weak_self.lock();
                     if (!self) {
@@ -1032,6 +1071,8 @@ void SSWCP_Instance::sw_GetFileStream() {
 
                 std::string sha256_base64 = calc_sha256_base64(file_path);
 
+                if (!gui_app_available())
+                    return;
                 wxGetApp().CallAfter([weak_self, download_url, file_name, file_size, sha256_base64]() {
                     auto self = weak_self.lock();
                     if (!self) {
@@ -1113,6 +1154,8 @@ void SSWCP_Instance::send_to_js()
 
     WCP_Logger::getInstance().add_log(str_res, false, "", "WCP", "info");
 
+    if (!gui_app_available()) // app (and the webview with it) is gone - nothing left to post to
+        return;
     auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
     wxGetApp().CallAfter([weak_self, str_res, json_str]()
     {
@@ -1138,16 +1181,21 @@ void SSWCP_Instance::finish_job() {
 
 // Asynchronous test implementation
 void SSWCP_Instance::async_test() {
-    auto http = Http::get("http://172.18.1.69/");
-    http.on_error([&](std::string body, std::string error, unsigned status) {
+    auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+    auto http      = Http::get("http://172.18.1.69/");
+    http.on_error([](std::string body, std::string error, unsigned status) {
 
     })
-    .on_complete([=](std::string body, unsigned) {
+    .on_complete([weak_self](std::string body, unsigned) {
+        auto self = weak_self.lock();
+        if (!self) { // the instance can hit its 80 s map expiry before the async Http completes
+            return;
+        }
         json data;
-        data["str"] = body;
-        this->m_res_data = data;
-        this->send_to_js();
-        finish_job();
+        data["str"]   = body;
+        self->m_res_data = data;
+        self->send_to_js();
+        self->finish_job();
     })
     .perform();
 }
@@ -1347,6 +1395,8 @@ void SSWCP_Instance::sw_Unsubscribe_Filter() {
 
 // Handle timeout event
 void SSWCP_Instance::on_timeout() {
+    if (!gui_app_available()) // static TimeoutMap worker outlived the app - replying would crash
+        return;
     handle_general_fail(-2, "time out");
     finish_job();
 }
@@ -1491,7 +1541,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                      .set_timeout(last_time >= 0.0 ? last_time/1000 : 20)
                                      .on_reply([weak_self, unique_key](BonjourReply&& reply) {
                                          // Check if application is still alive before processing
-                                         if (!GUI_App::m_app_alive.load()) {
+                                         if (!gui_app_available()) {
                                              return;
                                          }
 
@@ -1501,7 +1551,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                          }
 
                                          // Double check application is still alive after locking
-                                         if (!GUI_App::m_app_alive.load()) {
+                                         if (!gui_app_available()) {
                                              return;
                                          }
 
@@ -1556,7 +1606,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                              if (vendor_pos != std::string::npos) {
                                                  std::string vendor = machine_type.substr(0, vendor_pos);
                                                  // Check application is still alive before accessing wxGetApp()
-                                                 if (GUI_App::m_app_alive.load()) {
+                                                 if (gui_app_available()) {
                                                      {
                                                          std::string machine_cover = LOCALHOST_URL + std::to_string(wxGetApp().m_page_http_server.get_port()) + "/profiles/" +
                                                                                      vendor + "/" + machine_type + "_cover.png";
@@ -1579,7 +1629,7 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                          }
 
                                          // Final check before adding to list
-                                         if (!GUI_App::m_app_alive.load() || !self || self->is_stop()) {
+                                         if (!gui_app_available() || !self || self->is_stop()) {
                                              return;
                                          }
 
@@ -1595,14 +1645,14 @@ void SSWCP_MachineFind_Instance::sw_StartMachineFind()
                                      })
                                      .on_complete([weak_self]() {
                                          // Check if application is still alive before scheduling callback
-                                         if (!GUI_App::m_app_alive.load()) {
+                                         if (!gui_app_available()) {
                                              return;
                                          }
 
                                          {
                                              wxGetApp().CallAfter([weak_self]() {
                                                  // Check again inside the callback
-                                                 if (!GUI_App::m_app_alive.load()) {
+                                                 if (!gui_app_available()) {
                                                      return;
                                                  }
 
@@ -2259,6 +2309,8 @@ void SSWCP_MachineOption_Instance::sw_GetPrintZip()
             if (self) {
                 std::string zipname = generate_zip_path(oriname, targetname);
                 json        res     = get_or_create_zip_json(oriname, targetname, zipname);
+                if (!gui_app_available())
+                    return;
                 wxGetApp().CallAfter([weak_self, res]() {
                     auto self = weak_self.lock();
                     if (self) {
@@ -2321,20 +2373,25 @@ void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
 
         wxString wildcard = "All files (*.*)|*.*";
 
-        wxGetApp().CallAfter([wildcard, this, upload_url]() {
-            
+        // The modal dialog below and the async Http callbacks can outlive the
+        // instance's 80 s map expiry - never touch raw `this` past this point.
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        wxGetApp().CallAfter([wildcard, weak_self, upload_url]() {
+
             wxFileDialog picFileDialog(nullptr,
                                         L("select file"),                    // title
                                         "",                                  // default path
                                         "",                                  // default filename
-                                        wildcard,                            // filter 
+                                        wildcard,                            // filter
                                         wxFD_OPEN | wxFD_OVERWRITE_PROMPT);  // style
 
-            if (picFileDialog.ShowModal() == wxID_CANCEL) {                
-                handle_general_fail();
+            if (picFileDialog.ShowModal() == wxID_CANCEL) {
+                if (auto self = weak_self.lock()) {
+                    self->handle_general_fail();
+                }
                 return;
             }
-            
+
             wxString filepath     = picFileDialog.GetPath();
             wxString filename = picFileDialog.GetFilename();
             std::string tmp_url  = upload_url;
@@ -2345,33 +2402,45 @@ void SSWCP_MachineOption_Instance::sw_UploadFiletoMachine() {
             http_object
                 .form_add("print", "false")
                 .form_add_file("file", std::string(filepath.ToUTF8()), std::string(filename.ToUTF8()))
-                .on_error([=](std::string body, std::string error, unsigned status) {
-                    handle_general_fail();
+                .on_error([weak_self, filename](std::string body, std::string error, unsigned status) {
+                    if (auto self = weak_self.lock()) {
+                        self->handle_general_fail();
+                    }
+                    if (!gui_app_available())
+                        return;
                     wxGetApp().CallAfter([filename]() {
                         MessageDialog msg_window(nullptr, " " + filename + _L(" upload failed") + "\n", _L("UpLoad Failed"),
                                                  wxICON_QUESTION | wxOK);
                         msg_window.ShowModal();
                     });
                 })
-                .on_complete([=](std::string body, unsigned) {
+                .on_complete([weak_self, filename](std::string body, unsigned) {
                     try {
-                        wxGetApp().CallAfter([=]() {
+                        if (!gui_app_available())
+                            return;
+                        wxGetApp().CallAfter([weak_self, filename]() {
+                            auto self = weak_self.lock();
+                            if (!self) {
+                                return;
+                            }
                             json response;
                             response["filename"] = std::string(filename.ToUTF8());
-                            m_res_data           = response;
-                            send_to_js();
+                            self->m_res_data     = response;
+                            self->send_to_js();
 
 
                             MessageDialog msg_window(nullptr, " " + filename + _L(" has already been uploaded") + "\n",
                                                      _L("UpLoad Successfully"), wxICON_QUESTION | wxOK);
                             msg_window.ShowModal();
-                            finish_job();
+                            self->finish_job();
                         });
                     } catch (std::exception& e) {
-                        handle_general_fail();
+                        if (auto self = weak_self.lock()) {
+                            self->handle_general_fail();
+                        }
                     }
                 })
-                .on_progress([&](Http::Progress progress, bool& cancel) {
+                .on_progress([](Http::Progress progress, bool& cancel) {
 
                 })
                 .perform();
@@ -2418,8 +2487,11 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
             wildcard = "All files (*.*)|*.*";
         }
 
-        wxGetApp().CallAfter([filename, extension, wildcard, this, download_url]() {
-            
+        // The modal dialog below and the async Http callbacks can outlive the
+        // instance's 80 s map expiry - never touch raw `this` past this point.
+        auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+        wxGetApp().CallAfter([filename, extension, wildcard, weak_self, download_url]() {
+
             wxFileDialog saveFileDialog(nullptr,
                                         L("Save file"),                     // title
                                         "",                                 // default path
@@ -2429,25 +2501,31 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
 
             if (saveFileDialog.ShowModal() == wxID_CANCEL) {
                 // use cancel download
-                handle_general_fail();
+                if (auto self = weak_self.lock()) {
+                    self->handle_general_fail();
+                }
                 return;
             }
-            
+
             wxString path = saveFileDialog.GetPath();
-            auto final_url = Http::encode_url_path(download_url.ToStdString(wxConvUTF8));            
+            auto final_url = Http::encode_url_path(download_url.ToStdString(wxConvUTF8));
 
 
             Http http_object = Http::get(final_url);
             http_object
-                .on_error([=](std::string body, std::string error, unsigned status) {
-                    handle_general_fail();
+                .on_error([weak_self, filename](std::string body, std::string error, unsigned status) {
+                    if (auto self = weak_self.lock()) {
+                        self->handle_general_fail();
+                    }
+                    if (!gui_app_available())
+                        return;
                     wxGetApp().CallAfter([filename]() {
                         MessageDialog msg_window(nullptr, " " + filename + _L(" download failed") + "\n", _L("DownLoad Failed"),
                                                  wxICON_QUESTION | wxOK);
                         msg_window.ShowModal();
                     });
                 })
-                .on_complete([=](std::string body, unsigned) {
+                .on_complete([weak_self, filename, path](std::string body, unsigned) {
                     try {
                         boost::nowide::ofstream file(path.ToStdString(wxConvUTF8), std::ios::binary);
                         if (!file.is_open()) {
@@ -2458,16 +2536,20 @@ void SSWCP_MachineOption_Instance::sw_DownloadMachineFile() {
                         file.write(body.c_str(), body.size());
                         file.close();
 
-                        wxGetApp().CallAfter([=]() {
+                        if (!gui_app_available())
+                            return;
+                        wxGetApp().CallAfter([filename]() {
                             MessageDialog msg_window(nullptr, " " + filename + _L(" has already been downloaded") + "\n",
                                                      _L("DownLoad Successfully"), wxICON_QUESTION | wxOK);
                             msg_window.ShowModal();
                         });
                     } catch (std::exception& e) {
-                        handle_general_fail();
+                        if (auto self = weak_self.lock()) {
+                            self->handle_general_fail();
+                        }
                     }
                 })
-                .on_progress([&](Http::Progress progress, bool& cancel) {
+                .on_progress([](Http::Progress progress, bool& cancel) {
 
                 })
                 .perform();
@@ -3742,8 +3824,11 @@ void SSWCP_MachineConnect_Instance::sw_get_pin_code()
                                         bool flag = mqtt_client->Disconnect(dc_msg);
                                         // Drop the holder on the UI thread: destroying
                                         // the client from inside message_arrived (a
-                                        // Paho thread) is not allowed by Paho.
-                                        wxGetApp().CallAfter([]() { SSWCP_MachineConnect_Instance::release_pin_client(); });
+                                        // Paho thread) is not allowed by Paho. With the
+                                        // app gone there is no UI thread left to defer
+                                        // to; keep the client until process exit.
+                                        if (gui_app_available())
+                                            wxGetApp().CallAfter([]() { SSWCP_MachineConnect_Instance::release_pin_client(); });
                                         return;
                                     }
                                     self->handle_general_fail();
@@ -3854,17 +3939,22 @@ void SSWCP_MachineConnect_Instance::sw_test_connect() {
             } else {
                 if (m_work_thread.joinable())
                     m_work_thread.join();
-                m_work_thread = std::thread([this, host] {
+                auto weak_self = std::weak_ptr<SSWCP_Instance>(shared_from_this());
+                m_work_thread  = std::thread([weak_self, host] {
+                    auto self = weak_self.lock();
+                    if (!self) { // the instance can hit its 80 s expiry while the sync test stalls
+                        return;
+                    }
                     wxString msg;
                     bool        res = host->test(msg);
                     if (res) {
-                        send_to_js();
-                    } else {                        
-                        m_status = 1;
-                        m_msg    = msg.c_str();
-                        send_to_js();
+                        self->send_to_js();
+                    } else {
+                        self->m_status = 1;
+                        self->m_msg    = msg.c_str();
+                        self->send_to_js();
                     }
-                    finish_job();
+                    self->finish_job();
                 });
             }
         } else {
@@ -3891,7 +3981,11 @@ void SSWCP_MachineConnect_Instance::sw_disconnect() {
     m_work_thread = std::thread([weak_self, need_reload](){
         auto                       self = weak_self.lock();
 
+        if (!gui_app_available()) // no app loop left: skip disconnect + UI reload, the process is going away
+            return;
         bool res = wxGetApp().sm_disconnect_current_machine(need_reload);
+        if (!gui_app_available()) // the disconnect above is network work; re-check before touching the app again
+            return;
         m_first_connected = true;
         if (!res) {
             if (self) {
@@ -3950,7 +4044,7 @@ void SSWCP_SliceProject_Instance::sw_NewProject()
             wxGetApp().request_open_project("<new>");
         else {
             std::string preset_name = m_param_data["preset_name"].get<std::string>();
-            wxGetApp().CallAfter([this, preset_name]() {
+            wxGetApp().CallAfter([preset_name]() {
                 try {
                     if (wxGetApp().get_tab(Preset::TYPE_PRINTER)->select_preset(preset_name)) {
                         wxGetApp().plater()->new_project();
@@ -4514,6 +4608,8 @@ bool subscribe_wan_upload_notifications(std::shared_ptr<TimelapseQueueContext> c
             if (items_copy.empty()) {
                 return;
             }
+            if (!gui_app_available()) // MQTT thread: posting with the app gone would crash (see gui_app_available)
+                return;
             wxGetApp().CallAfter([ctx, items = std::move(items_copy)]() {
                 handle_wan_upload_notification(ctx, items);
             });
@@ -4957,6 +5053,8 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                     }
                     if (ctx->completed_count + ctx->failed_count >= ctx->total_count) {
                         ctx->start_next = nullptr;  // break self-ref cycle
+                        if (!gui_app_available())
+                            return;
                         wxGetApp().CallAfter([ctx, file_path]() {
                             if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
                                 std::string latest_file = file_path;
@@ -5027,6 +5125,8 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
                     }
                     if (ctx->completed_count + ctx->failed_count >= ctx->total_count) {
                         ctx->start_next = nullptr;
+                        if (!gui_app_available())
+                            return;
                         wxGetApp().CallAfter([ctx]() {
                             if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
                                 ctx->popup->mark_all_complete(
@@ -5074,6 +5174,8 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
             if (ctx->current_index >= ctx->total_count) {
                 // WAN: unsubscribe from upload notifications before final cleanup
                 unsubscribe_wan_upload(ctx);
+                if (!gui_app_available())
+                    return;
                 wxGetApp().CallAfter([ctx]() {
                     if (ctx->popup && !ctx->popup->IsBeingDeleted()) {
                         std::string latest_file;
@@ -5098,6 +5200,8 @@ void SSWCP_UserLogin_Instance::sw_DownLoadFile()
             int cur_idx = ctx->current_index;
 
             // Update task row: show waiting/uploading/downloading state
+            if (!gui_app_available()) // defensive: current callers dispatch via CallAfter on the main thread
+                return;
             wxGetApp().CallAfter([ctx, cur_idx]() {
                 if (!ctx->popup || ctx->popup->IsBeingDeleted())
                 {
@@ -5201,6 +5305,8 @@ void SSWCP_UserLogin_Instance::push_timelapse_state(const std::string& sn,
         std::string script = "window.postMessage(JSON.stringify(" + json_str + "), '*');";
 
         std::string event_id = sub->event_id;
+        if (!gui_app_available()) // defensive: current callers dispatch via CallAfter on the main thread
+            return;
         wxGetApp().CallAfter([event_id, script, json_str]() {
             auto it = m_subscribe_map.find(event_id);
             if (it != m_subscribe_map.end() && it->second && it->second->webview) {
@@ -5534,6 +5640,36 @@ void SSWCP_PageStateChange_Instance::sw_UnsubscribePageStateChange()
 TimeoutMap<SSWCP_Instance*, std::shared_ptr<SSWCP_Instance>> SSWCP::m_instance_list;
 constexpr std::chrono::milliseconds SSWCP::DEFAULT_INSTANCE_TIMEOUT;
 
+void SSWCP::shutdown_timeout_workers()
+{
+    // Runs on the main thread from GUI_App::OnExit, while the app is still
+    // alive. Stop the static TimeoutMap worker first so no expiry callback
+    // fires while we wait below, then join each instance's m_work_thread -
+    // this can block for an in-flight zip/hash/disconnect operation (the old
+    // flow detached instead, so exit never waited; observed duration is
+    // logged), and finally clear the map, destroying the instances on the
+    // main thread (their dtors only detach already-joined threads).
+    const auto start = std::chrono::steady_clock::now();
+    m_instance_list.stop();
+    // Lock order: get_snapshot() copies the entries under TimeoutMap::m_mutex
+    // and releases it before any join runs; clear() takes the mutex again only
+    // after every join - no lock is ever held across join_worker() (a joined
+    // worker may itself run delete_target -> remove() on that same mutex and
+    // would deadlock otherwise).
+    const auto snapshot = m_instance_list.get_snapshot();
+    if (!snapshot.empty())
+        BOOST_LOG_TRIVIAL(info) << "SSWCP shutdown: joining " << snapshot.size()
+                                << " in-flight instance worker(s); zip/hash of a large file can hold exit";
+    for (const auto& entry : snapshot) {
+        if (entry.second)
+            entry.second->join_worker();
+    }
+    m_instance_list.clear();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+    if (elapsed > std::chrono::seconds(3))
+        BOOST_LOG_TRIVIAL(warning) << "SSWCP shutdown waited " << elapsed.count() << " ms for in-flight instance workers";
+}
+
 std::string SSWCP::m_active_gcode_filename = "";
 std::string SSWCP::m_display_gcode_filename = "";
 long long   SSWCP::m_active_file_size       = 0;
@@ -5703,6 +5839,17 @@ void SSWCP::handle_web_message(std::string message, wxWebView* webview) {
 
 // Delete instance from list
 void SSWCP::delete_target(SSWCP_Instance* target) {
+    if (!gui_app_available()) {
+        // No app loop left to defer the removal to. TimeoutMap::check_timeouts
+        // invokes this callback with its mutex held, so removing synchronously
+        // would deadlock; that same caller erases the expired entry itself
+        // right after the callback returns, regardless of this no-op. A
+        // non-timeout caller only leaves the entry until its default 80 s
+        // expiry (DEFAULT_INSTANCE_TIMEOUT); never-expiring entries are
+        // dropped by shutdown_timeout_workers() at GUI_App::OnExit, so
+        // retention is bounded by process exit either way.
+        return;
+    }
     wxGetApp().CallAfter([target]() {
         m_instance_list.remove(target);
     });

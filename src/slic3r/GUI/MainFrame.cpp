@@ -507,11 +507,22 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             event.Skip();
             return;
         }
-        if (event.CanVeto() && m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true)) {
-            // prevents to open the save dirty project dialog
-            event.Veto();
-            BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "cancelled by gizmo in editing";
-            return;
+        // A modal dialog or gizmo task is still active: destroying the main
+        // frame now would crash the nested modal loop.
+        if (event.CanVeto()) {
+            // Keep is_in_editing_mode() behind the CanVeto() check, matching
+            // the evaluation order of the original gizmo-only guard: its
+            // BrimEars branch calls update_model_object(), which must not
+            // run for non-vetoable close events.
+            const bool gizmo_editing = m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true);
+            if (gizmo_editing || any_modal_dialog_showing()) {
+                // prevents to open the save dirty project dialog
+                event.Veto();
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                    << ": [MODAL-CLOSE] close vetoed, task still active ("
+                    << (gizmo_editing ? "gizmo editing" : "modal dialog") << ")";
+                return;
+            }
         }
 
         //BBS:
@@ -867,11 +878,11 @@ WXLRESULT MainFrame::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam
     case WM_WTSSESSION_CHANGE: {
         switch (wParam) {
         case WTS_SESSION_LOCK:
-            BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Windows session locked";
+            BOOST_LOG_TRIVIAL(debug) << "[ACTIVATE_EVT] Windows session locked";
             wxGetApp().notify_foreground_change(false);
             break;
         case WTS_SESSION_UNLOCK:
-            BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Windows session unlocked";
+            BOOST_LOG_TRIVIAL(debug) << "[ACTIVATE_EVT] Windows session unlocked";
             wxGetApp().notify_foreground_change(true);
             break;
         }
@@ -884,7 +895,7 @@ WXLRESULT MainFrame::MSWWindowProc(WXUINT nMsg, WXWPARAM wParam, WXLPARAM lParam
                 // GUID_CONSOLE_DISPLAY_STATE Data: 0x0=off, 0x1=on, 0x2=dimmed
                 DWORD display_state = power_settings->Data[0];
                 bool is_screen_on = (display_state == 0x1);
-                BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] Console display state changed: "
+                BOOST_LOG_TRIVIAL(debug) << "[ACTIVATE_EVT] Console display state changed: "
                                            << (is_screen_on ? "on" : (display_state == 0x2 ? "dimmed" : "off"));
                 wxGetApp().notify_foreground_change(is_screen_on);
             }
@@ -1048,6 +1059,11 @@ void MainFrame::shutdown(bool isRecreate)
 
     if (m_plater != nullptr) {
         m_plater->get_ui_job_worker().cancel_all();
+
+        // Release painter buffers while the view canvas can still make the shared context current.
+        GLCanvas3D* painterCanvas = m_plater->get_view3D_canvas3D();
+        if (painterCanvas != nullptr)
+            painterCanvas->ReleasePainterGlResources();
 
         // Unbinding of wxWidgets event handling in canvases needs to be done here because on MAC,
         // when closing the application using Command+Q, a mouse event is triggered after this lambda is completed,
@@ -3013,6 +3029,11 @@ void MainFrame::init_menubar_as_editor()
             else if (dlg.seq_top_layer_only_changed())
 #endif
                 plater()->refresh_print();
+            // GPU accel toggle: applied once after the dialog closes (mirrors
+            // GUI_App::open_preferences; this Apple-menu entry shows its own
+            // PreferencesDialog)
+            if (dlg.gcode_gpu_accel_changed())
+                plater()->reload_gcode_preview();
         },
         "", nullptr, []() { return true; }, this, 1);
     //parent_menu->Insert(1, preference_item);
@@ -4118,7 +4139,7 @@ void MainFrame::RunScript(wxString js)
 
 void MainFrame::NotifyActivateChange(bool active)
 {
-    BOOST_LOG_TRIVIAL(warning) << "[ACTIVATE_EVT] OrcaSlicer switched to " << (active ? "foreground" : "background");
+    BOOST_LOG_TRIVIAL(debug) << "[ACTIVATE_EVT] OrcaSlicer switched to " << (active ? "foreground" : "background");
     wxGetApp().notify_foreground_change(active);
 }
 

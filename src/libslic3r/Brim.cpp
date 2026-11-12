@@ -913,6 +913,20 @@ static ExPolygons outer_inner_brim_area(const Print& print,
     auto bedPoly = Model::getBedPolygon();
     auto bedExPoly = diff_ex((offset(bedPoly, scale_(30.), jtRound, SCALED_RESOLUTION)), { bedPoly });
 
+    std::vector<std::pair<Polygon, BoundingBox>> brim_holes;
+    for (const PrintObject* object : print.objects()) {
+        for (const PrintInstance& instance : object->instances()) {
+            for (const ExPolygon& island : object->layers().front()->lslices) {
+                for (Polygon hole : island.holes) {
+                    hole.reverse();
+                    hole.translate(instance.shift_without_plate_offset());
+                    BoundingBox bounds = hole.bounding_box();
+                    brim_holes.emplace_back(std::move(hole), bounds);
+                }
+            }
+        }
+    }
+
     for (unsigned int extruderNo : printExtruders) {
         ++extruderNo;
         for (const auto& objectWithExtruder : objPrintVec) {
@@ -933,6 +947,7 @@ static ExPolygons outer_inner_brim_area(const Print& print,
             coordf_t           brim_ears_max_angle = object->config().brim_ears_max_angle.value;
 
             ExPolygons         brim_area_object;
+            std::vector<std::pair<Polygon, ExPolygons>> outer_brim_areas;
             ExPolygons         no_brim_area_object;
             ExPolygons         brim_area_support;
             ExPolygons         no_brim_area_support;
@@ -1003,7 +1018,12 @@ static ExPolygons outer_inner_brim_area(const Print& print,
                             }else {
                                 outerExpoly = offset_ex(innerExpoly, brim_width_mod, jtRound, SCALED_RESOLUTION);
                             }
-                            append(brim_area_object, diff_ex(outerExpoly, innerExpoly));
+                            ExPolygons outer_brim = diff_ex(outerExpoly, innerExpoly);
+                            // Painted ears belong to the whole object, not the current contour.
+                            if (use_brim_ears || brim_holes.empty())
+                                append(brim_area_object, std::move(outer_brim));
+                            else
+                                outer_brim_areas.emplace_back(ex_poly.contour, std::move(outer_brim));
                         }
                         if (has_inner_brim) {
                             ExPolygons outerExpoly;
@@ -1034,6 +1054,32 @@ static ExPolygons outer_inner_brim_area(const Print& print,
                 for (const PrintInstance& instance : object->instances()) {
                     if (!brim_area_object.empty())
                         append_and_translate(brim_area, brim_area_object, instance, print, brimAreaMap);
+                    for (const auto& outer_brim : outer_brim_areas) {
+                        ExPolygons area = outer_brim.second;
+                        if (area.empty())
+                            continue;
+                        const Point shift  = instance.shift_without_plate_offset();
+                        Polygon     source = outer_brim.first;
+                        source.translate(shift);
+                        const BoundingBox source_bounds = source.bounding_box();
+                        const Polygons    source_contour{std::move(source)};
+                        for (ExPolygon& polygon : area)
+                            polygon.translate(shift);
+                        const BoundingBox bounds = get_extents(area);
+                        for (const auto& hole : brim_holes) {
+                            if (!bounds.overlap(hole.second) && !hole.second.contains(source_bounds))
+                                continue;
+                            const Polygons hole_contour{hole.first};
+                            // Preserve partial overlaps; classify whole contours, not a single vertex.
+                            if (hole.second.contains(source_bounds) && diff_ex(source_contour, hole_contour).empty())
+                                area = intersection_ex(area, hole_contour);
+                            else if (!source_bounds.overlap(hole.second) || intersection_ex(source_contour, hole_contour).empty())
+                                area = diff_ex(area, hole_contour);
+                            if (area.empty())
+                                break;
+                        }
+                        expolygons_append(brimAreaMap[object->id()], diff_ex(area, brim_area));
+                    }
                     append_and_translate(no_brim_area, no_brim_area_object, instance);
                     append_and_translate(holes, holes_object, instance);
                     append_and_translate(objectIslands, objectIsland, instance);

@@ -366,7 +366,7 @@ public:
      *
      * Used by the picking pass so painted volumes never upload the unpainted full mesh.
      */
-    void RenderMmuSegmentsForPicking();
+    void RenderMmuSegmentsForPicking(GLShaderProgram* shader);
 
     // LOD mesh simplification (async, uses quadric edge collapse)
     bool SimplifyMesh(const TriangleMesh& mesh, std::shared_ptr<GUI::GLModel> model, std::shared_ptr<std::atomic<bool>> readyFlag, LODLevel lod) const;

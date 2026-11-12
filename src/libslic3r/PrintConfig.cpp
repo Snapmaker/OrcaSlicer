@@ -3552,12 +3552,12 @@ void PrintConfigDef::init_fff_params()
 
     def = this->add("sparse_infill_filament", coInt);
     def->gui_type = ConfigOptionDef::GUIType::i_enum_open;
-    def->label = L("Infill");
+    def->label = L("Sparse infill");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print internal sparse infill.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("sparse_infill_line_width", coFloatOrPercent);
     def->label = L("Sparse infill");
@@ -3893,7 +3893,7 @@ void PrintConfigDef::init_fff_params()
             (void)L("Maximum speed Z");
             (void)L("Maximum speed E");
             def->category = L("Machine limits");
-            def->readonly = false;
+            def->readonly = true;
             def->tooltip  = (boost::format("Maximum speed of %1% axis") % axis_upper).str();
             (void)L("Maximum X speed");
             (void)L("Maximum Y speed");
@@ -3911,7 +3911,7 @@ void PrintConfigDef::init_fff_params()
             (void)L("Maximum acceleration Z");
             (void)L("Maximum acceleration E");
             def->category = L("Machine limits");
-            def->readonly = false;
+            def->readonly = true;
             def->tooltip  = (boost::format("Maximum acceleration of the %1% axis") % axis_upper).str();
             (void)L("Maximum acceleration of the X axis");
             (void)L("Maximum acceleration of the Y axis");
@@ -3929,7 +3929,7 @@ void PrintConfigDef::init_fff_params()
             (void)L("Maximum jerk Z");
             (void)L("Maximum jerk E");
             def->category = L("Machine limits");
-            def->readonly = false;
+            def->readonly = true;
             def->tooltip  = (boost::format("Maximum jerk of the %1% axis") % axis_upper).str();
             (void)L("Maximum jerk of the X axis");
             (void)L("Maximum jerk of the Y axis");
@@ -3948,6 +3948,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Maximum junction deviation (M205 J, only apply if JD > 0 for Marlin Firmware)");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
+    def->readonly = true;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats{0. ,0. });
 
@@ -3980,7 +3981,7 @@ void PrintConfigDef::init_fff_params()
     //                 "as travel acceleration (M204 T).");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
-    def->readonly = false;
+    def->readonly = true;
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionFloats{ 1500., 1250. });
 
@@ -3992,7 +3993,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Maximum acceleration for retracting (M204 R)");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
-    def->readonly = false;
+    def->readonly = true;
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionFloats{ 1500., 1250. });
 
@@ -4003,7 +4004,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Maximum acceleration for travel (M204 T), it only applies to Marlin 2.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
-    def->readonly = false;
+    def->readonly = true;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats{ 0., 0. });
 
@@ -4392,9 +4393,9 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Walls");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print walls.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("inner_wall_line_width", coFloatOrPercent);
     def->label = L("Inner wall");
@@ -5188,9 +5189,9 @@ void PrintConfigDef::init_fff_params()
     def->label = L("Solid infill");
     def->category = L("Extruders");
     def->tooltip = L("Filament to print solid infill.");
-    def->min = 1;
+    def->min = 0;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionInt(1));
+    def->set_default_value(new ConfigOptionInt(0));
 
     def = this->add("internal_solid_infill_line_width", coFloatOrPercent);
     def->label = L("Internal solid infill");
@@ -5424,6 +5425,15 @@ void PrintConfigDef::init_fff_params()
     def->enum_labels.push_back(L("Close holes"));
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionEnum<SlicingMode>(SlicingMode::Regular));
+
+    def = this->add("enable_overlap_area_carving", coBool);
+    def->label = L("Carve overlaps by per-layer slice area");
+    def->category = L("Other");
+    def->tooltip = L("When enabled, overlaps between multi-extruder parts are carved with the new "
+                   "algorithm: on each layer, the part with the smaller slice area owns the overlap, "
+                   "keeping small details intact inside larger bodies. Developer option.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("z_offset", coFloat);
     def->label = L("Z offset");
@@ -6211,7 +6221,7 @@ void PrintConfigDef::init_fff_params()
     //def->label = L("Z travel");
     //def->tooltip = L("Speed of vertical travel along z axis. "
     //                 "This is typically lower because build plate or gantry is hard to be moved. "
-    //                 "Zero means using travel speed directly in G-code, but will be limited by printer's ability when run G-code.");
+    //                 "Zero uses the active travel speed. Z travel is capped by a positive machine_max_speed_z.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comDevelop;
@@ -7975,6 +7985,29 @@ double min_object_distance(const ConfigBase &cfg)
 
     return ret;
 }
+
+// Feature-filament keys that carry the legacy "1 = default"
+static const std::vector<std::string> legacy_feature_filament_keys()
+{
+    static const std::vector<std::string> keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+    return keys;
+}
+
+template<typename ConfigT>
+static bool migrate_legacy_feature_filament_default_impl(ConfigT &config)
+{
+    bool changed = false;
+    for (const std::string &key : legacy_feature_filament_keys()) {
+        if (config.has(key) && config.opt_int(key) == 1) {
+            config.set(key, 0);
+            changed = true;
+        }
+    }
+    return changed;
+}
+
+bool migrate_legacy_feature_filament_default(DynamicPrintConfig &config) { return migrate_legacy_feature_filament_default_impl(config); }
+bool migrate_legacy_feature_filament_default(ModelConfig &config) { return migrate_legacy_feature_filament_default_impl(config); }
 
 void DynamicPrintConfig::normalize_fdm(int used_filaments)
 {

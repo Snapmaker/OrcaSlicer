@@ -954,14 +954,14 @@ void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
     if (sels.Count() == 1) {
         const ModelConfig& config = obj_list()->get_item_config(sels[0]);
         // BBS: set default extruder to 1
-        initial_extruder = config.has("extruder") ? config.extruder() : 0;
+        initial_extruder = config.has("extruder") ? config.extruder() : 1;
     }
 
-    for (size_t display_idx = 0; display_idx <= ordered_filament_ids.size(); ++display_idx)
+    for (size_t display_idx = 1; display_idx <= ordered_filament_ids.size(); ++display_idx)
     {
-        const int actual_filament_id = display_idx == 0 ? 0 : int(ordered_filament_ids[display_idx - 1]);
+        const int actual_filament_id = int(ordered_filament_ids[display_idx - 1]);
         const bool is_active_extruder = actual_filament_id == initial_extruder;
-        const int icon_idx = actual_filament_id == 0 ? 0 : actual_filament_id - 1;
+        const int icon_idx = actual_filament_id - 1;
 
         wxString item_name = filament_menu_item_name(actual_filament_id, int(display_idx));
 
@@ -2112,12 +2112,12 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
         if (sel_vol && sel_vol->type() == ModelVolumeType::PARAMETER_MODIFIER)
             initial_extruder = config.has("extruder") ? config.extruder() : 0;
         else
-            initial_extruder = config.has("extruder") ? config.extruder() : 0;
+            initial_extruder = config.has("extruder") ? config.extruder() : 1;
     }
 
-    for (size_t display_idx = 0; display_idx <= ordered_filament_ids.size(); ++display_idx)
+    for (size_t display_idx = 1; display_idx <= ordered_filament_ids.size(); ++display_idx)
     {
-        const int actual_filament_id = display_idx == 0 ? 0 : int(ordered_filament_ids[display_idx - 1]);
+        const int actual_filament_id = int(ordered_filament_ids[display_idx - 1]);
         bool is_active_extruder = false;
 
         wxString item_name = filament_menu_item_name(actual_filament_id, int(display_idx));
@@ -2128,7 +2128,7 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
 
         append_menu_item(extruder_selection_menu, wxID_ANY, item_name, "",
             [actual_filament_id](wxCommandEvent&) { obj_list()->set_extruder_for_selected_items(actual_filament_id); },
-            actual_filament_id == 0 || size_t(actual_filament_id - 1) >= icons.size() ? wxNullBitmap : *icons[size_t(actual_filament_id - 1)], menu,
+            size_t(actual_filament_id - 1) >= icons.size() ? wxNullBitmap : *icons[size_t(actual_filament_id - 1)], menu,
             [is_active_extruder]() { return !is_active_extruder; }, m_parent);
     }
     menu->Append(wxID_ANY, name, extruder_selection_menu, _L("Change Filament"));

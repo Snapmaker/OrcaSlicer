@@ -5,6 +5,7 @@
 #include <boost/filesystem/path.hpp>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace Slic3r::Gateway;
@@ -100,4 +101,16 @@ TEST_CASE("ConnectionProcessManager terminate is a no-op without a tracked child
     // Injected runners bypass the real child tracking, so terminate() must stay safe.
     manager.terminate();
     manager.terminate();
+}
+
+TEST_CASE("ConnectionProcessManager compares truncated macOS process names", "[gateway][process]")
+{
+    // The kernel truncates p_comm to 15 visible characters.
+    REQUIRE(ConnectionProcessManager::truncated_process_name_matches("snapmaker_contr", "snapmaker_control_macos_arm64"));
+    REQUIRE(ConnectionProcessManager::truncated_process_name_matches("snapmaker_conne", "snapmaker_connection_macos_arm64"));
+    REQUIRE_FALSE(ConnectionProcessManager::truncated_process_name_matches("snapmaker_conne", "snapmaker_control_macos_arm64"));
+    REQUIRE_FALSE(ConnectionProcessManager::truncated_process_name_matches("snapmaker_contr", "snapmaker_connection_macos_arm64"));
+    REQUIRE_FALSE(ConnectionProcessManager::truncated_process_name_matches("", "snapmaker_control_macos_arm64"));
+    REQUIRE(ConnectionProcessManager::truncated_process_name_matches("short", "short"));
+    REQUIRE_FALSE(ConnectionProcessManager::truncated_process_name_matches("shorter", "short"));
 }

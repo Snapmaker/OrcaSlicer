@@ -552,8 +552,8 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     gcodegen.m_writer.add_object_end_labels(gcode);
 
     double current_z = gcodegen.writer().get_position().z();
-    if (z == -1.) // in case no specific z was provided, print at current_z pos
-        z = current_z;
+    if (z == -1.) // in case no specific z was provided, print at the logical layer Z;
+        z = gcodegen.nominal_z() > 0. ? gcodegen.nominal_z() : current_z; // defer to the writer's physical Z while priming, before change_layer() has run
     if (!is_approx(z, current_z)) {
         gcode += gcodegen.writer().retract();
         gcode += gcodegen.writer().travel_to_z(z, "Travel down to the last wipe tower layer.");
@@ -802,8 +802,8 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
 
     double current_z = gcodegen.writer().get_position().z();
-    if (z == -1.) // in case no specific z was provided, print at current_z pos
-        z = current_z;
+    if (z == -1.) // in case no specific z was provided, print at the logical layer Z;
+        z = gcodegen.nominal_z() > 0. ? gcodegen.nominal_z() : current_z; // defer to the writer's physical Z while priming, before change_layer() has run
 
     const bool will_go_down = !is_approx(z, current_z);
     if (!tcr.priming && (tcr.is_finish_first || will_go_down)) {
@@ -979,9 +979,14 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     // A phony move to the end position at the wipe tower.
     gcodegen.writer().travel_to_xy((end_pos + plate_origin_2d).cast<double>());
     gcodegen.set_last_pos(wipe_tower_point_to_object_point(gcodegen, end_pos + plate_origin_2d));
-    if (!is_approx(z, current_z)) {
+    // Return to the logical layer the model printing resumes at. current_z is only
+    // the writer's physical Z on entry, which may still be the previous layer while
+    // the layer change is deferred - returning there would dip below the new layer
+    // and cross back over the model.
+    const double return_z = gcodegen.nominal_z() > 0. ? gcodegen.nominal_z() : current_z;
+    if (!is_approx(z, return_z)) {
         gcode += gcodegen.writer().retract();
-        gcode += gcodegen.writer().travel_to_z(current_z, "Travel back up to the topmost object layer.");
+        gcode += gcodegen.writer().travel_to_z(return_z, "Travel back up to the current object layer.");
         gcode += gcodegen.writer().unretract();
     }
     else {
@@ -7320,8 +7325,8 @@ std::string GCode::change_layer(coordf_t print_z)
 
     m_need_change_layer_lift_z = true;
 
-    m_nominal_z                 = z;
-    m_writer.get_position().z() = z;
+    // The writer must retain the actual Z until the deferred layer-change travel is emitted.
+    m_nominal_z = z;
 
     // forget last wiping path as wiping after raising Z is pointless
     // BBS. Dont forget wiping path to reduce stringing.

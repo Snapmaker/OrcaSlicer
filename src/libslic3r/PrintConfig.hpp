@@ -1579,6 +1579,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionPoint,               bed_mesh_probe_distance))
     ((ConfigOptionFloat,               adaptive_bed_mesh_margin))
 
+    // SoftFever: developer switch for cross-region overlap carving (2.4.1 per-layer area rule)
+    ((ConfigOptionBool,                enable_overlap_area_carving))
+
 
 )
 
@@ -2048,6 +2051,9 @@ private:
 
     static uint64_t             s_last_timestamp;
 };
+
+bool migrate_legacy_feature_filament_default(DynamicPrintConfig &config);
+bool migrate_legacy_feature_filament_default(ModelConfig &config);
 
 } // namespace Slic3r
 

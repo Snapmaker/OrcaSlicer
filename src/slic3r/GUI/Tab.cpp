@@ -3058,6 +3058,7 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
 
         optgroup = page->new_optgroup(L("Special mode"), L"param_special");
         optgroup->append_single_option_line("slicing_mode", "others_settings_special_mode#slicing-mode");
+        optgroup->append_single_option_line("enable_overlap_area_carving");
         optgroup->append_single_option_line("print_sequence", "others_settings_special_mode#print-sequence");
         optgroup->append_single_option_line("print_order", "others_settings_special_mode#intra-layer-order");
         optgroup->append_single_option_line("spiral_mode", "others_settings_special_mode#spiral-vase");
@@ -3313,26 +3314,6 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
     return t;
 }
 
-static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
-{
-    DynamicPrintConfig resolved(config);
-
-    if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
-        const int extruder = extruder_opt->value;
-        if (!resolved.has("wall_filament"))
-            resolved.set_key_value("wall_filament", new ConfigOptionInt(extruder));
-        if (!resolved.has("sparse_infill_filament"))
-            resolved.set_key_value("sparse_infill_filament", new ConfigOptionInt(extruder));
-        if (!resolved.has("solid_infill_filament"))
-            resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(extruder));
-    }
-
-    if (!resolved.has("solid_infill_filament") && resolved.has("sparse_infill_filament"))
-        resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(resolved.opt_int("sparse_infill_filament")));
-
-    return resolved;
-}
-
 static void sync_plate_bed_type_to_global(DynamicPrintConfig& config)
 {
     if (wxGetApp().preset_bundle == nullptr)
@@ -3416,14 +3397,14 @@ void TabPrintModel::update_model_config()
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
         DynamicPrintConfig const & global_config= *m_config;
-        const DynamicPrintConfig local_config = resolved_model_config_for_tab(m_object_configs.begin()->second->get());
+        const DynamicPrintConfig local_config(m_object_configs.begin()->second->get());
         DynamicPrintConfig diff_config;
         std::vector<std::string> all_keys = local_config.keys(); // at least one has these keys
         std::vector<std::string> local_keys = intersect(m_keys, all_keys); // all equal on these keys
         if (m_object_configs.size() > 1) {
             std::vector<std::string> global_keys = m_keys; // all equal with global on these keys
             for (auto & config : m_object_configs) {
-                const DynamicPrintConfig resolved_config = resolved_model_config_for_tab(config.second->get());
+                const DynamicPrintConfig resolved_config(config.second->get());
                 auto equals = global_config.equal(resolved_config);
                 global_keys = intersect(global_keys, equals);
                 diff_config.apply_only(resolved_config, substruct(resolved_config.keys(), equals));

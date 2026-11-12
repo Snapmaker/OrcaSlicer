@@ -190,6 +190,81 @@ std::vector<indexed_triangle_set> its_split(const Its &its)
     return ret;
 }
 
+// split() variant that also reports, for every split part, the mapping from the
+// new face index to the source face index
+template<class Its, class OutputIt, class OutputItShip>
+void its_split_and_keep_relationship(const Its &m, OutputIt out_it, OutputItShip out_ship)
+{
+    using namespace meshsplit_detail;
+
+    const indexed_triangle_set& its = ItsWithNeighborsIndex_<Its>::get_its(m);
+
+    struct VertexConv {
+        size_t part_id = std::numeric_limits<size_t>::max();
+        size_t vertex_image;
+    };
+    std::vector<VertexConv> vidx_conv(its.vertices.size());
+
+    meshsplit_detail::NeighborVisitor visitor(its, meshsplit_detail::ItsWithNeighborsIndex_<Its>::get_index(m));
+
+    std::vector<size_t> facets;
+    for (size_t part_id = 0;; ++part_id) {
+        // Collect all faces of the next patch.
+        facets.clear();
+        visitor.visit([&facets](size_t idx) { facets.emplace_back(idx); return true; });
+        if (facets.empty())
+            break;
+        std::sort(facets.begin(), facets.end());
+        // Create a new mesh for the part that was just split off.
+        indexed_triangle_set mesh;
+        mesh.indices.reserve(facets.size());
+        mesh.vertices.reserve(std::min(facets.size() * 3, its.vertices.size()));
+        std::unordered_map<int, int> relationship;
+        // Assign the facets to the new mesh.
+        for (size_t face_id : facets) {
+            const auto &face = its.indices[face_id];
+            Vec3i32 new_face;
+            for (size_t v = 0; v < 3; ++v) {
+                auto vi = face(v);
+
+                if (vidx_conv[vi].part_id != part_id) {
+                    vidx_conv[vi] = {part_id, mesh.vertices.size()};
+                    mesh.vertices.emplace_back(its.vertices[size_t(vi)]);
+                }
+
+                new_face(v) = vidx_conv[vi].vertex_image;
+            }
+            relationship[int(mesh.indices.size())] = int(face_id);
+            mesh.indices.emplace_back(new_face);
+        }
+
+        *out_it = std::move(mesh);
+        *out_ship = std::move(relationship);
+        ++out_it;
+        ++out_ship;
+    }
+}
+
+class MeshAndShip
+{
+public:
+    std::vector<indexed_triangle_set> itses;
+    std::vector<std::unordered_map<int, int>> ships;
+};
+
+template<class Its>
+MeshAndShip its_split_and_save_relationship(const Its& its)
+{
+    auto ret = reserve_vector<indexed_triangle_set>(3);
+    auto ret_ship = reserve_vector<std::unordered_map<int, int>>(3);
+
+    its_split_and_keep_relationship(its, std::back_inserter(ret), std::back_inserter(ret_ship));
+    MeshAndShip mesh_ship;
+    mesh_ship.itses = ret;
+    mesh_ship.ships = ret_ship;
+    return mesh_ship;
+}
+
 template<class Its>
 bool its_is_splittable(const Its &m)
 {

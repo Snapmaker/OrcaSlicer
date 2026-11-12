@@ -1389,6 +1389,24 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
         }
         bool result = _load_model_from_file(filename, model, plate_data_list, project_presets, config, config_substitutions, proFn, project, plate_id);
         is_bbl_3mf = m_is_bbl_3mf;
+
+        if (result && (!m_bambuslicer_generator_version || *m_bambuslicer_generator_version < Semver(2, 5, 0))) {
+            // Legacy feature-filament migration: map the legacy default "1" to "0" ("Default")
+            // across the project settings, the embedded preset copies and every object/part/
+            // layer-range config of the imported model. Explicit values > 1 are preserved.
+            migrate_legacy_feature_filament_default(config);
+            for (Preset* preset : project_presets) {
+                if (preset != nullptr)
+                    migrate_legacy_feature_filament_default(preset->config);
+            }
+            for (ModelObject* model_object : model.objects) {
+                migrate_legacy_feature_filament_default(model_object->config);
+                for (ModelVolume* model_volume : model_object->volumes)
+                    migrate_legacy_feature_filament_default(model_volume->config);
+                for (auto& range : model_object->layer_config_ranges)
+                    migrate_legacy_feature_filament_default(range.second);
+            }
+        }
         if (m_bambuslicer_generator_version)
             file_version = *m_bambuslicer_generator_version;
         // save for restore

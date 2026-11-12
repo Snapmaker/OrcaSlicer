@@ -20,6 +20,7 @@
 #elif defined(__APPLE__)
 #include <libproc.h>
 #include <signal.h>
+#include <sys/param.h>
 #include <unistd.h>
 #elif defined(__linux__)
 #include <poll.h>
@@ -34,11 +35,13 @@
 #include <cctype>
 #include <cerrno>
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <limits.h>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <vector>
@@ -114,11 +117,42 @@ std::string process_executable_path(std::uint64_t pid)
     return executable_path;
 }
 
+#if defined(__APPLE__)
+bool process_name_matches(std::uint64_t pid, const boost::filesystem::path& expected_executable)
+{
+    // p_comm survives unmounted executable volumes, but the kernel truncates it to MAXCOMLEN bytes.
+    char      process_name[MAXCOMLEN]{};
+    const int name_length = proc_name(static_cast<pid_t>(pid), process_name, sizeof(process_name));
+    if (name_length <= 0) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "[FLUTTER_FLOW] [gateway]connection gateway stale owner executable path and process name are unavailable: pid=" << pid;
+        return false;
+    }
+
+    const std::string      expected_name = expected_executable.filename().string();
+    const std::string_view actual_name{process_name, strnlen(process_name, sizeof(process_name))};
+    const bool             matches = ConnectionProcessManager::truncated_process_name_matches(actual_name, expected_name);
+    BOOST_LOG_TRIVIAL(warning)
+        << "[FLUTTER_FLOW] [gateway]connection gateway stale owner executable path is unavailable; process-name fallback "
+           "matched="
+        << matches << ": pid=" << pid << ", actual_name=" << actual_name << ", expected_name=" << expected_name;
+    return matches;
+}
+#endif
+
 bool process_executable_name_matches(std::uint64_t pid, const boost::filesystem::path& expected_executable)
 {
     const std::string executable_path = process_executable_path(pid);
-    if (executable_path.empty())
+    if (executable_path.empty()) {
+#if defined(__APPLE__)
+        // proc_pidpath fails for a live process whose executable volume was unmounted, such as a CLI launched from an ejected DMG.
+        return process_name_matches(pid, expected_executable);
+#else
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway stale owner executable path is unavailable: pid=" << pid
+                                   << ", expected=" << expected_executable.filename().string();
         return false;
+#endif
+    }
 
     const boost::filesystem::path actual_executable{executable_path};
     return actual_executable.filename() == expected_executable.filename();
@@ -150,6 +184,9 @@ bool terminate_process(std::uint64_t pid, const boost::filesystem::path& expecte
     if (pid_fd >= 0) {
         // The pidfd pins this PID while the executable identity is checked and signaled.
         if (!process_executable_name_matches(pid, expected_executable)) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "[FLUTTER_FLOW] [gateway]connection gateway stale owner ignored because its executable does not match: pid=" << pid
+                << ", port=" << port << ", expected=" << expected_executable.filename().string();
             close(pid_fd);
             return false;
         }
@@ -175,8 +212,12 @@ bool terminate_process(std::uint64_t pid, const boost::filesystem::path& expecte
 
     // Old Linux kernels and macOS cannot pin a PID here, so this fallback retains a narrow
     // reuse window between identity validation and kill.
-    if (!process_executable_name_matches(pid, expected_executable))
+    if (!process_executable_name_matches(pid, expected_executable)) {
+        BOOST_LOG_TRIVIAL(warning)
+            << "[FLUTTER_FLOW] [gateway]connection gateway stale owner ignored because its executable does not match: pid=" << pid
+            << ", port=" << port << ", expected=" << expected_executable.filename().string();
         return false;
+    }
 
     if (::kill(static_cast<pid_t>(pid), SIGKILL) != 0) {
         const int error = errno;
@@ -285,6 +326,15 @@ std::optional<std::uint64_t> ConnectionProcessManager::owner_pid_from_lock(const
     return owner_pid;
 }
 
+bool ConnectionProcessManager::truncated_process_name_matches(std::string_view process_name, std::string_view expected_name)
+{
+    // macOS stores p_comm in MAXCOMLEN (16) bytes, leaving 15 comparable characters.
+    constexpr std::size_t maximum_comparable_length = 15;
+    const std::size_t     comparable_length         = std::min(expected_name.size(), maximum_comparable_length);
+    return process_name.size() == comparable_length &&
+           process_name.substr(0, comparable_length) == expected_name.substr(0, comparable_length);
+}
+
 struct ConnectionProcessManager::ChildProcessTracker
 {
     // Detached children survive the runner's local child object, so the manager keeps the
@@ -328,41 +378,44 @@ PortOwnerTakeoverResult ConnectionProcessManager::terminate_port_owner(std::uint
 
     const DWORD pid = loopback_listener_pid(port);
     if (pid == 0) {
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway stale owner takeover found no listener on port " << port;
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW][gateway]connection gateway stale owner takeover found no listener on port " << port;
         return PortOwnerTakeoverResult::NotTakenOver;
     }
 
     ProcessHandle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid)};
     if (!process) {
         const DWORD error = GetLastError();
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway stale owner cannot be opened: pid=" << pid << ", port=" << port
-                                   << ", error=" << error;
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway stale owner cannot be opened: pid=" << pid
+                                   << ", port=" << port << ", error=" << error;
         return PortOwnerTakeoverResult::NotTakenOver;
     }
     if (!process_executable_name_matches(process.get(), config_.executable)) {
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway stale owner ignored because its executable does not match: pid=" << pid
-                                   << ", port=" << port;
+        BOOST_LOG_TRIVIAL(warning)
+            << "[FLUTTER_FLOW] [gateway]connection gateway stale owner ignored because its executable does not match: pid=" << pid
+            << ", port=" << port;
         return PortOwnerTakeoverResult::NotTakenOver;
     }
     if (!TerminateProcess(static_cast<HANDLE>(process.get()), 1)) {
         const DWORD error = GetLastError();
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway stale owner cannot be terminated: pid=" << pid << ", port=" << port
-                                   << ", error=" << error;
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway stale owner cannot be terminated: pid=" << pid
+                                   << ", port=" << port << ", error=" << error;
         return PortOwnerTakeoverResult::NotTakenOver;
     }
     constexpr DWORD terminate_timeout_ms = 5000;
     const DWORD     wait_result          = WaitForSingleObject(process.get(), terminate_timeout_ms);
     if (wait_result == WAIT_FAILED) {
         const DWORD error = GetLastError();
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway stale owner wait failed: pid=" << pid << ", port=" << port << ", error=" << error;
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway stale owner wait failed: pid=" << pid << ", port=" << port
+                                   << ", error=" << error;
         return PortOwnerTakeoverResult::NotTakenOver;
     }
     if (wait_result != WAIT_OBJECT_0) {
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway stale owner did not exit promptly: pid=" << pid << ", port=" << port
-                                   << ", wait_result=" << wait_result;
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway stale owner did not exit promptly: pid=" << pid
+                                   << ", port=" << port << ", wait_result=" << wait_result;
         return PortOwnerTakeoverResult::NotTakenOver;
     }
-    BOOST_LOG_TRIVIAL(warning) << "connection gateway terminated stale shared CLI owner: pid=" << pid << ", port=" << port;
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway terminated stale shared CLI owner: pid=" << pid
+                               << ", port=" << port;
     return PortOwnerTakeoverResult::TakenOver;
 #elif defined(__APPLE__) || defined(__linux__)
     if (port == 0 || config_.executable.empty())
@@ -370,16 +423,18 @@ PortOwnerTakeoverResult ConnectionProcessManager::terminate_port_owner(std::uint
 
     const std::optional<std::uint64_t> pid = owner_pid_from_lock(shared_cli_lock_path(), port);
     if (!pid.has_value()) {
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway stale owner lock does not identify port " << port;
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway stale owner lock does not identify port " << port;
         return PortOwnerTakeoverResult::NotTakenOver;
     }
 
     if (!terminate_process(*pid, config_.executable, port)) {
-        BOOST_LOG_TRIVIAL(warning) << "connection gateway stale owner ignored or termination failed: pid=" << *pid << ", port=" << port;
+        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway stale owner ignored or termination failed: pid=" << *pid
+                                   << ", port=" << port;
         return PortOwnerTakeoverResult::NotTakenOver;
     }
 
-    BOOST_LOG_TRIVIAL(warning) << "connection gateway terminated stale shared CLI owner: pid=" << *pid << ", port=" << port;
+    BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [gateway]connection gateway terminated stale shared CLI owner: pid=" << *pid
+                               << ", port=" << port;
     return PortOwnerTakeoverResult::TakenOver;
 #else
     BOOST_LOG_TRIVIAL(warning) << "connection gateway stale shared CLI owner takeover is not supported on this platform; port=" << port;

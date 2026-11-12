@@ -80,6 +80,8 @@ public:
     static ProcessDiscoveryError        parse_port_frame(const std::string& output, std::uint16_t& port);
     static std::vector<std::string>     build_arguments(const std::string& locale);
     static std::optional<std::uint64_t> owner_pid_from_lock(const boost::filesystem::path& lock_path, std::uint16_t port);
+    // macOS truncates the kernel process name (p_comm) to MAXCOMLEN bytes, so only the common prefix is comparable.
+    static bool truncated_process_name_matches(std::string_view process_name, std::string_view expected_name);
     // File name of the snapmaker_connection CLI binary expected next to the resources directory
     // for the current platform and architecture. The binary itself is placed locally and not tracked in git.
     static std::string_view cli_executable_name();

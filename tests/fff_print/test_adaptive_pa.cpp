@@ -1,4 +1,5 @@
-#include "catch_main.hpp"
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/GCode.hpp"

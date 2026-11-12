@@ -20,31 +20,45 @@
                 window.showMarkdown(encodeURIComponent(data));
             });
         }
-        // Feishu exports merged table cells as "value in first row, empty cells below";
-        // GFM has no merge concept, so rebuild real rowSpans from that pattern.
-        // Columns are processed right-to-left: removing a cell shifts the rest of its row
-        // left, which would corrupt the column index of every later column.
+        // Infer vertical merges from Feishu's plain empty-cell pattern. GFM carries
+        // no merge metadata, so this remains a heuristic: genuine blanks are ambiguous.
+        // Preserve child elements and explicit spans; never infer across row groups,
+        // blank rows or rows with missing cells.
         window.fixFeishuMerges = function () {
+            function isEmptyCell(cell) {
+                return cell.children.length === 0 && cell.textContent.trim() === '';
+            }
             document.querySelectorAll('#contents table').forEach(function (table) {
-                var rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr'));
-                if (!rows.length) return;
-                var colCount = 0;
-                rows.forEach(function (row) { colCount = Math.max(colCount, row.children.length); });
-                for (var c = colCount - 1; c >= 0; c--) {
-                    var anchor = null;
-                    rows.forEach(function (row) {
-                        var cells = Array.prototype.slice.call(row.children);
-                        if (cells.length && cells.every(function (td) { return td.textContent.trim() === ''; })) return;
-                        var cell = row.children[c];
-                        if (!cell) return;
-                        if (cell.textContent.trim() === '' && anchor) {
-                            anchor.rowSpan = anchor.rowSpan + 1;
-                            cell.remove();
-                        } else if (cell.textContent.trim() !== '') {
-                            anchor = cell;
-                        }
+                if (table.querySelector('[rowspan], [colspan], table') || table.parentElement.closest('table')) return;
+                Array.prototype.slice.call(table.tBodies).forEach(function (body) {
+                    // Snapshot the original grid before removing cells, including blank-row
+                    // status, so changes in one column cannot affect another column.
+                    var rows = Array.prototype.slice.call(body.rows).map(function (row) {
+                        var cells = Array.prototype.slice.call(row.cells);
+                        return { cells: cells, isBlank: cells.every(isEmptyCell) };
                     });
-                }
+                    var colCount = 0;
+                    rows.forEach(function (row) { colCount = Math.max(colCount, row.cells.length); });
+                    for (var c = colCount - 1; c >= 0; c--) {
+                        var anchor = null;
+                        rows.forEach(function (row) {
+                            if (row.isBlank || row.cells.length !== colCount) {
+                                anchor = null;
+                                return;
+                            }
+                            var cell = row.cells[c];
+                            if (isEmptyCell(cell)) {
+                                if (anchor) {
+                                    anchor.rowSpan = anchor.rowSpan + 1;
+                                    cell.remove();
+                                }
+                            } else {
+                                // Textless rich content is preserved and breaks the chain.
+                                anchor = cell.textContent.trim() !== '' ? cell : null;
+                            }
+                        });
+                    }
+                });
             });
         };
         // GFM task lists ("- [ ] ", "- [x] ") are not part of markdown-it core. The
@@ -92,13 +106,22 @@
                 el.replaceWith(notice);
             });
         };
-        // Run the fix-ups automatically after every markdown render.
+        // Cache only within this document. C++ retains the source and may resend it
+        // after height notifications; a reload creates a fresh cache and renders again.
         (function () {
             var original = window.showMarkdown;
+            var lastData = null;
+            var lastKeepImages = null;
             window.showMarkdown = function (data, keepImages) {
-                if (original) original(data, keepImages);
+                var showImages = keepImages === undefined ? true : Boolean(keepImages);
+                if (data === lastData && showImages === lastKeepImages) return;
+                if (!original) return;
+                original(data, showImages);
                 window.fixFeishuMerges();
                 window.fixFeishuSheetPlaceholder();
+                // Failed renders remain retryable with the same source.
+                lastData = data;
+                lastKeepImages = showImages;
             };
         })();
     </script>

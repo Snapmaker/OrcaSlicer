@@ -502,15 +502,16 @@ void UpdateVersionDialog::RunScript(std::string script)
     WebView::RunScript(m_vebview_release_note, script);
 }
 
+/** @brief Restore retained release notes whenever the shell page reports readiness. */
 void UpdateVersionDialog::inject_release_note()
 {
     if (!m_webview_loaded || m_pending_release_note.empty())
+    {
         return;
-    // Inject once: the page updates document.title again when the rendered height changes,
-    // which fires further title events; those must not re-run the render.
-    std::string note;
-    note.swap(m_pending_release_note);
-    ShowReleaseNote(note);
+    }
+    // Keep the source for page reloads. The page skips duplicate renders within
+    // its document, so height notifications do not rebuild the note or its images.
+    ShowReleaseNote(m_pending_release_note);
 }
 
 void UpdateVersionDialog::on_dpi_changed(const wxRect &suggested_rect) {

@@ -318,6 +318,11 @@ public:
     void set_plater_dirty(bool is_dirty);
     void update_project_dirty_from_presets();
     int  save_project_if_dirty(const wxString& reason);
+    // Recoverable-OOM notice (import/slice/render failures): one dialog with
+    // the finalized product wording, standard Yes/No buttons; Yes opens a
+    // directory picker and saves the project there, No closes and does
+    // nothing - the choice (and the risk) stay with the user.
+    void offer_save_on_low_memory();
     void reset_project_dirty_after_save();
     void reset_project_dirty_initial_presets();
 #if ENABLE_PROJECT_DIRTY_STATE_DEBUG_WINDOW

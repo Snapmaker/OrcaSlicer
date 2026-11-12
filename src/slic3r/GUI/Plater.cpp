@@ -54,6 +54,7 @@
 #include <wx/statbox.h>
 #include <wx/statbmp.h>
 #include <wx/filedlg.h>
+#include <wx/dirdlg.h>
 #include <wx/dnd.h>
 #include <wx/progdlg.h>
 #include <wx/string.h>
@@ -74,6 +75,11 @@
 #include <wx/richtooltip.h>
 #include <wx/custombgwin.h>
 #include <wx/popupwin.h>
+// Last in the block on purpose: windows.h defines min/max macros that would
+// otherwise leak into every header included below; WIN32_LEAN_AND_MEAN keeps
+// it to the core API (HeapCompact is included).
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #endif
 #include <wx/clrpicker.h>
 #include <wx/spinctrl.h>
@@ -15423,6 +15429,43 @@ static void sync_nozzle_hrc_warning_notification(NotificationManager* nm, PartPl
             text);
 }
 
+// Recoverable-OOM notice, shared by the import / failed-slice / toolpath-
+// render paths: one dialog with the finalized product wording (kept verbatim)
+// and standard Yes/No buttons. Yes opens a directory picker and saves the
+// project there; No closes and does nothing - the choice (and the risk) stay
+// with the user. The save is best-effort; with a low-memory state it may
+// fail or be cut short by a deeper OOM (which ends the process via the
+// handler's own farewell).
+void Plater::offer_save_on_low_memory()
+{
+    MessageDialog ask_dlg(wxGetApp().mainframe, _L("Your project may be too large for the available memory. The operation has been "
+                               "automatically terminated. Try closing other applications, reducing the model "
+                               "complexity or plate count, and restart.\n\n"
+                               "We strongly recommend saving your current project. Continuing with Snapmaker Orca "
+                               "may cause the app to crash unexpectedly and lose unsaved changes. Save project now?"), wxString::Format(_(L("%s warning")), SLIC3R_APP_FULL_NAME), 
+                            wxYES | wxNO);
+    if (ask_dlg.ShowModal() != wxID_YES)
+        return;
+    const wxString project_file = get_project_filename(".3mf");
+    const std::string leaf = project_file.empty() ?
+        std::string("project.3mf") :
+        boost::filesystem::path(into_u8(project_file)).filename().string();
+    wxFileDialog save_dlg(this, _L("Save project"), "", from_u8(leaf),
+                          file_wildcards(FT_PROJECT), wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+    if (save_dlg.ShowModal() != wxID_OK)
+        return;
+    const boost::filesystem::path dest(save_dlg.GetPath().utf8_str().data());
+    try {
+        export_3mf(dest);
+        wxMessageBox(_L("Project saved."), _L("Notice"), wxOK | wxICON_INFORMATION);
+    } catch (const std::bad_alloc&) {
+        wxMessageBox(_L("Saving failed because of low memory; the project could not be saved."),
+                     _L("Warning"), wxOK | wxICON_WARNING);
+    } catch (const std::exception &e) {
+        wxMessageBox(from_u8(e.what()), _L("Save failed"), wxOK | wxICON_WARNING);
+    }
+}
+
 //BBS: add project slice logic
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
@@ -15494,6 +15537,13 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     // This bool stops showing export finished notification even when process_completed_with_error is false
     bool has_error = false;
     if (evt.error()) {
+        bool out_of_memory = false;
+        try {
+            evt.rethrow_exception();
+        } catch (const std::bad_alloc&) {
+            out_of_memory = true;
+        } catch (...) {
+        }
         auto message = evt.format_error_message();
         if (evt.critical_error()) {
             if (q->m_tracking_popup_menu) {
@@ -15501,7 +15551,49 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
                 // We postpone the error message instead.
                 q->m_tracking_popup_menu_error_message = message.first;
             } else {
-                show_error(q, message.first, message.second.size() != 0 && message.second[0] != 0);
+                if (!out_of_memory) {
+                    show_error(q, message.first, message.second.size() != 0 && message.second[0] != 0);
+                }
+                else {
+                    if (this->printer_technology == ptFFF) {
+                        if (this->background_process.m_fff_print)
+                            this->background_process.m_fff_print->clear();
+                    } else {
+                        if (this->background_process.m_sla_print)
+                            this->background_process.m_sla_print->clear();
+                    }
+                    // The OOM report lives at the catch sites (not in the new handler):
+                    // the stack has unwound and the slicing data was just released, so
+                    // running the Sentry SDK is safe here.
+                    try {
+                        Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                                "memory allocation failed (out of memory, background slicing)",
+                                                "on_process_completed", "out_of_memory", "true");
+                    } catch (...) {
+                    }
+                    // The toolpath renderer keeps its own CPU-side copy of the move
+                    // data (PathLayerStack per-node tables, ~16B per move plus a
+                    // per-move group vector) which the gcode-result reset above does
+                    // not touch. Without clearing it too, a recovered OOM leaves
+                    // hundreds of MB behind (the ~200 MB gap observed against
+                    // upstream, which has no such copy). reset() drops the whole
+                    // preview side (CPU + GPU) and the next successful slice
+                    // rebuilds it, keeping viewer state consistent with the emptied
+                    // gcode result.
+                    this->preview->get_canvas3d()->get_gcode_viewer().reset();
+#ifdef _WIN32
+                    // Slicing allocates a huge number of medium blocks interleaved
+                    // with long-lived objects (model, render buffers); after the
+                    // releases above, ask the heap to return the freed pages to the
+                    // OS so the committed size (and the system's available memory)
+                    // actually drops. Fully fragmented segments keep their share; the
+                    // remaining footprint is the live model/render data of the
+                    // surviving process, not a leak.
+                    HeapCompact(GetProcessHeap(), 0);
+#endif
+                    q->CallAfter([plater = q] { plater->offer_save_on_low_memory(); });
+                }
+
                 notification_manager->set_slicing_progress_hidden();
             }
         } else {
@@ -15561,36 +15653,6 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         }
         else
             this->update_sla_scene();
-    }
-
-    // A failed run (e.g. out of memory while slicing a huge model) can leave
-    // gigabytes of data behind: the partially collected toolpath in the shared
-    // gcode result, and — when the failure hit the slicing stage, before any
-    // gcode existed — the per-layer polygons held by the print objects. The
-    // process survived the failure, so give the memory back before the user
-    // retries with a smaller workload; otherwise the next trivial GUI
-    // allocation still runs into the memory ceiling and turns fatal. An empty
-    // moves vector also marks the result as not finished for preview consumers;
-    // the print data is rebuilt by the next slice's apply().
-    if (evt.error() && is_finished) {
-        if (auto *gcode_result = this->background_process.get_current_gcode_result())
-            gcode_result->reset();
-        bool out_of_memory = false;
-        try {
-            evt.rethrow_exception();
-        } catch (const std::bad_alloc&) {
-            out_of_memory = true;
-        } catch (...) {
-        }
-        if (out_of_memory) {
-            if (this->printer_technology == ptFFF) {
-                if (this->background_process.m_fff_print)
-                    this->background_process.m_fff_print->clear();
-            } else {
-                if (this->background_process.m_sla_print)
-                    this->background_process.m_sla_print->clear();
-            }
-        }
     }
 
     //BBS: add slice&&print status update logic
@@ -16817,7 +16879,16 @@ bool Plater::priv::can_set_instance_to_object() const
 
 bool Plater::priv::can_split(bool to_objects) const
 {
-    return sidebar->obj_list()->is_splittable(to_objects);
+    // Deciding this builds a full vertex-face index over the mesh (tens of MB
+    // on large models) and runs inside the idle-driven toolbar refresh, which
+    // wx dispatches without exception protection - an OOM here must not
+    // escape or the process dies without a dialog (crashpad grabs it).
+    try {
+        return sidebar->obj_list()->is_splittable(to_objects);
+    } catch (const std::bad_alloc&) {
+        BOOST_LOG_TRIVIAL(error) << "can_split: out of memory, disabling the split action";
+        return false;
+    }
 }
 
 bool Plater::priv::can_fillcolor() const
@@ -19467,16 +19538,7 @@ std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files,
     p->m_slice_all_only_has_gcode = false;
     //BBS: wish to reset all plates stats item selected state when load a new file
     p->preview->get_canvas3d()->reset_select_plate_toolbar_selection();
-    std::vector<size_t> loaded;
-    try {
-        loaded = p->load_files(input_files, strategy, ask_multi);
-    } catch (const std::bad_alloc& ex) {
-        // Importing a too large model is recoverable: report and keep the app
-        // alive instead of letting the bad_alloc escape to OnExceptionInMainLoop,
-        // whose generic handler terminates the process.
-        BOOST_LOG_TRIVIAL(error) << "load_files: out of memory: " << ex.what();
-        show_error(this, _L("Your project may be too large for the available memory. The operation has been automatically terminated. Try closing other applications, reducing the model complexity or plate count, then retry."));
-    }
+    std::vector<size_t> loaded = p->load_files(input_files, strategy, ask_multi);
     if (!loaded.empty())
     {
         // After loading a project, initialize the filament temp mixing state

@@ -6396,6 +6396,77 @@ std::string CLI::output_filepath(const ModelObject &object, unsigned int index, 
 
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
+
+// Emergency memory kept aside for the out-of-memory path. When the heap is
+// truly exhausted the new handler releases the pool, guaranteeing that the
+// Sentry report below — and the user-facing dialog the recovery chain shows
+// later — have memory to allocate from. Without the reserve, the report's own
+// allocations fail re-entrantly right when memory is fullest (e.g. rendering
+// a finished slice), and the re-thrown bad_alloc originates inside sentry's
+// SEH-guarded C frames, where it is captured as a native crash and never
+// reaches the wx dialog path.
+// The pool is managed with raw HeapAlloc/HeapFree: probing with
+// operator new(nothrow) is NOT safe here — MSVC's nothrow wrapper still runs
+// the new handler on failure (verified by a debugger stack showing hundreds
+// of recursive handler frames from the probe itself), which recurses without
+// bound. HeapAlloc bypasses the CRT entirely: it never invokes the handler
+// and returns NULL on failure. The handler only consumes the pool when the
+// heap cannot yield the pool size any more; a fragmentation-driven OOM or a
+// single failed huge block leaves the pool intact, and an empty pool is
+// re-filled by the same probe. No per-recovery-point re-reservation is needed.
+static std::atomic<void*> g_oom_emergency_pool{nullptr};
+static const size_t       OOM_EMERGENCY_POOL_BYTES = 1024 * 1024;
+// Set when the truly-exhausted farewell dialog is up; other threads' OOMs wait
+// for it instead of racing a second dialog.
+static std::atomic<bool>   g_farewell_in_progress{false};
+// Exit code distinguishing an OOM farewell from other terminations.
+static const UINT          OOM_FATAL_EXIT_CODE = 0xE0000001u;
+
+static void reserve_oom_emergency_memory()
+{
+    if (g_oom_emergency_pool.load(std::memory_order_relaxed) == nullptr) {
+        if (void *pool = HeapAlloc(GetProcessHeap(), 0, OOM_EMERGENCY_POOL_BYTES))
+            g_oom_emergency_pool.store(pool, std::memory_order_relaxed);
+        // Without the reserve the OOM path degrades to the previous behaviour.
+    }
+}
+
+// Farewell text: compile-time static array so the OOM path never allocates.
+static const wchar_t OOM_FAREWELL_TEXT[] =
+    L"Snapmaker Orca has run out of memory and must close.\n\n"
+    L"Your project may be too large for the available memory. Try closing other applications, reducing the model complexity or plate count, and restart.";
+
+// Say goodbye and end the process without allocating anything on the exhausted
+// heap: static text, a raw Win32 MessageBoxW (its core lives on the system
+// side), and an immediate ExitProcess (no unwinding, nothing left to fail).
+// text == nullptr skips the dialog (silent closeout) for callers that have
+// already informed the user through their own wx dialogs.
+[[noreturn]] void OomFarewellAndExit(const wchar_t *text)
+{
+    if (!g_farewell_in_progress.exchange(true)) {
+        // The process is about to end anyway: free the emergency pool first
+        // so the dialog's own optional decorations (icon etc.), which
+        // allocate on this heap, can too.
+        if (void *pool = g_oom_emergency_pool.exchange(nullptr, std::memory_order_relaxed))
+            HeapFree(GetProcessHeap(), 0, pool);
+        // Report while we can: the freed pool gives the SDK its headroom and
+        // the catch below keeps any failure from eating the farewell dialog.
+        // (Reporting before the pool was freed was what crashed without a
+        // dialog in earlier designs.)
+        try {
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                    "memory allocation failed (out of memory, fatal farewell)",
+                                    "OomFarewellAndExit", "out_of_memory", "fatal");
+        } catch (...) {
+        }
+        if (text)
+            MessageBoxW(nullptr, text, L"Snapmaker Orca error",
+                        MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+        ExitProcess(OOM_FATAL_EXIT_CODE);
+    }
+    Sleep(INFINITE); // another thread's OOM: the farewell ends us all
+}
+
 extern "C" {
 // The launcher owns the Sentry SDK lifetime. Its bury-point state is
 // separate from the DLL's state so it can load Mesa before this DLL.
@@ -6413,29 +6484,56 @@ __declspec(dllexport) int __stdcall Snapmaker_Orca_get_privacy_policy() { return
         for (size_t i = 0; i < argc; ++ i)
             argv_ptrs[i] = argv_narrow[i].data();
 
-        // Out of memory: report it to Sentry as a tagged event, then let the standard
-        // std::bad_alloc propagation take over so the exception handling inherited from
-        // upstream can run (main thread: "out of memory" message box + terminate;
-        // background slicing: recoverable per-plate error; CLI: exit code). The previous
-        // handler deliberately dereferenced null to raise a native crash for Sentry;
-        // that turned every OOM into a hard crash and left the whole recovery chain dead.
-        // The report itself allocates: a re-entrant failure skips the report and just
-        // throws, and any exception escaping the report is swallowed so the bad_alloc
-        // owed to the caller is never displaced.
+        // Out of memory, two very different situations:
+        //
+        // 1. Heap fragmentation / one failed huge block (the probe below still
+        //    succeeds): throw std::bad_alloc and let the exception handling
+        //    inherited from upstream run (recoverable sites catch it locally:
+        //    model import, gcode toolpath rendering, background slicing).
+        //
+        // 2. The heap is TRULY exhausted (probe fails): recovery is hopeless —
+        //    every path that could tell the user about the failure also
+        //    allocates (throwing unwinds into a catch whose wxMessageBox
+        //    allocates again, the report call allocates, logging allocates),
+        //    so the process died without any notice through four attempted
+        //    designs. The only reliable farewell is one that never touches the
+        //    CRT heap: a raw Win32 MessageBoxW (its window lives on the system
+        //    side) with compile-time static text, then an immediate orderly
+        //    ExitProcess — no unwinding, no destructors, nothing left to fail.
+        //
+        // The previous handler deliberately dereferenced null to raise a native
+        // crash for Sentry; that turned every OOM into a hard crash and left
+        // the recovery chain dead. Sentry reporting for the recoverable case
+        // happens at the catch sites (GUI_App::generic_exception_handle, the
+        // failed-slice handling in Plater, GCodeViewer::render), where the
+        // stack has unwound and memory is available.
         std::set_new_handler([]() {
-            static std::atomic<bool> report_in_progress{false};
-            if (!report_in_progress.exchange(true)) {
-                try {
-                    Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
-                                            "memory allocation failed (out of memory)",
-                                            "std::set_new_handler",
-                                            "out_of_memory", "true");
-                } catch (...) {
+            static std::atomic<bool> handler_in_progress{false};
+            if (handler_in_progress.exchange(true)) {
+                // Nested visit (a failure inside this handler's own work).
+                if (g_farewell_in_progress.load(std::memory_order_relaxed)) {
+                    // The farewell dialog is already up on another thread; just
+                    // wait for it to end the process.
+                    Sleep(INFINITE);
                 }
-                report_in_progress = false;
+                throw std::bad_alloc();
             }
-            throw std::bad_alloc();
+            // Probe with a raw HeapAlloc — the only allocation primitive that
+            // can never re-enter this handler.
+            if (void *probe = HeapAlloc(GetProcessHeap(), 0, OOM_EMERGENCY_POOL_BYTES)) {
+                // Fragmentation-driven OOM: keep the heap (and re-fill the pool
+                // if it was consumed) and let the recoverable paths run.
+                void *expected = nullptr;
+                if (!g_oom_emergency_pool.compare_exchange_strong(expected, probe, std::memory_order_relaxed))
+                    HeapFree(GetProcessHeap(), 0, probe);
+                handler_in_progress = false;
+                throw std::bad_alloc();
+            }
+            // Truly exhausted: say goodbye without allocating anything
+            // (see OomFarewellAndExit above).
+            OomFarewellAndExit(OOM_FAREWELL_TEXT);
         });
+        reserve_oom_emergency_memory();
         // Call the UTF8 main.
         return CLI().run(argc, argv_ptrs.data());
     }

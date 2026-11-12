@@ -19,6 +19,7 @@
 #include "I18N.hpp"
 #include "GUI_Utils.hpp"
 #include "GUI.hpp"
+#include "app_common/SentryWrapper.hpp"
 #include "GLCanvas3D.hpp"
 #include "GLToolbar.hpp"
 #include "GUI_Preview.hpp"
@@ -36,6 +37,7 @@
 #include <boost/nowide/cstdio.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <wx/progdlg.h>
+#include <wx/msgdlg.h>
 #include <wx/numformatter.h>
 
 #include <array>
@@ -1478,6 +1480,8 @@ void GCodeViewer::reset()
         return;
     // no toolpath data left; load() picks the pipeline again
     m_use_gpu_pipeline = false;
+    // allow the OOM notice again for whatever loads next
+    m_render_oom_reported = false;
 
     //BBS: should also reset the result id
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": current result id %1% ")%m_last_result_id;
@@ -1534,7 +1538,29 @@ void GCodeViewer::render(int canvas_width, int canvas_height, int right_margin)
     if (m_roles.empty())
         return;
 
-    render_toolpaths();
+    // Building the per-frame render tables for a huge gcode can exhaust memory
+    // (e.g. PathLayerData::UploadTables). That failure is recoverable: drop
+    // this frame's toolpath rendering and tell the user once. The catch has to
+    // live here because wx dispatches idle/paint events outside its exception
+    // guard (wxWidgets issue #24704), so the bad_alloc would otherwise kill
+    // the process without any dialog.
+    try {
+        render_toolpaths();
+    } catch (const std::bad_alloc&) {
+        if (!m_render_oom_reported) {
+            m_render_oom_reported = true;
+            BOOST_LOG_TRIVIAL(error) << "GCodeViewer::render_toolpaths: out of memory, toolpath rendering skipped";
+            try {
+                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                        "memory allocation failed (out of memory, gcode toolpath rendering)",
+                                        "GCodeViewer::render_toolpaths", "out_of_memory", "true");
+            } catch (...) {
+            }
+            wxTheApp->CallAfter([] {
+                wxGetApp().plater()->offer_save_on_low_memory();
+            });
+        }
+    }
     float legend_height = 0.0f;
     render_legend(legend_height, canvas_width, canvas_height, right_margin);
 

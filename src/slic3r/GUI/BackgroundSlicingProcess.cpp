@@ -77,8 +77,10 @@ std::pair<std::string, std::vector<size_t>> SlicingProcessCompletedEvent::format
 	try {
 		this->rethrow_exception();
     } catch (const std::bad_alloc &ex) {
-        error = GUI::format(_u8L("Your project may be too large for the available memory. The operation has been automatically terminated. Try closing other applications, reducing the model complexity or plate count, then retry."));
-    } catch (const HardCrash &ex) {
+        wxString errmsg = GUI::from_u8(boost::format(_utf8(L("A error occurred. Maybe memory of system is not enough or it's a bug "
+			                  "of the program"))).str());
+        error = std::string(errmsg.ToUTF8()) + "\n" + std::string(ex.what());
+	} catch (const HardCrash &ex) {
         error = GUI::format(_u8L("A fatal error occurred: \"%1%\""), ex.what()) + "\n" +
                             _u8L("Please save project and restart the program.");
     } catch (PlaceholderParserError &ex) {

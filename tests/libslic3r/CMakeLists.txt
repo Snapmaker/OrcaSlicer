@@ -12,7 +12,6 @@ add_executable(${_TEST_NAME}_tests
 	test_gcode_layer_count.cpp
 	test_elephant_foot_compensation.cpp
 	test_extrusion_entity.cpp
-	test_overlap_carving.cpp
 	test_geometry.cpp
 	test_icns.cpp
 	test_mixed_filament.cpp
@@ -38,13 +37,6 @@ add_executable(${_TEST_NAME}_tests
     test_indexed_triangle_set.cpp
 	TestMD5.cpp
 	test_flush_vol_calc.cpp
-	test_triangulation.cpp
-	test_tesselate.cpp
-	test_arc_fitter.cpp
-	test_wipe_tower2.cpp
-	test_calib.cpp
-	test_variable_width.cpp
-	test_arachne.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

@@ -3058,7 +3058,6 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
 
         optgroup = page->new_optgroup(L("Special mode"), L"param_special");
         optgroup->append_single_option_line("slicing_mode", "others_settings_special_mode#slicing-mode");
-        optgroup->append_single_option_line("enable_overlap_area_carving");
         optgroup->append_single_option_line("print_sequence", "others_settings_special_mode#print-sequence");
         optgroup->append_single_option_line("print_order", "others_settings_special_mode#intra-layer-order");
         optgroup->append_single_option_line("spiral_mode", "others_settings_special_mode#spiral-vase");
@@ -3538,36 +3537,9 @@ void TabPrintModel::on_value_change(const std::string& opt_key, const boost::any
     // always add object config
     bool set   = true; // *m_config->option(k) != *m_prints.get_selected_preset().config.option(k) || inull != m_null_keys.end();
     if (m_back_to_sys) {
-        // Snapmaker: flow variant.
-        bool keep_override = false;
-        if (m_flow_variant_view && m_flow_variant_view->is_option(k)) {
-            const auto *edited_vec = dynamic_cast<const ConfigOptionVectorBase *>(m_config->option(k, false));
-            const auto *base_vec   = dynamic_cast<const ConfigOptionVectorBase *>(m_prints.get_selected_preset().config.option(k));
-            if (edited_vec != nullptr && base_vec != nullptr && !edited_vec->empty() && !base_vec->empty()) {
-                const std::vector<std::string> edited_vals = edited_vec->vserialize();
-                if (edited_vals.size() >= m_flow_variant_view->modes.size()) {
-                    const std::vector<std::string> base_vals = base_vec->vserialize();
-                    auto slot_at = [](const std::vector<std::string> &vals, size_t i) -> const std::string & {
-                        return vals[std::min(i, vals.size() - 1)];
-                    };
-                    for (size_t i = 0; i < m_flow_variant_view->modes.size(); ++i) {
-                        if (slot_at(edited_vals, i) != slot_at(base_vals, i)) {
-                            keep_override = true;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        if (keep_override) {
-            for (auto config : m_object_configs)
-                config.second->apply_only(*m_config, {k});
-            m_all_keys = concat(m_all_keys, {k});
-        } else {
-            for (auto config : m_object_configs)
-                config.second->erase(k);
-            m_all_keys.erase(std::remove(m_all_keys.begin(), m_all_keys.end(), k), m_all_keys.end());
-        }
+        for (auto config : m_object_configs)
+            config.second->erase(k);
+        m_all_keys.erase(std::remove(m_all_keys.begin(), m_all_keys.end(), k), m_all_keys.end());
     } else if (set) {
         for (auto config : m_object_configs)
             config.second->apply_only(*m_config, {k});

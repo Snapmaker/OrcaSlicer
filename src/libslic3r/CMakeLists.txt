@@ -540,17 +540,6 @@ target_link_libraries(libslic3r PUBLIC nlohmann_json)
 
 find_package(JPEG REQUIRED)
 
-# Vendored jpeg/png/zlib headers must win over toolchain includes contributed by
-# system packages (e.g. Strawberry Perl's classic libjpeg lacks the turbo
-# extensions JCS_EXT_RGBA that GCode/Thumbnails.cpp requires). Scope the BEFORE
-# ordering to exactly these deps so every other header keeps its find_package
-# resolution order.
-foreach(_dep_inc_dir ${JPEG_INCLUDE_DIR} ${PNG_INCLUDE_DIRS} ${ZLIB_INCLUDE_DIRS})
-    if (WIN32 AND _dep_inc_dir AND EXISTS "${_dep_inc_dir}")
-        target_include_directories(libslic3r SYSTEM BEFORE PUBLIC "${_dep_inc_dir}")
-    endif()
-endforeach()
-
 
 
 # OCCT is built as a set of static archives with mutual dependencies, and

@@ -18912,8 +18912,6 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
         return;
 
     add_model(false, Slic3r::resources_dir() + "/calib/volumetric_speed/SpeedTestStructure.step");
-    if (model().objects.empty())
-        return;
 
     auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;

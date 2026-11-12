@@ -3893,7 +3893,7 @@ void PrintConfigDef::init_fff_params()
             (void)L("Maximum speed Z");
             (void)L("Maximum speed E");
             def->category = L("Machine limits");
-            def->readonly = false;
+            def->readonly = true;
             def->tooltip  = (boost::format("Maximum speed of %1% axis") % axis_upper).str();
             (void)L("Maximum X speed");
             (void)L("Maximum Y speed");
@@ -3911,7 +3911,7 @@ void PrintConfigDef::init_fff_params()
             (void)L("Maximum acceleration Z");
             (void)L("Maximum acceleration E");
             def->category = L("Machine limits");
-            def->readonly = false;
+            def->readonly = true;
             def->tooltip  = (boost::format("Maximum acceleration of the %1% axis") % axis_upper).str();
             (void)L("Maximum acceleration of the X axis");
             (void)L("Maximum acceleration of the Y axis");
@@ -3929,7 +3929,7 @@ void PrintConfigDef::init_fff_params()
             (void)L("Maximum jerk Z");
             (void)L("Maximum jerk E");
             def->category = L("Machine limits");
-            def->readonly = false;
+            def->readonly = true;
             def->tooltip  = (boost::format("Maximum jerk of the %1% axis") % axis_upper).str();
             (void)L("Maximum jerk of the X axis");
             (void)L("Maximum jerk of the Y axis");
@@ -3948,6 +3948,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Maximum junction deviation (M205 J, only apply if JD > 0 for Marlin Firmware)");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
+    def->readonly = true;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats{0. ,0. });
 
@@ -3980,7 +3981,7 @@ void PrintConfigDef::init_fff_params()
     //                 "as travel acceleration (M204 T).");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
-    def->readonly = false;
+    def->readonly = true;
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionFloats{ 1500., 1250. });
 
@@ -3992,7 +3993,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Maximum acceleration for retracting (M204 R)");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
-    def->readonly = false;
+    def->readonly = true;
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionFloats{ 1500., 1250. });
 
@@ -4003,7 +4004,7 @@ void PrintConfigDef::init_fff_params()
     def->tooltip = L("Maximum acceleration for travel (M204 T), it only applies to Marlin 2.");
     def->sidetext = u8"mm/s²";	// milimeters per second per second, don't need translation
     def->min = 0;
-    def->readonly = false;
+    def->readonly = true;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloats{ 0., 0. });
 
@@ -6220,7 +6221,7 @@ void PrintConfigDef::init_fff_params()
     //def->label = L("Z travel");
     //def->tooltip = L("Speed of vertical travel along z axis. "
     //                 "This is typically lower because build plate or gantry is hard to be moved. "
-    //                 "Zero means using travel speed directly in G-code, but will be limited by printer's ability when run G-code.");
+    //                 "Zero uses the active travel speed. Z travel is capped by a positive machine_max_speed_z.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 0;
     def->mode = comDevelop;

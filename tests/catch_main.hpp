@@ -20,6 +20,8 @@
 
 #include "libslic3r/Utils.hpp"
 
+
+#include <filesystem>
 // Test-runtime bootstrap, injected into every test TU via the -include of
 // this header. Two separate mechanisms with opposite timing requirements:
 //
@@ -75,6 +77,13 @@ struct TestFrameworkBootstrap : Catch::EventListenerBase {
     void testRunStarting(Catch::TestRunInfo const&) override
     {
         Slic3r::set_resources_dir(TEST_RESOURCES_DIR);
+
+        // Headless test processes do not run the application bootstrap that
+        // normally configures temporary_dir(). Without this, model backup
+        // paths collapse to /snapmaker_orca_model and fail on CI runners.
+        const auto test_temporary_dir = std::filesystem::temp_directory_path() / "orca-tests";
+        std::filesystem::create_directories(test_temporary_dir);
+        Slic3r::set_temporary_dir(test_temporary_dir.string());
     }
 };
 } // namespace

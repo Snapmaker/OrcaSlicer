@@ -119,6 +119,7 @@ public:
                             bool local_z_unplanned = false,
                             double local_z_nominal_layer_z = -1.);
     std::string        finish_local_z_toolchanges(GCode& gcodegen, double local_z_nominal_layer_z);
+    size_t             unplanned_direct_switches() const { return m_unplanned_direct_switches; }
     bool is_empty_wipe_tower_gcode(GCode &gcodegen, int extruder_id, bool finish_layer);
     std::string finalize(GCode &gcodegen);
     std::vector<float> used_filament_length() const;
@@ -164,6 +165,8 @@ private:
     std::vector<size_t>                                          m_local_z_tool_change_idx;
     std::vector<size_t>                                          m_local_z_reserve_slot_idx;
     double                                                       m_last_wipe_tower_print_z = 0.f;
+    // Filament changes emitted without the tower because no planned transition matched.
+    size_t                                                       m_unplanned_direct_switches = 0;
 
     // BBS
     Vec3d                                                        m_plate_origin;

@@ -2,13 +2,11 @@
 #include "LocalZHeight.hpp"
 #include "../MixedFilament/Slicing.hpp"
 #include "../MixedFilament/ChannelMap.hpp"
-#include "../Slicing/PreparationDiagnostics.hpp"
 #include "../Slicing/LayerGeometryBatch.hpp"
 #include "../Print.hpp"
 #include "../Slicing.hpp"
 #include "../Layer.hpp"
 #include "../ClipperUtils.hpp"
-#include "../SVG.hpp"
 #include "../I18N.hpp"
 #include <boost/log/trivial.hpp>
 #include <tbb/parallel_for.h>
@@ -740,110 +738,6 @@ static LocalZActivePair derive_local_z_active_pair(const MixedFilament&         
     return out;
 }
 
-struct LocalZPlanDiagnostics
-{
-    bool                                            enabled = preparation_diagnostic("ORCA_LOCAL_Z_DEBUG");
-    std::map<std::pair<size_t, size_t>, ExPolygons> base_masks;
-    void                                            record(const SubLayerPlan& plan, const ExPolygons& masks)
-    {
-        if (enabled)
-            base_masks[{plan.layer_id, plan.pass_index}] = masks;
-    }
-    const ExPolygons& masks_for(const SubLayerPlan& plan) const
-    {
-        static const ExPolygons empty;
-        const auto              it = base_masks.find({plan.layer_id, plan.pass_index});
-        return it == base_masks.end() ? empty : it->second;
-    }
-};
-
-static void export_local_z_plan_debug(const PrintObject&           print_object,
-                                      const std::vector<double>&   nozzle_min_layer_heights,
-                                      const LocalZPlanDiagnostics& diagnostics)
-{
-    if (!diagnostics.enabled)
-        return;
-
-    const std::vector<LocalZInterval>& intervals = print_object.local_z_intervals();
-    const std::vector<SubLayerPlan>&   plans     = print_object.local_z_sublayer_plan();
-    if (intervals.empty() || plans.empty())
-        return;
-
-    const int     object_id = int(print_object.id().id);
-    std::ofstream json(debug_out_path("local-z-plan-obj-%d.json", object_id), std::ios::out | std::ios::trunc);
-    if (json.good()) {
-        json << std::fixed << std::setprecision(6);
-        json << "{\n";
-        json << "  \"object_id\": " << object_id << ",\n";
-        json << "  \"nozzle_min_layer_heights\": [";
-        for (size_t i = 0; i < nozzle_min_layer_heights.size(); ++i)
-            json << (i ? ", " : "") << nozzle_min_layer_heights[i];
-        json << "],\n";
-        json << "  \"interval_count\": " << intervals.size() << ",\n";
-        json << "  \"sublayer_count\": " << plans.size() << ",\n";
-        json << "  \"intervals\": [\n";
-        for (size_t i = 0; i < intervals.size(); ++i) {
-            const LocalZInterval& interval = intervals[i];
-            json << "    {\"layer_id\": " << interval.layer_id << ", \"z_lo\": " << interval.z_lo << ", \"z_hi\": " << interval.z_hi
-                 << ", \"base_height\": " << interval.base_height << ", \"sublayer_height\": " << interval.sublayer_height
-                 << ", \"has_mixed_paint\": " << (interval.has_mixed_paint ? "true" : "false")
-                 << ", \"sublayer_count\": " << interval.sublayer_count << "}";
-            if (i + 1 < intervals.size())
-                json << ",";
-            json << "\n";
-        }
-        json << "  ],\n";
-        json << "  \"sublayers\": [\n";
-        for (size_t i = 0; i < plans.size(); ++i) {
-            const SubLayerPlan& plan = plans[i];
-            json << "    {\"layer_id\": " << plan.layer_id << ", \"pass_index\": " << plan.pass_index
-                 << ", \"split_interval\": " << (plan.split_interval ? "true" : "false") << ", \"z_lo\": " << plan.z_lo
-                 << ", \"z_hi\": " << plan.z_hi << ", \"print_z\": " << plan.print_z << ", \"flow_height\": " << plan.flow_height
-                 << ", \"base_mask_count\": " << diagnostics.masks_for(plan).size() << ", \"painted_mask_counts\": [";
-            for (size_t eidx = 0; eidx < plan.painted_masks_by_extruder.size(); ++eidx) {
-                json << plan.painted_masks_by_extruder[eidx].size();
-                if (eidx + 1 < plan.painted_masks_by_extruder.size())
-                    json << ", ";
-            }
-            json << "]}";
-            if (i + 1 < plans.size())
-                json << ",";
-            json << "\n";
-        }
-        json << "  ]\n";
-        json << "}\n";
-    }
-
-    static const std::array<const char*, 10> colors{"#E53935", "#1E88E5", "#43A047", "#FB8C00", "#8E24AA",
-                                                    "#00897B", "#6D4C41", "#3949AB", "#C0CA33", "#F4511E"};
-    for (const SubLayerPlan& plan : plans) {
-        bool has_painted = std::any_of(plan.painted_masks_by_extruder.begin(), plan.painted_masks_by_extruder.end(),
-                                       [](const ExPolygons& masks) { return !masks.empty(); });
-        if (!plan.split_interval && !has_painted)
-            continue;
-        if (!has_painted && diagnostics.masks_for(plan).empty())
-            continue;
-
-        std::vector<std::pair<ExPolygons, SVG::ExPolygonAttributes>> layers;
-        if (!diagnostics.masks_for(plan).empty()) {
-            layers.emplace_back(diagnostics.masks_for(plan),
-                                SVG::ExPolygonAttributes("base", "#D6D6D6", "#6A6A6A", "#6A6A6A", scale_(0.03), 0.45f));
-        }
-        for (size_t eidx = 0; eidx < plan.painted_masks_by_extruder.size(); ++eidx) {
-            if (plan.painted_masks_by_extruder[eidx].empty())
-                continue;
-            const char* color = colors[eidx % colors.size()];
-            layers.emplace_back(plan.painted_masks_by_extruder[eidx],
-                                SVG::ExPolygonAttributes("E" + std::to_string(eidx + 1), color, color, color, scale_(0.03), 0.55f));
-        }
-        if (!layers.empty()) {
-            SVG::export_expolygons(debug_out_path("local-z-plan-obj-%d-layer-%d-pass-%d.svg", object_id, int(plan.layer_id),
-                                                  int(plan.pass_index)),
-                                   layers);
-        }
-    }
-}
-
 std::vector<uint8_t> local_z_enabled_mixed_rows(const Print& print)
 {
     const PrintConfig&        print_cfg = print.config();
@@ -1171,36 +1065,23 @@ struct LocalZRow
 
 struct PreparedLocalZGeometry
 {
-    ExPolygons                mixed_masks, base_masks, fixed_union;
-    std::vector<ExPolygons>   row_masks, owned_fixed_masks;
+    ExPolygons                mixed_masks, fixed_union;
+    std::vector<ExPolygons>   row_masks;
     std::vector<unsigned int> row_ids;
     std::vector<uint8_t>      row_active;
     size_t                    mixed_state_count, dominant_mixed_idx;
     bool                      has_mixed_paint;
-
-    bool same_as(const PreparedLocalZGeometry& other) const
-    {
-        return mixed_masks == other.mixed_masks && base_masks == other.base_masks && fixed_union == other.fixed_union &&
-               row_masks == other.row_masks && row_ids == other.row_ids && row_active == other.row_active &&
-               mixed_state_count == other.mixed_state_count && dominant_mixed_idx == other.dominant_mixed_idx &&
-               has_mixed_paint == other.has_mixed_paint;
-    }
 };
 
-static PreparedLocalZGeometry prepare_local_z_geometry(const PrintObject&                          print_object,
-                                                       const std::vector<std::vector<ExPolygons>>& segmentation,
+static PreparedLocalZGeometry prepare_local_z_geometry(const std::vector<std::vector<ExPolygons>>& segmentation,
                                                        const std::vector<LocalZRow>&               rows,
                                                        const std::vector<int>&                     mixed_rows,
                                                        size_t                                      num_physical,
                                                        bool                                        local_z_whole_objects,
-                                                       PreparationProfile&                         prep_profile,
-                                                       bool                                        capture_base_masks,
                                                        size_t                                      layer_id,
-                                                       const std::vector<ExPolygons>*              prepared_fixed)
+                                                       const std::vector<ExPolygons>&              fixed_state_masks_by_extruder)
 {
-    const Layer&         layer           = *print_object.get_layer(int(layer_id));
     bool                 has_mixed_paint = false;
-    PreparationTimer     scan_timer(&prep_profile, "active_scan");
     ExPolygons           mixed_masks;
     size_t               mixed_state_count = 0;
     std::vector<uint8_t> row_active_this_layer(rows.size(), uint8_t(0));
@@ -1230,35 +1111,20 @@ static PreparedLocalZGeometry prepare_local_z_geometry(const PrintObject&       
             dominant_mixed_idx  = size_t(mixed_idx);
         }
     }
-    scan_timer.finish();
-    PreparationTimer geometry_timer(&prep_profile, "geometry");
     if (!mixed_masks.empty())
         mixed_masks = union_ex(mixed_masks);
     if (layer_id == 0)
         has_mixed_paint = false;
 
-    ExPolygons base_masks = capture_base_masks ? collect_layer_region_slices(layer) : ExPolygons();
-    if (has_mixed_paint && !base_masks.empty() && !mixed_masks.empty()) {
-        base_masks = diff_ex(base_masks, mixed_masks);
-        if (!base_masks.empty()) {
-            const Polygons filtered = opening(to_polygons(base_masks), scaled<float>(5. * EPSILON), scaled<float>(5. * EPSILON));
-            base_masks              = union_ex(filtered);
-        }
-    }
-
     std::vector<ExPolygons>   row_state_masks(rows.size());
     std::vector<unsigned int> row_state_ids(rows.size(), 0);
-    std::vector<ExPolygons>   owned_fixed_masks(num_physical);
     for (size_t channel_idx = 0; channel_idx < segmentation[layer_id].size(); ++channel_idx) {
         const ExPolygons& state_masks = segmentation[layer_id][channel_idx];
         if (state_masks.empty())
             continue;
         const unsigned int state_id = segmentation_channel_filament_id(channel_idx);
-        if (state_id >= 1 && state_id <= num_physical) {
-            if (!prepared_fixed)
-                append(owned_fixed_masks[state_id - 1], state_masks);
+        if (state_id >= 1 && state_id <= num_physical)
             continue;
-        }
         const int mixed_idx = mixed_rows[channel_idx];
         if (mixed_idx < 0 || size_t(mixed_idx) >= rows.size())
             continue;
@@ -1271,10 +1137,6 @@ static PreparedLocalZGeometry prepare_local_z_geometry(const PrintObject&       
     for (ExPolygons& state_masks : row_state_masks)
         if (state_masks.size() > 1)
             state_masks = union_ex(state_masks);
-    for (ExPolygons& state_masks : owned_fixed_masks)
-        if (state_masks.size() > 1)
-            state_masks = union_ex(state_masks);
-    const auto& fixed_state_masks_by_extruder = prepared_fixed ? *prepared_fixed : owned_fixed_masks;
 
     ExPolygons fixed_state_masks_union;
     for (const ExPolygons& state_masks : fixed_state_masks_by_extruder)
@@ -1283,13 +1145,6 @@ static PreparedLocalZGeometry prepare_local_z_geometry(const PrintObject&       
     if (fixed_state_masks_union.size() > 1)
         fixed_state_masks_union = union_ex(fixed_state_masks_union);
     if (has_mixed_paint && local_z_whole_objects && !fixed_state_masks_union.empty()) {
-        if (!base_masks.empty()) {
-            base_masks = diff_ex(base_masks, fixed_state_masks_union);
-            if (!base_masks.empty()) {
-                const Polygons filtered = opening(to_polygons(base_masks), scaled<float>(5. * EPSILON), scaled<float>(5. * EPSILON));
-                base_masks              = union_ex(filtered);
-            }
-        }
         append(mixed_masks, fixed_state_masks_union);
         if (mixed_masks.size() > 1)
             mixed_masks = union_ex(mixed_masks);
@@ -1311,12 +1166,9 @@ static PreparedLocalZGeometry prepare_local_z_geometry(const PrintObject&       
         }
     }
 
-    geometry_timer.finish();
     return PreparedLocalZGeometry{std::move(mixed_masks),
-                                  std::move(base_masks),
                                   std::move(fixed_state_masks_union),
                                   std::move(row_state_masks),
-                                  std::move(owned_fixed_masks),
                                   std::move(row_state_ids),
                                   std::move(row_active_this_layer),
                                   mixed_state_count,
@@ -1430,11 +1282,9 @@ static std::vector<LocalZRow> prepare_local_z_rows(const Print& print, const Loc
 static void build_local_z_plan(PrintObject&                                print_object,
                                const std::vector<std::vector<ExPolygons>>& segmentation,
                                bool                                        whole_object_scope_active,
-                               const std::function<void()>&                throw_on_cancel)
+                               const std::function<void()>&                throw_on_cancel,
+                               bool&                                       height_limits_violated)
 {
-    LocalZPlanDiagnostics diagnostics;
-    PreparationProfile    prep_profile("local_z_plan");
-    PreparationTimer      plan_timer(&prep_profile, "total");
     print_object.clear_local_z_plan();
 
     const Print*      print       = print_object.print();
@@ -1667,28 +1517,16 @@ static void build_local_z_plan(PrintObject&                                print
 
     // Only immutable geometry is prepared in parallel. Cadence, gradient state,
     // error accumulation, dependency IDs and plan emission remain ordered below.
-    auto prepare_geometry = [&](size_t layer_index, const std::vector<ExPolygons>* fixed) {
-        throw_on_cancel();
-        return prepare_local_z_geometry(print_object, segmentation, rows, mixed_rows, num_physical, settings.local_z_whole_objects,
-                                        prep_profile, diagnostics.enabled, layer_index, fixed);
-    };
-    const bool                             parallel_geometry = preparation_experiment("local_z_geometry");
-    const bool                             reuse_fixed_masks = preparation_experiment("fixed_masks") && !parallel_geometry;
-    const bool                             validate_geometry = preparation_diagnostic("ORCA_PREP_VALIDATE_REUSE");
-    std::array<std::vector<ExPolygons>, 3> fixed_mask_window;
-    if (reuse_fixed_masks)
-        fixed_mask_window[0] = collect_local_z_fixed_state_masks_by_extruder(segmentation[0], num_physical);
     // Limit retained work by both layers and input vertices. An oversized single
     // layer must still run; the input budget is not a hard output-memory bound.
     constexpr size_t                     batch_layer_limit = 64, batch_point_limit = 131072;
     std::vector<PreparedLocalZGeometry>  prepared_batch;
     std::vector<std::vector<ExPolygons>> batch_fixed_masks;
     size_t                               batch_begin = 0, batch_end = 0, fixed_begin = 0;
-    size_t                               max_batch_layers = 0, max_batch_input_points = 0, max_batch_retained_points = 0;
+    const std::vector<ExPolygons>        no_fixed_masks(num_physical);
     for (size_t layer_id = 0; layer_id < print_object.layer_count(); ++layer_id) {
         throw_on_cancel();
-        if (parallel_geometry && layer_id == batch_end) {
-            PreparationTimer batch_timer(&prep_profile, "geometry_batch_wall");
+        if (layer_id == batch_end) {
             prepared_batch.clear();
             batch_fixed_masks.clear();
             const LayerGeometryBatch batch = next_layer_geometry_batch(layer_id, segmentation.size(), batch_layer_limit, batch_point_limit,
@@ -1717,36 +1555,15 @@ static void build_local_z_plan(PrintObject&                                print
             });
             prepared_batch.resize(batch_end - batch_begin);
             tbb::parallel_for(tbb::blocked_range<size_t>(batch_begin, batch_end, 1), [&](const tbb::blocked_range<size_t>& range) {
-                for (size_t i = range.begin(); i < range.end(); ++i)
-                    prepared_batch[i - batch_begin] = prepare_geometry(i, &batch_fixed_masks[i - fixed_begin]);
-            });
-            if (prep_profile.enabled) {
-                size_t retained_points = 0;
-                for (const auto& item : prepared_batch) {
-                    retained_points += count_points(item.mixed_masks) + count_points(item.base_masks) + count_points(item.fixed_union);
-                    for (const ExPolygons& masks : item.row_masks)
-                        retained_points += count_points(masks);
+                for (size_t i = range.begin(); i < range.end(); ++i) {
+                    throw_on_cancel();
+                    prepared_batch[i - batch_begin] = prepare_local_z_geometry(segmentation, rows, mixed_rows, num_physical,
+                                                                               settings.local_z_whole_objects, i,
+                                                                               batch_fixed_masks[i - fixed_begin]);
                 }
-                for (const auto& layer_masks : batch_fixed_masks)
-                    for (const ExPolygons& masks : layer_masks)
-                        retained_points += count_points(masks);
-                max_batch_layers          = std::max(max_batch_layers, prepared_batch.size());
-                max_batch_input_points    = std::max(max_batch_input_points, batch.input_points);
-                max_batch_retained_points = std::max(max_batch_retained_points, retained_points);
-            }
+            });
         }
-        if (reuse_fixed_masks && layer_id + 1 < segmentation.size())
-            fixed_mask_window[(layer_id + 1) % 3] = collect_local_z_fixed_state_masks_by_extruder(segmentation[layer_id + 1], num_physical);
-        const auto*            cached_fixed = parallel_geometry ? &batch_fixed_masks[layer_id - fixed_begin] :
-                                              reuse_fixed_masks ? &fixed_mask_window[layer_id % 3] :
-                                                                  nullptr;
-        PreparedLocalZGeometry prepared     = parallel_geometry ? std::move(prepared_batch[layer_id - batch_begin]) :
-                                                                  prepare_geometry(layer_id, cached_fixed);
-        if (validate_geometry && (parallel_geometry || reuse_fixed_masks)) {
-            const PreparedLocalZGeometry reference = prepare_geometry(layer_id, nullptr);
-            if (!prepared.same_as(reference) || *cached_fixed != reference.owned_fixed_masks)
-                throw std::runtime_error("Prepared Local-Z geometry changed ordered masks or active rows");
-        }
+        PreparedLocalZGeometry prepared = std::move(prepared_batch[layer_id - batch_begin]);
         const Layer&   layer = *print_object.get_layer(int(layer_id));
         LocalZInterval interval;
         interval.layer_id               = size_t(layer.id());
@@ -1760,7 +1577,6 @@ static void build_local_z_plan(PrintObject&                                print
 
         interval.has_mixed_paint              = prepared.has_mixed_paint;
         auto&        mixed_masks              = prepared.mixed_masks;
-        auto&        base_masks               = prepared.base_masks;
         auto&        row_state_masks          = prepared.row_masks;
         auto&        row_state_ids            = prepared.row_ids;
         auto&        fixed_state_masks_union  = prepared.fixed_union;
@@ -1774,7 +1590,6 @@ static void build_local_z_plan(PrintObject&                                print
         const size_t active_mixed_definitions = size_t(std::count(row_active_this_layer.begin(), row_active_this_layer.end(), uint8_t(1)));
         double       dominant_gradient_h_a = 0.0, dominant_gradient_h_b = 0.0;
         bool         dominant_gradient_valid = false, dominant_is_gradient = false;
-        PreparationTimer cadence_timer(&prep_profile, "cadence");
         for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
             if (row_active_this_layer[row_idx] == 0) {
                 if (row_idx < rows.size())
@@ -1830,35 +1645,13 @@ static void build_local_z_plan(PrintObject&                                print
                 dominant_gradient_valid = true;
             }
         }
-        cadence_timer.finish();
         total_mixed_state_layers += prepared.mixed_state_count;
         if (interval.has_mixed_paint)
             ++mixed_intervals;
-        const auto&                   fixed_state_masks_by_extruder      = cached_fixed ? *cached_fixed : prepared.owned_fixed_masks;
-        const std::vector<ExPolygons> owned_prev                         = !cached_fixed && layer_id > 0 ?
-                                                                               collect_local_z_fixed_state_masks_by_extruder(segmentation[layer_id - 1],
-                                                                                                                             num_physical) :
-                                                                               std::vector<ExPolygons>(num_physical);
-        const std::vector<ExPolygons> owned_next                         = !cached_fixed && layer_id + 1 < segmentation.size() ?
-                                                                               collect_local_z_fixed_state_masks_by_extruder(segmentation[layer_id + 1],
-                                                                                                                             num_physical) :
-                                                                               std::vector<ExPolygons>(num_physical);
-        const auto&                   prev_fixed_state_masks_by_extruder = layer_id == 0 ? owned_prev :
-                                                                           parallel_geometry ? batch_fixed_masks[layer_id - 1 - fixed_begin] :
-                                                                           reuse_fixed_masks ? fixed_mask_window[(layer_id + 2) % 3] :
-                                                                                               owned_prev;
-        const auto&                   next_fixed_state_masks_by_extruder = layer_id + 1 == segmentation.size() ? owned_next :
-                                                                           parallel_geometry ? batch_fixed_masks[layer_id + 1 - fixed_begin] :
-                                                                           reuse_fixed_masks ? fixed_mask_window[(layer_id + 1) % 3] :
-                                                                                               owned_next;
-        if (validate_geometry && cached_fixed &&
-            ((layer_id > 0 && prev_fixed_state_masks_by_extruder !=
-                                  collect_local_z_fixed_state_masks_by_extruder(segmentation[layer_id - 1], num_physical)) ||
-             (layer_id + 1 < segmentation.size() &&
-              next_fixed_state_masks_by_extruder !=
-                  collect_local_z_fixed_state_masks_by_extruder(segmentation[layer_id + 1], num_physical))))
-            throw std::runtime_error("Prepared Local-Z neighbor masks changed ordered geometry");
-        PreparationTimer emit_timer(&prep_profile, "plan_assembly");
+        const auto& fixed_state_masks_by_extruder      = batch_fixed_masks[layer_id - fixed_begin];
+        const auto& prev_fixed_state_masks_by_extruder = layer_id == 0 ? no_fixed_masks : batch_fixed_masks[layer_id - 1 - fixed_begin];
+        const auto& next_fixed_state_masks_by_extruder = layer_id + 1 == segmentation.size() ? no_fixed_masks :
+                                                                                               batch_fixed_masks[layer_id + 1 - fixed_begin];
         size_t           active_row_mask_components = 0;
         size_t           active_row_mask_vertices   = 0;
         for (size_t row_idx = 0; row_idx < row_state_masks.size(); ++row_idx)
@@ -1974,14 +1767,22 @@ static void build_local_z_plan(PrintObject&                                print
                         next_extruder = state.gradient_cadence[state.gradient_pass_index + 1].extruder_id;
                     const double next_minimum = next_extruder > 0 ? nozzle_min_layer_heights[next_extruder - 1] :
                                                                     rows[row_idx].min_sublayer_height;
-                    const double height       = local_z_bounded_pass_height(cadence_pass->height, remaining_height,
-                                                                            nozzle_min_layer_heights[cadence_pass->extruder_id - 1],
-                                                                            nozzle_max_layer_heights[cadence_pass->extruder_id - 1],
-                                                                            next_minimum);
-                    if (height <= 0.0)
-                        throw SlicingError(
-                            L("Local-Z cannot fit the nozzle layer height limits into this mixed region. Check the nozzle minimum "
-                              "and maximum layer heights in the printer settings."));
+                    const double pass_minimum = nozzle_min_layer_heights[cadence_pass->extruder_id - 1];
+                    const double pass_maximum = nozzle_max_layer_heights[cadence_pass->extruder_id - 1];
+                    double       height       = local_z_bounded_pass_height(cadence_pass->height, remaining_height, pass_minimum,
+                                                                            pass_maximum, next_minimum);
+                    if (height <= 0.0) {
+                        // Only unusable nozzle limits are fatal. No pass height could ever satisfy them.
+                        if (!std::isfinite(pass_minimum) || !std::isfinite(pass_maximum) || pass_minimum <= 0.0 ||
+                            pass_maximum + EPSILON < pass_minimum)
+                            throw SlicingError(
+                                L("Local-Z cannot fit the nozzle layer height limits into this mixed region. Check the nozzle minimum "
+                                  "and maximum layer heights in the printer settings."));
+                        // The remaining mixed height cannot be divided within the limits. Print it with this
+                        // component alone instead of aborting the slice; the caller reports the lost color ratio.
+                        height                 = std::min(remaining_height, pass_maximum);
+                        height_limits_violated = true;
+                    }
                     const double next_z = state.z_cursor + height;
                     if (next_z > interval.z_hi + EPSILON)
                         break;
@@ -2040,8 +1841,6 @@ static void build_local_z_plan(PrintObject&                                print
                 plan.pass_index    = pass_idx;
                 min_pass_height    = std::min(min_pass_height, plan.flow_height);
                 max_pass_height    = std::max(max_pass_height, plan.flow_height);
-                if (pass_idx + 1 == independent_plans.size())
-                    diagnostics.record(plan, base_masks);
                 plans.emplace_back(std::move(plan));
                 ++interval.sublayer_count;
                 ++total_generated_sublayer_cnt;
@@ -2368,7 +2167,6 @@ static void build_local_z_plan(PrintObject&                                print
                             interval_has_split_painted_masks = true;
                         }
                     }
-                    diagnostics.record(isolated_plans.back(), base_masks);
                     interval.sublayer_height = min_flow_height;
                     pass_count_for_log       = isolated_plans.size();
                     pass_min_height_for_log  = min_flow_height;
@@ -2506,9 +2304,6 @@ static void build_local_z_plan(PrintObject&                                print
                         interval_has_split_painted_masks = true;
                     }
 
-                    if (z_next >= interval.z_hi - EPSILON)
-                        diagnostics.record(plan, base_masks);
-
                     plans.emplace_back(std::move(plan));
                     ++interval.sublayer_count;
                     ++total_generated_sublayer_cnt;
@@ -2546,7 +2341,6 @@ static void build_local_z_plan(PrintObject&                                print
             plan.print_z          = interval.z_hi;
             plan.flow_height      = interval.base_height;
             plan.dependency_order = 0;
-            diagnostics.record(plan, base_masks);
             plan.painted_masks_by_extruder.assign(num_physical, ExPolygons());
             plan.fixed_painted_masks_by_extruder.assign(num_physical, ExPolygons());
             std::vector<uint8_t> row_seen_in_interval(rows.size(), uint8_t(0));
@@ -2614,8 +2408,7 @@ static void build_local_z_plan(PrintObject&                                print
                                      << " active_row_mask_components=" << active_row_mask_components
                                      << " active_row_mask_vertices=" << active_row_mask_vertices << " mixed_states=" << mixed_state_count
                                      << " pass_count=" << pass_count_for_log << " pass_min_height=" << pass_min_height_for_log
-                                     << " pass_max_height=" << pass_max_height_for_log << " mixed_mask_count=" << mixed_masks.size()
-                                     << " base_mask_count=" << base_masks.size();
+                                     << " pass_max_height=" << pass_max_height_for_log << " mixed_mask_count=" << mixed_masks.size();
         }
 
         for (size_t i = 0; i < rows.size(); ++i)
@@ -2624,13 +2417,7 @@ static void build_local_z_plan(PrintObject&                                print
     }
 
     if (!intervals.empty() && !plans.empty()) {
-        if (prep_profile.enabled && parallel_geometry)
-            BOOST_LOG_TRIVIAL(info) << "Preparation Local-Z batches max_layers=" << max_batch_layers
-                                    << " max_input_points=" << max_batch_input_points
-                                    << " max_retained_points=" << max_batch_retained_points
-                                    << " retained_vertex_bytes=" << max_batch_retained_points * sizeof(Point);
         print_object.set_local_z_plan(std::move(intervals), std::move(plans));
-        export_local_z_plan_debug(print_object, nozzle_min_layer_heights, diagnostics);
         BOOST_LOG_TRIVIAL(warning) << "Local-Z plan built"
                                    << " object=" << object_name << " mixed_intervals=" << mixed_intervals
                                    << " split_intervals=" << split_intervals << " non_split_mixed_intervals=" << non_split_mixed_intervals
@@ -2651,9 +2438,10 @@ static void build_local_z_plan(PrintObject&                                print
     }
 }
 
-void finalize_local_z_plan(PrintObject& print_object, LocalZPlanningInput input, const std::function<void()>& throw_on_cancel)
+bool finalize_local_z_plan(PrintObject& print_object, LocalZPlanningInput input, const std::function<void()>& throw_on_cancel)
 {
-    const Print* print = print_object.print();
+    bool         height_limits_violated = false;
+    const Print* print                  = print_object.print();
     if (input.segmentation.empty()) {
         input.segmentation              = whole_object_local_z_segmentation_by_mixed_wall(print_object, local_z_enabled_mixed_rows(*print));
         input.whole_object_scope_active = true;
@@ -2672,7 +2460,8 @@ void finalize_local_z_plan(PrintObject& print_object, LocalZPlanningInput input,
         }
     }
     if (!input.segmentation.empty())
-        build_local_z_plan(print_object, input.segmentation, input.whole_object_scope_active, throw_on_cancel);
+        build_local_z_plan(print_object, input.segmentation, input.whole_object_scope_active, throw_on_cancel, height_limits_violated);
+    return height_limits_violated;
 }
 
 } // namespace Slic3r

@@ -11043,7 +11043,6 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                                     "filament_multi_colors",
                                     "filament_colour_mode",
                                     "mixed_filament_definitions",
-                                    "mixed_filament_calibrated_colors",
                                     "dithering_local_z_mode",
                                     "dithering_local_z_whole_objects",
                                     "dithering_local_z_direct_multicolor",

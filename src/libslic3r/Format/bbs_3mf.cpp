@@ -7611,26 +7611,38 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
     //BBS: add project config file logic for new json format
     bool _BBS_3MF_Exporter::_add_project_config_file_to_archive(mz_zip_archive& archive, const DynamicPrintConfig &config, Model& model)
     {
+        // A recipe that cannot be written as JSON must not block saving the project.
+        // The legacy rows are then saved untouched and the JSON is omitted, which loads
+        // like a project from before the JSON existed. Every recipe keeps its position,
+        // so mixed filament IDs and the paint that refers to them do not move.
+        DynamicPrintConfig compatible_config(config);
+        std::string        json;
         try {
-            const size_t       physical_count = physical_filament_count_from_project_config(config);
-            const auto         definitions    = mixed_filaments_from_project_config(config, physical_count);
-            const auto         json           = serialize_mixed_filaments_json(definitions, physical_count);
-            DynamicPrintConfig compatible_config(config);
-            compatible_config.set_key_value("mixed_filament_definitions", new ConfigOptionString(mixed_filaments_to_legacy(definitions)));
-
-            const std::string temp_file = model.get_backup_path() + "/_temp_1.config";
-            compatible_config.save_to_json(temp_file, "project_settings", "project", Snapmaker_VERSION);
-            if (!_add_file_to_archive(archive, BBS_PROJECT_CONFIG_FILE, temp_file))
-                return false;
-            if (!mz_zip_writer_add_mem(&archive, MIXED_FILAMENTS_3MF_PATH, json.data(), json.size(), MZ_DEFAULT_COMPRESSION)) {
-                add_error(std::string("Unable to write ") + MIXED_FILAMENTS_3MF_PATH);
-                return false;
-            }
-            return true;
+            const size_t physical_count  = physical_filament_count_from_project_config(config);
+            size_t       unreadable_rows = 0;
+            const auto   definitions     = mixed_filaments_from_project_config(config, physical_count, &unreadable_rows);
+            std::string  text            = serialize_mixed_filaments_json(definitions, physical_count);
+            std::string  legacy_rows     = mixed_filaments_to_legacy(definitions);
+            if (unreadable_rows > 0)
+                // The application ignores these rows already. Dropping them keeps one from
+                // coming back, and shifting later IDs, if its filament is added again.
+                BOOST_LOG_TRIVIAL(warning) << "Saving mixed filaments: dropped " << unreadable_rows << " unreadable legacy recipe row(s)";
+            compatible_config.set_key_value("mixed_filament_definitions", new ConfigOptionString(std::move(legacy_rows)));
+            json = std::move(text);
         } catch (const std::exception& e) {
-            add_error(std::string("Unable to save mixed filaments: ") + e.what());
+            BOOST_LOG_TRIVIAL(warning) << "Mixed filament recipes cannot be written as " << MIXED_FILAMENTS_3MF_PATH << " (" << e.what()
+                                       << "); saving the legacy recipe rows only";
+        }
+
+        const std::string temp_file = model.get_backup_path() + "/_temp_1.config";
+        compatible_config.save_to_json(temp_file, "project_settings", "project", Snapmaker_VERSION);
+        if (!_add_file_to_archive(archive, BBS_PROJECT_CONFIG_FILE, temp_file))
+            return false;
+        if (!json.empty() && !mz_zip_writer_add_mem(&archive, MIXED_FILAMENTS_3MF_PATH, json.data(), json.size(), MZ_DEFAULT_COMPRESSION)) {
+            add_error(std::string("Unable to write ") + MIXED_FILAMENTS_3MF_PATH);
             return false;
         }
+        return true;
     }
 
     //BBS: add project embedded preset files

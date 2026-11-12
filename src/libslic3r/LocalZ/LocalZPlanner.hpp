@@ -24,6 +24,8 @@ std::vector<std::vector<ExPolygons>> local_z_planner_segmentation_with_whole_obj
     bool&                                       whole_object_scope_active);
 
 // Called only after compensation, repair and polyholes have finalized slices.
-void finalize_local_z_plan(PrintObject& object, LocalZPlanningInput input, const std::function<void()>& throw_on_cancel);
+// Returns true when part of a mixed region could not be divided within the nozzle layer
+// height limits and was printed with a single component instead.
+bool finalize_local_z_plan(PrintObject& object, LocalZPlanningInput input, const std::function<void()>& throw_on_cancel);
 } // namespace Slic3r
 #endif

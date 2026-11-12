@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdlib>
 #include <unordered_map>
-#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -21,7 +20,6 @@
 #include "MixedFilament/Slicing.hpp"
 #include "MixedFilament.hpp"
 #include "MixedFilament/LayerTracker.hpp"
-#include "Slicing/PreparationDiagnostics.hpp"
 #include "MixedFilament/ChannelMap.hpp"
 #include "Slicing/LayerGeometryBatch.hpp"
 #include "MultiMaterialSegmentation.hpp"
@@ -851,66 +849,6 @@ void groupingVolumesForBrim(PrintObject* object, LayerPtrs& layers, int firstLay
     reGroupingLayerPolygons(object->firstLayerObjGroupsMod(), layers.front()->lslices, scaled_resolution);
 }
 
-// Exact diagnostic snapshot of the ordered geometry handed to perimeter/fill
-// generation. Field-wise output avoids padding and runtime pointer/object IDs.
-// This is a native binary comparison format, not a project serialization format.
-template<class ThrowOnCancel> static void capture_prepared_layers(const PrintObject& object, ThrowOnCancel throw_on_cancel)
-{
-    const char* prefix = std::getenv("ORCA_PREP_CAPTURE");
-    if (!prefix || !*prefix)
-        return;
-    const auto&       objects      = object.print()->objects();
-    const size_t      object_index = size_t(std::find(objects.begin(), objects.end(), &object) - objects.begin());
-    const std::string path         = std::string(prefix) + "-" + std::to_string(object_index) + ".bin";
-    std::ofstream     output(std::filesystem::u8path(path), std::ios::binary | std::ios::trunc);
-    if (!output)
-        throw std::runtime_error("Cannot open preparation snapshot");
-    auto value   = [&](const auto& item) { output.write(reinterpret_cast<const char*>(&item), sizeof(item)); };
-    auto count   = [&](size_t size) { value(uint64_t(size)); };
-    auto polygon = [&](const Polygon& polygon) {
-        count(polygon.points.size());
-        for (const Point& point : polygon.points) {
-            value(point.x());
-            value(point.y());
-        }
-    };
-    auto expolygon = [&](const ExPolygon& item) {
-        polygon(item.contour);
-        count(item.holes.size());
-        for (const Polygon& hole : item.holes)
-            polygon(hole);
-    };
-    output.write("OrcaPrep1", 9);
-    count(object.layer_count());
-    for (const Layer* layer : object.layers()) {
-        throw_on_cancel();
-        count(layer->id());
-        value(layer->print_z);
-        value(layer->slice_z);
-        value(layer->height);
-        count(layer->lslices.size());
-        for (const ExPolygon& item : layer->lslices)
-            expolygon(item);
-        count(layer->regions().size());
-        for (const LayerRegion* region : layer->regions()) {
-            count(region->region().print_object_region_id());
-            count(region->slices.surfaces.size());
-            for (const Surface& surface : region->slices.surfaces) {
-                value(surface.surface_type);
-                value(surface.thickness);
-                value(surface.thickness_layers);
-                value(surface.bridge_angle);
-                value(surface.extra_perimeters);
-                expolygon(surface.expolygon);
-            }
-        }
-    }
-    output.close();
-    if (!output)
-        throw std::runtime_error("Failed to write preparation snapshot");
-    BOOST_LOG_TRIVIAL(info) << "Preparation snapshot saved " << path;
-}
-
 // Called by make_perimeters()
 // 1) Decides Z positions of the layers,
 // 2) Initializes layers and their regions
@@ -959,7 +897,12 @@ void PrintObject::slice()
     this->_transform_hole_to_polyholes();
 
     // Plan against final geometry and layer IDs, after compensation and repairs.
-    finalize_local_z_plan(*this, std::move(local_z_input), [this] { m_print->throw_if_canceled(); });
+    if (finalize_local_z_plan(*this, std::move(local_z_input), [this] { m_print->throw_if_canceled(); }))
+        this->active_step_add_warning(
+            PrintStateBase::WarningLevel::CRITICAL,
+            _u8L("Local-Z could not fit the nozzle layer height limits into part of a mixed region, so that part is printed "
+                 "without its full color ratio. Check the nozzle minimum and maximum layer heights in the printer settings.") +
+                "\n" + (_u8L("Object name")) + ": " + this->model_object()->name);
 
     // BBS: the actual first layer slices stored in layers are re-sorted by volume group and will be used to generate brim
     groupingVolumesForBrim(this, m_layers, firstLayerReplacedBy);
@@ -981,7 +924,6 @@ void PrintObject::slice()
     if (m_layers.empty())
         throw Slic3r::SlicingError(L("No layers were detected. You might want to repair your STL file(s) or check their size or thickness and retry.\n"));
 
-    capture_prepared_layers(*this, [this] { m_print->throw_if_canceled(); });
     // BBS
     this->set_done(posSlice);
 }
@@ -1512,8 +1454,6 @@ static bool apply_mixed_region_surface_offsets(PrintObject& print_object)
 template<typename ThrowOnCancel>
 static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<std::vector<ExPolygons>> segmentation, ThrowOnCancel throw_on_cancel)
 {
-    PreparationProfile prep_profile("apply_regions");
-    PreparationTimer   apply_timer(&prep_profile, "total");
     assert(segmentation.size() == print_object.layer_count());
     const PrintConfig        &print_cfg = print_object.print()->config();
     const DynamicPrintConfig &full_cfg  = print_object.print()->full_print_config();
@@ -1539,7 +1479,6 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
         return layer_id * num_channels + channel_idx;
     };
     std::vector<std::vector<int>> mixed_zone_component_local_layer_index(segmentation.size() * num_channels);
-    PreparationTimer              tracking_timer(&prep_profile, "tracking");
     if (num_channels > 1) {
         std::vector<size_t> mixed_channels;
         for (size_t channel_idx = 1; channel_idx < num_channels; ++channel_idx) {
@@ -1552,32 +1491,18 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
         tbb::parallel_for(tbb::blocked_range<size_t>(0, mixed_channels.size()), [&](const tbb::blocked_range<size_t>& range) {
             for (size_t channel_slot = range.begin(); channel_slot < range.end(); ++channel_slot) {
                 const size_t              channel_idx       = mixed_channels[channel_slot];
-                const bool                reuse_tracking    = preparation_experiment("tracking");
-                const bool                validate_tracking = reuse_tracking && preparation_diagnostic("ORCA_PREP_VALIDATE_REUSE");
-                MixedFilamentLayerTracker tracker(reuse_tracking), reference_tracker;
-                std::vector<int>          reference_indices;
-                size_t                    max_components = 0;
+                MixedFilamentLayerTracker tracker(true);
                 for (size_t layer_id = 0; layer_id < segmentation.size(); ++layer_id) {
                     throw_on_cancel();
                     if (segmentation[layer_id].size() != num_channels)
                         continue;
                     tracker.track_layer(segmentation[layer_id][channel_idx], int(layer_id),
                                         mixed_zone_component_local_layer_index[mixed_zone_phase_slot(layer_id, channel_idx)]);
-                    max_components = std::max(max_components, segmentation[layer_id][channel_idx].size());
-                    if (validate_tracking) {
-                        reference_tracker.track_layer(segmentation[layer_id][channel_idx], int(layer_id), reference_indices);
-                        if (reference_indices != mixed_zone_component_local_layer_index[mixed_zone_phase_slot(layer_id, channel_idx)])
-                            throw std::runtime_error("Optimized mixed-component tracking changed activation indices");
-                    }
                 }
-                if (prep_profile.enabled)
-                    BOOST_LOG_TRIVIAL(info) << "Preparation tracker channel=" << channel_idx << " max_components=" << max_components;
             }
         });
     }
 
-    tracking_timer.finish();
-    PreparationTimer regions_timer(&prep_profile, "regions");
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, segmentation.size(), std::max(segmentation.size() / 128, size_t(1))),
         [&print_object,
@@ -1608,8 +1533,6 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
             };
 
             using SurfaceBuckets                         = std::array<SurfacesPtr, size_t(stCount)>;
-            const bool reuse_bounds                      = preparation_experiment("region_bounds");
-            const bool reuse_buckets                     = preparation_experiment("surface_buckets");
             auto       intersect_surfaces_preserve_types = [](const SurfaceCollection& src, const ExPolygons& mask,
                                                         const SurfaceBuckets* prepared) {
                 SurfaceCollection out;
@@ -1678,13 +1601,11 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                     default_bbox = get_extents(default_segmentation);
                     layer_split  = true;
                 }
-                auto append_to_extruder = [&by_extruder, &layer_split, reuse_bounds](size_t extruder_idx, ExPolygons masks) {
+                auto append_to_extruder = [&by_extruder, &layer_split](size_t extruder_idx, ExPolygons masks) {
                     if (masks.empty())
                         return;
                     ByExtruder& region = by_extruder[extruder_idx];
                     append(region.expolygons, std::move(masks));
-                    if (!reuse_bounds)
-                        region.bbox = get_extents(region.expolygons);
                     layer_split = true;
                 };
                 for (size_t channel_idx = 1; channel_idx < num_channels; ++ channel_idx) {
@@ -1797,9 +1718,9 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
 
                 if (!layer_split)
                     continue;
-                if (reuse_bounds)
-                    for (ByExtruder& region : by_extruder)
-                        region.bbox = get_extents(region.expolygons);
+                // Bounds are computed once, after every channel has contributed its masks.
+                for (ByExtruder& region : by_extruder)
+                    region.bbox = get_extents(region.expolygons);
 
                 ExPolygons  layer_geometry_mask;
                 BoundingBox layer_geometry_bbox;
@@ -1828,10 +1749,9 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                         continue;
 
                     SurfaceBuckets parent_buckets;
-                    if (reuse_buckets)
-                        for (const Surface& surface : parent_layer_region.slices.surfaces)
-                            parent_buckets[size_t(surface.surface_type)].push_back(&surface);
-                    const SurfaceBuckets* prepared_buckets       = reuse_buckets ? &parent_buckets : nullptr;
+                    for (const Surface& surface : parent_layer_region.slices.surfaces)
+                        parent_buckets[size_t(surface.surface_type)].push_back(&surface);
+                    const SurfaceBuckets* prepared_buckets       = &parent_buckets;
                     auto preserve_parent_region = [&by_region, &parent_layer_region, &parent_print_region]() {
                         if (parent_layer_region.slices.empty())
                             return;

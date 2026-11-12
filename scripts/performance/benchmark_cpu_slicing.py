@@ -66,13 +66,6 @@ def main():
         "started": datetime.datetime.now().astimezone().isoformat(),
         "command": command, "project_sha256": sha256(project),
         "dll_sha256": sha256(exe.parent / "Snapmaker_Orca.dll"),
-        "local_z_validation": os.environ.get("ORCA_LOCAL_Z_VALIDATE") == "1",
-        "local_z_profile": os.environ.get("ORCA_LOCAL_Z_PROFILE", ""),
-        "local_z_capture": os.environ.get("ORCA_LOCAL_Z_CAPTURE", ""),
-        "slicing_environment": {name: os.environ[name] for name in (
-            "ORCA_LOCAL_Z_CPU", "ORCA_LOCAL_Z_DEBUG", "ORCA_LOCAL_Z_VALIDATE", "ORCA_LOCAL_Z_PROFILE",
-            "ORCA_LOCAL_Z_CAPTURE", "ORCA_PREP_EXPERIMENTS", "ORCA_PREP_PROFILE", "ORCA_PREP_VALIDATE_REUSE",
-            "ORCA_PREP_VALIDATE_THREADS", "ORCA_PREP_CAPTURE") if name in os.environ},
         "logical_processors": os.cpu_count(), "samples": [],
     }
     with (output / "stdout.log").open("wb") as stdout, (output / "stderr.log").open("wb") as stderr:

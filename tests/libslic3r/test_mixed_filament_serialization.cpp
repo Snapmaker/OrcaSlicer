@@ -311,9 +311,12 @@ TEST_CASE("Mixed persistence exact loading does not generate or drop auto recipe
     auto config = recipe_config();
     config.set("mixed_filament_definitions", "1,13,1,1,50,0,m2,u101");
     REQUIRE_THROWS(mixed_filaments_from_project_config(config, 12));
+    size_t unreadable_rows = 0;
+    CHECK(mixed_filaments_from_project_config(config, 12, &unreadable_rows).empty());
+    CHECK(unreadable_rows == 1);
 }
 
-TEST_CASE("3MF saving fails instead of discarding invalid mixed recipes", "[MixedFilamentJSON][Persistence][3mf]")
+TEST_CASE("3MF saving succeeds when mixed recipes cannot be written as JSON", "[MixedFilamentJSON][Persistence][3mf]")
 {
     TemporaryDirectory temporary;
     Model              model;
@@ -321,9 +324,45 @@ TEST_CASE("3MF saving fails instead of discarding invalid mixed recipes", "[Mixe
     auto* object = model.add_object();
     object->add_volume(make_cube(5., 5., 5.));
     object->add_instance();
-    auto config = full_config();
-    config.set("mixed_filament_definitions", "1,13,1,1,50,0,m2,u101");
-    REQUIRE_FALSE(save_project((temporary.path / "invalid.3mf").string(), model, config));
+    auto       config = full_config();
+    const auto path   = (temporary.path / "project.3mf").string();
+    const auto has    = [](const Entries& entries, const std::string& name) {
+        return std::any_of(entries.begin(), entries.end(), [&](const auto& item) { return item.first == name; });
+    };
+
+    SECTION("A row the application cannot read is dropped and the rest keeps its order")
+    {
+        config.set("mixed_filament_definitions", "1,13,1,1,50,0,m2,u101;1,2,1,1,25,0,m2,u102;2,3,1,1,50,0,m2,u103");
+        REQUIRE(save_project(path, model, config));
+        CHECK(has(read_zip(path), MIXED_FILAMENTS_3MF_PATH));
+        LoadedProject loaded;
+        REQUIRE(loaded.load(path, (temporary.path / "import").string()));
+        const auto definitions = mixed_filaments_from_project_config(loaded.config, 12);
+        REQUIRE(definitions.size() == 2);
+        CHECK(definitions[0].identity.stable_id == 102);
+        CHECK(definitions[1].identity.stable_id == 103);
+    }
+
+    SECTION("A recipe that fails JSON validation is saved in its legacy row without moving later recipes")
+    {
+        // The second recipe's gradient order does not match its components, which the JSON rejects.
+        const std::string rows = "1,2,1,1,25,0,m2,u101;"
+                                 "1,3,1,1,50,0,g1/2/12,w20/30/50,m0,u102,cm3,r1/1/0,p0/0.9/0.5/0.2/1;"
+                                 "2,3,1,1,50,0,m2,u103";
+        config.set("mixed_filament_definitions", rows);
+        REQUIRE_THROWS(serialize_mixed_filaments_json(mixed_filaments_from_project_config(config, 12), 12));
+        REQUIRE(save_project(path, model, config));
+        CHECK_FALSE(has(read_zip(path), MIXED_FILAMENTS_3MF_PATH));
+        LoadedProject loaded;
+        REQUIRE(loaded.load(path, (temporary.path / "import").string()));
+        CHECK(loaded.config.opt_string("mixed_filament_definitions") == rows);
+        MixedFilamentManager reader;
+        reader.load_custom_entries(loaded.config.opt_string("mixed_filament_definitions"), std::vector<std::string>(12, "#808080"),
+                                   MixedFilamentManager::LoadMode::Exact);
+        CHECK(reader.filament_id_from_stable_id(101, 12) == 13);
+        CHECK(reader.filament_id_from_stable_id(102, 12) == 14);
+        CHECK(reader.filament_id_from_stable_id(103, 12) == 15);
+    }
 }
 
 TEST_CASE("Existing CubeLines project migrates to JSON without changing recipes or paint", "[MixedFilamentJSON][Persistence][3mf]")

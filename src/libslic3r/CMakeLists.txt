@@ -409,7 +409,6 @@ set(lisbslic3r_sources
     ShortestPath.hpp
     Slicing/LayerGeometryBatch.hpp
     Slicing/PaintedLayerOutlineCache.hpp
-    Slicing/PreparationDiagnostics.hpp
     SLA/AGGRaster.hpp
     SLA/BoostAdapter.hpp
     SLA/Clustering.cpp

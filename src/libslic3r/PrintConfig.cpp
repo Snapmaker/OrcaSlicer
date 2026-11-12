@@ -4652,14 +4652,6 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.0));
 
-    def           = this->add("mixed_filament_calibrated_colors", coBool);
-    def->label    = L("Use calibrated KM/K-S colors");
-    def->category = L("Material");
-    def->tooltip  = L("Use measured color prediction for supported Full Spectrum materials. "
-                       "Unmeasured materials receive approximate predictions. Disable to use FilamentMixer for all mixtures.");
-    def->mode     = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(true));
-
     def = this->add("mixed_filament_gradient_mode", coBool);
     def->label = L("Height-weighted cadence");
     def->category = L("Others");
@@ -7061,33 +7053,13 @@ void PrintConfigDef::init_extruder_option_keys()
 void PrintConfigDef::init_filament_option_keys()
 {
     m_filament_option_keys = {
-        "filament_diameter",
-        "min_layer_height",
-        "max_layer_height",
-        "retraction_length",
-        "z_hop",
-        "z_hop_types",
-        "retract_lift_above",
-        "retract_lift_below",
-        "retract_lift_enforce",
-        "retraction_speed",
-        "deretraction_speed",
-        "retract_before_wipe",
-        "retract_restart_extra",
-        "retraction_minimum_travel",
-        "wipe",
-        "wipe_distance",
-        "retract_when_changing_layer",
-        "retract_length_toolchange",
-        "retract_restart_extra_toolchange",
-        "filament_colour",
-        "filament_transmission_distance",
-        "filament_full_spectrum_material_id",
-        "filament_multi_colors",
-        "filament_colour_mode",
-        "default_filament_profile",
-        "retraction_distances_when_cut",
-        "long_retractions_when_cut" /*,"filament_seam_gap"*/
+        "filament_diameter", "min_layer_height", "max_layer_height",
+        "retraction_length", "z_hop", "z_hop_types", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
+        "retract_before_wipe", "retract_restart_extra", "retraction_minimum_travel", "wipe", "wipe_distance",
+        "retract_when_changing_layer", "retract_length_toolchange", "retract_restart_extra_toolchange", "filament_colour",
+        "filament_transmission_distance", "filament_full_spectrum_material_id",
+        "filament_multi_colors", "filament_colour_mode",
+        "default_filament_profile","retraction_distances_when_cut","long_retractions_when_cut"/*,"filament_seam_gap"*/
     };
 
     m_filament_retract_keys = {
@@ -8137,6 +8109,8 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         "extruder_type",
         "internal_bridge_support_thickness","extruder_clearance_max_radius", "top_area_threshold", "reduce_wall_solid_infill","filament_load_time","filament_unload_time",
         "smooth_coefficient", "overhang_totally_speed", "silent_mode",
+        // Removed hidden toggle: calibrated color prediction is always used.
+        "mixed_filament_calibrated_colors",
     };
 
     if (ignore.find(opt_key) != ignore.end()) {

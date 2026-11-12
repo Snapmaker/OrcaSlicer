@@ -228,8 +228,12 @@ std::string serialize_mixed_filaments_json(const std::vector<MixedFilamentDefini
     return text;
 }
 
-std::vector<MixedFilamentDefinition> mixed_filaments_from_project_config(const DynamicPrintConfig& config, size_t physical_count)
+std::vector<MixedFilamentDefinition> mixed_filaments_from_project_config(const DynamicPrintConfig& config,
+                                                                         size_t                    physical_count,
+                                                                         size_t*                   unreadable_rows)
 {
+    if (unreadable_rows != nullptr)
+        *unreadable_rows = 0;
     const auto* rows = config.option<ConfigOptionString>("mixed_filament_definitions");
     if (rows == nullptr || rows->value.empty())
         return {};
@@ -243,7 +247,10 @@ std::vector<MixedFilamentDefinition> mixed_filaments_from_project_config(const D
     size_t             count = 0;
     while (std::getline(stream, row, ';'))
         count += !row.empty();
-    require(definitions.size() == count, "Cannot save mixed filaments: invalid legacy recipe or physical filament reference");
+    if (unreadable_rows != nullptr)
+        *unreadable_rows = count > definitions.size() ? count - definitions.size() : 0;
+    else
+        require(definitions.size() == count, "Cannot save mixed filaments: invalid legacy recipe or physical filament reference");
     return definitions;
 }
 

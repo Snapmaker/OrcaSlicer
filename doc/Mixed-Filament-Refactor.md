@@ -47,7 +47,7 @@ Independent cadence tracks the end of each contiguous eligible mixed domain. Bef
 
 `LocalZMaskPreparation` owns fixed-paint precedence and boundary expansion for both purge planning and G-code emission. `LocalZSchedule` produces ordered tool/pass phases from geometry-independent descriptors; both consumers use that scheduler, including its height-order fallback.
 
-The planner now lives in `LocalZ/LocalZPlanner.cpp`. Effective settings, row recipes/cadence state, and immutable geometry preparation have separate contracts. Base-mask geometry used only by JSON/SVG diagnostics is captured only when `ORCA_LOCAL_Z_DEBUG=1` and is not retained in the execution plan. The disabled dense-zone shared-plane fallback has been removed.
+The planner now lives in `LocalZ/LocalZPlanner.cpp`. Effective settings, row recipes/cadence state, and immutable geometry preparation have separate contracts. The JSON/SVG plan diagnostics and the base-mask geometry they needed have been removed. The disabled dense-zone shared-plane fallback has been removed.
 
 Production callers read `mixed_filament_legacy_rows()` and publish edits through explicit setters. ID lookup returns a const row. Mutable `mixed_filaments()` borrowing remains only as a compatibility interface, covered by compatibility tests; production code no longer activates that synchronization path. The disabled old sidebar editor has been removed.
 

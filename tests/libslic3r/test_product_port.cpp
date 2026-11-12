@@ -421,7 +421,6 @@ TEST_CASE("Product bundle calibration follows IDs and TD through slot reordering
     config.option<ConfigOptionFloats>("filament_transmission_distance")->values      = context.physical_tds;
     config.option<ConfigOptionStrings>("filament_full_spectrum_material_id")->values = context.physical_material_ids;
     config.set("dithering_local_z_mode", true);
-    config.set("mixed_filament_calibrated_colors", false); // An old hidden toggle cannot disable automatic pack calibration.
     config.set("mixed_filament_definitions", recipes.serialize_custom_entries());
     Model model;
     Print print;

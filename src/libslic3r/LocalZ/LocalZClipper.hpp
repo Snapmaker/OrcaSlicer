@@ -10,9 +10,6 @@ namespace Slic3r {
 
 class LocalZClipIndex;
 
-// Opt-in expensive reference clipping and base-path leak checks for development.
-bool local_z_validate_clipping();
-
 // One export layer's bounded memoization. Bind masks before querying them, and
 // keep their geometry and this cache alive until all borrowed clippers expire.
 // Queries are synchronized; cached coordinates are copied, never shared with callers.
@@ -47,8 +44,7 @@ public:
     Polylines difference(const Polylines& subject) const;
     bool      intersects(const Polyline& subject) const;
 
-    // Export's intersection-then-difference operation. Optional process-wide
-    // timing/capture is enabled by ORCA_LOCAL_Z_PROFILE / ORCA_LOCAL_Z_CAPTURE.
+    // Export's intersection-then-difference operation.
     static Polylines clip_path(const Polyline& subject, const LocalZClipper* include_masks, const LocalZClipper* exclude_masks);
 
 private:

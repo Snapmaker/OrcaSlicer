@@ -1641,6 +1641,7 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
                         BOOST_LOG_TRIVIAL(error)
                             << "Wipe tower nominal transition unavailable, using direct extruder switch"
                             << " layer_idx=" << m_layer_idx << " extruder_id=" << extruder_id << " tool_change_idx=" << m_tool_change_idx;
+                        ++m_unplanned_direct_switches;
                         gcode += gcodegen.set_extruder(unsigned(extruder_id), print_z);
                     }
                 }
@@ -1675,6 +1676,7 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
                     BOOST_LOG_TRIVIAL(error) << "Wipe tower nominal transition unavailable, using direct extruder switch"
                                              << " layer_idx=" << m_layer_idx << " extruder_id=" << extruder_id
                                              << " tool_change_idx=" << m_tool_change_idx;
+                    ++m_unplanned_direct_switches;
                     gcode += gcodegen.set_extruder(unsigned(extruder_id), print_z);
                 }
             }
@@ -3482,6 +3484,11 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                 file.write(m_wipe_tower->finalize(*this));
         }
     }
+    if (m_wipe_tower && m_wipe_tower->unplanned_direct_switches() > 0)
+        // The G-code is still usable, but these changes skipped the prime tower.
+        print.active_step_add_warning(PrintStateBase::WarningLevel::CRITICAL,
+                                      _(L("Some filament changes could not be matched to the prime tower plan and were made "
+                                          "without purging on the tower. Check the print for color contamination.")));
     // BBS: the last retraction
     //  Write end commands to file.
     file.write(this->retract(false, true));
@@ -4406,23 +4413,6 @@ static inline LocalZPathHeightStats collect_local_z_path_height_stats(const Extr
             collect_local_z_path_height_stats(*entity, stats);
     finalize_local_z_path_height_stats(stats);
     return stats;
-}
-
-static inline Polylines collect_local_z_polylines(const ExtrusionEntityCollection& source)
-{
-    Polylines lines;
-    for (const ExtrusionEntity* entity : source.flatten_refs()) {
-        if (const auto* path = dynamic_cast<const ExtrusionPath*>(entity)) {
-            lines.emplace_back(path->polyline);
-        } else if (const auto* multipath = dynamic_cast<const ExtrusionMultiPath*>(entity)) {
-            for (const ExtrusionPath& p : multipath->paths)
-                lines.emplace_back(p.polyline);
-        } else if (const auto* loop = dynamic_cast<const ExtrusionLoop*>(entity)) {
-            for (const ExtrusionPath& p : loop->paths)
-                lines.emplace_back(p.polyline);
-        }
-    }
-    return lines;
 }
 
 using LocalZLoopSeamPlacer = std::function<bool(const ExtrusionLoop&, ExtrusionLoop&, Point&)>;
@@ -5697,7 +5687,6 @@ LayerResult GCode::process_layer(const Print& print,
         LocalZClipper                 base_exclude_clipper;
         size_t                  local_clipped_collections { 0 };
         size_t                  base_clipped_collections { 0 };
-        size_t                  base_clip_leak_warnings { 0 };
         std::vector<LocalZPassBucket> pass_buckets;
     };
 
@@ -6086,22 +6075,6 @@ LayerResult GCode::process_layer(const Print& print,
                                 continue;
                             const LocalZPathHeightStats base_height_stats = collect_local_z_path_height_stats(*clipped_base);
                             ++local_z_ctx->base_clipped_collections;
-                            const ExPolygons &mixed_leak_ref =
-                                !local_z_ctx->raw_mixed_masks_union.empty() ? local_z_ctx->raw_mixed_masks_union : local_z_ctx->mixed_masks_union;
-                            if (local_z_validate_clipping() && local_z_ctx->base_clip_leak_warnings < 3 && !mixed_leak_ref.empty()) {
-                                Polylines clipped_base_lines = collect_local_z_polylines(*clipped_base);
-                                if (!clipped_base_lines.empty()) {
-                                    Polylines leaked_segments = intersection_pl(std::move(clipped_base_lines), mixed_leak_ref);
-                                    if (!leaked_segments.empty()) {
-                                        ++local_z_ctx->base_clip_leak_warnings;
-                                        BOOST_LOG_TRIVIAL(warning) << "Local-Z base clip leak"
-                                                                   << " print_z=" << print_z
-                                                                   << " layer_to_print_idx=" << layer_to_print_idx
-                                                                   << " leaked_segment_count=" << leaked_segments.size()
-                                                                   << " warn_index=" << local_z_ctx->base_clip_leak_warnings;
-                                    }
-                                }
-                            }
                             if (base_height_stats.count > 0 && local_z_ctx->base_clipped_collections <= 5) {
                                 BOOST_LOG_TRIVIAL(debug) << "Local-Z base clip heights"
                                                          << " print_z=" << print_z

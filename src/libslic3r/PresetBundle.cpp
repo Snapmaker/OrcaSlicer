@@ -218,7 +218,6 @@ static std::vector<std::string> s_project_options{
     "filament_grouping_mode",
     "flush_multiplier",
     // Mixed filament / local-Z settings
-    "mixed_filament_calibrated_colors",
     "mixed_filament_gradient_mode",
     "mixed_filament_height_lower_bound",
     "mixed_filament_height_upper_bound",
@@ -3937,14 +3936,6 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
                             }
                         }
                     }
-                }
-                const ConfigOptionFloats* td_opt = filament_preset != nullptr ? filament_preset->config.option<ConfigOptionFloats>(
-                                                                                    "filament_transmission_distance") :
-                                                                                nullptr;
-                if (td_opt != nullptr && !td_opt->values.empty()) {
-                    const double td = td_opt->get_at(0);
-                    if (std::isfinite(td) && td > 0.0)
-                        physical_tds[i] = td;
                 }
                 const ConfigOptionStrings* material_id_opt = filament_preset != nullptr ?
                                                                  filament_preset->config.option<ConfigOptionStrings>(

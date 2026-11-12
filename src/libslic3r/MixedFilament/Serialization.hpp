@@ -14,7 +14,11 @@ std::vector<MixedFilamentDefinition> deserialize_mixed_filaments_json(const std:
 
 // The project configuration still transports compact rows internally. These
 // adapters do not regenerate auto recipes or change the saved recipe order.
-std::vector<MixedFilamentDefinition> mixed_filaments_from_project_config(const DynamicPrintConfig& config, size_t physical_count);
+// A legacy row the application cannot read (and therefore already ignores) is
+// counted in `unreadable_rows` when given; without it such a row throws.
+std::vector<MixedFilamentDefinition> mixed_filaments_from_project_config(const DynamicPrintConfig& config,
+                                                                         size_t                    physical_count,
+                                                                         size_t*                   unreadable_rows = nullptr);
 std::string                          mixed_filaments_to_legacy(const std::vector<MixedFilamentDefinition>& definitions);
 
 } // namespace Slic3r

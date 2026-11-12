@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "libslic3r/Print.hpp"
 #include "libslic3r/Layer.hpp"
@@ -479,4 +480,39 @@ TEST_CASE("Layer-aligned mixed previews use nozzle minima", "[MixedFilament][Pre
     }
     preview.nozzle_min_layer_heights = {0.04, 0.04};
     CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(row, preview) == 20);
+}
+
+TEST_CASE("Local-Z prints a mixed region too short for the nozzle limits and warns", "[LocalZ][LocalZPlan][NozzleLimits]")
+{
+    LocalZTestSettings settings;
+    Model              model;
+    // Two layers: the first is never subdivided, so the mixed domain is one 0.2 mm layer,
+    // which is below the 0.25 mm minimum of every nozzle.
+    add_mixed_cube(model, 0.4);
+    auto config = local_z_config(false, 37);
+    config.option<ConfigOptionFloats>("min_layer_height")->values.assign(4, 0.25);
+    config.option<ConfigOptionFloats>("max_layer_height")->values.assign(4, 0.30);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    auto* object = print.get_object(0);
+    REQUIRE_NOTHROW(object->slice());
+
+    size_t mixed_passes = 0;
+    for (const auto& pass : object->local_z_sublayer_plan()) {
+        if (!pass.split_interval)
+            continue;
+        ++mixed_passes;
+        CHECK_THAT(pass.flow_height, Catch::Matchers::WithinAbs(0.2, 1e-6));
+        const auto tools = std::count_if(pass.painted_masks_by_extruder.begin(), pass.painted_masks_by_extruder.end(),
+                                         [](const ExPolygons& masks) { return !masks.empty(); });
+        CHECK(tools == 1);
+    }
+    CHECK(mixed_passes == 1);
+
+    const auto warnings = object->step_state_with_warnings(posSlice).warnings;
+    const bool warned   = std::any_of(warnings.begin(), warnings.end(), [](const PrintStateBase::Warning& warning) {
+        return warning.message.find("nozzle layer height limits") != std::string::npos;
+    });
+    CHECK(warned);
 }

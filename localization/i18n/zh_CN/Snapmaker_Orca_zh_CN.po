@@ -35,6 +35,12 @@ msgstr "\"%s\" 零件的网格存在错误，请先修复。"
 msgid "Current AMS humidity"
 msgstr "当前AMS湿度"
 
+msgid "Carve overlaps by per-layer slice area"
+msgstr "按逐层切片面积裁切重叠"
+
+msgid "When enabled, overlaps between multi-extruder parts are carved with the new algorithm: on each layer, the part with the smaller slice area owns the overlap, keeping small details intact inside larger bodies. Developer option."
+msgstr "开启后，多色部件间的重叠区域使用新算法裁切：每层由切片面积较小的部件占有重叠区，嵌入大部件的小细节得以保留。开发者选项。"
+
 msgid "Drying"
 msgstr "烘干"
 

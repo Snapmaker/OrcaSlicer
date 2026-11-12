@@ -2365,6 +2365,9 @@ static void build_local_z_plan(PrintObject&                                print
                                                                                                                interval.base_height});
                     if (!direct_sequence.empty())
                         target_extruder = direct_sequence.front();
+                } else if (const LocalZActivePair& active_pair = row_active_pairs[row_idx]; active_pair.valid_pair(num_physical)) {
+                    // An unsplit layer prints a single component: the one with the larger share of this layer's mix.
+                    target_extruder = active_pair.mix_b_percent > 50 ? active_pair.component_b : active_pair.component_a;
                 } else {
                     const int resolve_cadence_index = rows[row_idx].uses_pair_cycle != 0 ? rows[row_idx].state.pair_cycle_index :
                                                                                            rows[row_idx].state.cadence_index;

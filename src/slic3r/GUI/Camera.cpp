@@ -36,9 +36,9 @@ std::string Camera::get_type_as_string() const
 void Camera::set_type(EType type)
 {
     if (m_type != type && (type == EType::Ortho || type == EType::Perspective)) {
-        m_type = type;
+        m_type              = type;
         m_prevent_auto_type = true;
-        if (m_update_config_on_type_change_enabled) {
+        if (m_update_config_on_type_change_enabled && wxTheApp != nullptr && wxGetApp().app_config != nullptr) {
             wxGetApp().app_config->set_bool("use_perspective_camera", m_type == EType::Perspective);
         }
     }
@@ -55,7 +55,11 @@ void Camera::select_next_type()
 
 void Camera::auto_type(EType preferred_type)
 {
-    if (!wxGetApp().app_config->get_bool("auto_perspective")) return;
+    // CLI thumbnails have no GUI application or preferences. Keep the caller's projection.
+    if (wxTheApp == nullptr || wxGetApp().app_config == nullptr)
+        return;
+    if (!wxGetApp().app_config->get_bool("auto_perspective"))
+        return;
     if (preferred_type == EType::Perspective) {
         if (!m_prevent_auto_type) {
             set_type(preferred_type);

@@ -189,8 +189,9 @@ namespace GUI {
         void DetachGpuBuffers(std::vector<unsigned int>& bufferIds);
         /** Returns whether this model currently owns any GPU buffer IDs. */
         bool HasGpuBuffers() const { return m_render_data.vbo_id != 0 || m_render_data.ibo_id != 0; }
-        void render();
-        void render(const std::pair<size_t, size_t>& range);
+        // The caller must bind the shader. Without an explicit shader, use the GUI's current shader.
+        void render(GLShaderProgram* shader = nullptr);
+        void render(const std::pair<size_t, size_t>& range, GLShaderProgram* shader = nullptr);
         void render_instanced(unsigned int instances_vbo, unsigned int instances_count);
 
         bool is_initialized() const { return vertices_count() > 0 && indices_count() > 0; }

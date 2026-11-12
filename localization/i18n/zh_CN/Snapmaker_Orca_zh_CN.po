@@ -16008,7 +16008,7 @@ msgstr "标记所有已保存的混色耗材以供移除。点击“确认”后
 
 # Mixed filament management (PRD 2.0).
 msgid "No mixed filaments"
-msgstr "No mixed filaments"
+msgstr "暂无混色耗材"
 
 # Mixed filament management (PRD 2.0).
 msgid "Current physical filaments"

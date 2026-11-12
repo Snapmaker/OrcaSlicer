@@ -439,13 +439,13 @@ TEST_CASE("256 mixed recipes retain high object and painted IDs through 3MF", "[
     CHECK(reopened->mmu_segmentation_facets.get_data().used_states[256]);
     CHECK(reopened->mmu_segmentation_facets.get_triangle_as_string(0) == volume->mmu_segmentation_facets.get_triangle_as_string(0));
 
-    // The OBJ matching path can also select an existing virtual recipe.
+    // The OBJ matching path can also select an existing virtual recipe. The base filament must differ: matching faces stay unpainted.
     Model                           obj_model;
     auto*                           obj_volume = obj_model.add_object()->add_volume(make_cube(5., 5., 5.));
     const std::vector<unsigned int> face_ids(obj_volume->mesh().its.indices.size(), 272);
-    REQUIRE(Model::obj_import_face_color_deal(face_ids, 272u, &obj_model));
+    REQUIRE(Model::obj_import_face_color_deal(face_ids, 1u, &obj_model));
     CHECK(obj_volume->mmu_segmentation_facets.get_data().used_states[272]);
     const std::vector<unsigned int> vertex_ids(obj_volume->mesh().its.vertices.size(), 256);
-    REQUIRE(Model::obj_import_vertex_color_deal(vertex_ids, 256u, &obj_model));
+    REQUIRE(Model::obj_import_vertex_color_deal(vertex_ids, 1u, &obj_model));
     CHECK(obj_volume->mmu_segmentation_facets.get_data().used_states[256]);
 }

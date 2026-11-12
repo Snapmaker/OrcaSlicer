@@ -10199,6 +10199,12 @@ struct Plater::priv
         bool                  is_collapsed{false};
         bool                  show{false};
     } sidebar_layout;
+    // A floating sidebar frame must not be shown until startup has settled: wxAUI creates and
+    // shows it as soon as the pane is marked shown, which during startup yields a white,
+    // unpainted window that disappears again once the notebook restores its tab.
+    bool     m_sidebar_ready{false};
+    wxTimer  m_sidebar_ready_timer;
+    static constexpr int ID_SIDEBAR_READY_TIMER = wxID_HIGHEST + 1000;
     Bed3D bed;
     Camera camera;
     //BBS: partplate related structure
@@ -10351,6 +10357,7 @@ struct Plater::priv
     void enable_sidebar(bool enabled);
     void collapse_sidebar(bool collapse);
     void update_sidebar(bool force_update = false);
+    void on_sidebar_ready_timer(wxTimerEvent& evt);
     void reset_window_layout();
     Sidebar::DockingState get_sidebar_docking_state();
 
@@ -11279,13 +11286,22 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
     //    bool is_collapsed = wxGetApp().app_config->get("collapsed_sidebar") == "1";
     //    sidebar->collapse(is_collapsed);
     //}
+
+    // The notebook has no selection yet at this point (-1), so the initial visibility is
+    // decided by the timer once the tab has been restored.
     update_sidebar(true);
+    // Release the gate once the notebook has restored its tab: the sidebar is then shown (or
+    // not) according to the settled tab instead of flapping during startup.
+    m_sidebar_ready_timer.SetOwner(this->q, ID_SIDEBAR_READY_TIMER);
+    this->q->Bind(wxEVT_TIMER, &priv::on_sidebar_ready_timer, this, ID_SIDEBAR_READY_TIMER);
+    m_sidebar_ready_timer.StartOnce(8000);
 }
 
 Plater::priv::~priv()
 {
     if (config != nullptr)
         delete config;
+    this->q->Unbind(wxEVT_TIMER, &priv::on_sidebar_ready_timer, this, ID_SIDEBAR_READY_TIMER);
     // Saves the database of visited (already shown) hints into hints.ini.
     notification_manager->deactivate_loaded_hints();
     main_frame->m_tabpanel->Unbind(wxEVT_NOTEBOOK_PAGE_CHANGING, &priv::on_tab_selection_changing, this);
@@ -11477,6 +11493,15 @@ void Plater::priv::collapse_sidebar(bool collapse)
     update_sidebar();
 }
 
+void Plater::priv::on_sidebar_ready_timer(wxTimerEvent& evt)
+{
+    // Deliberately no evt.Skip(): the wildcard wxEVT_TIMER handler bound earlier on this
+    // window (background_process_timer) does not filter by id and would otherwise treat this
+    // timer as a background-process tick and restart the background process.
+    m_sidebar_ready = true;
+    update_sidebar(true);
+}
+
 void Plater::priv::update_sidebar(bool force_update) {
     auto& sidebar = m_aui_mgr.GetPane(this->sidebar);
     if (!sidebar.IsOk() || this->current_panel == nullptr) {
@@ -11484,13 +11509,38 @@ void Plater::priv::update_sidebar(bool force_update) {
     }
     bool  needs_update = force_update;
 
+    // Do not apply visibility changes to a floating sidebar until startup has settled: wxAUI
+    // creates and shows the floating frame as soon as the pane is marked shown, which during
+    // startup yields a white, unpainted window that is hidden again once the notebook
+    // restores its tab. A docked sidebar is not affected by this gate.
+    // The dock layout itself must still be applied here: the constructor loads the saved
+    // perspective with update = false, and this call is what performs the layout. The pane is
+    // hidden at this point (the constructor hides it explicitly before this call, verified as
+    // IsShown() == false in the startup trace), so m_aui_mgr.Update() cannot create a floating
+    // frame.
+    if (!m_sidebar_ready && sidebar.IsFloating()) {
+        // Keep the pane hidden while the gate is closed. Some startup paths (gcode-only load,
+        // switching to Preview from load_files) mark the pane shown or disable the sidebar
+        // without going through the visibility decision below; a later Update() would then
+        // create and show the floating frame, which is exactly the window this change removes.
+        if (sidebar.IsShown()) {
+            sidebar.Hide();
+            needs_update = true;
+        }
+        if (needs_update)
+            m_aui_mgr.Update();
+        return;
+    }
+
     if (!sidebar_layout.is_enabled) {
         if (sidebar.IsShown()) {
             sidebar.Hide();
             needs_update = true;
         }
     } else {
-        // Only hide if collapsed or is floating and is not 3d view
+        // Only hide if collapsed, or if it is floating and the current tab is not a 3D or
+        // preview tab. The startup flicker this rule used to cause is gone because the
+        // floating frame is not shown at all until the tab selection has settled.
         const bool should_hide = sidebar_layout.is_collapsed || (sidebar.IsFloating() && !sidebar_layout.show);
         const bool should_show = !should_hide;
         if (should_show != sidebar.IsShown()) {
@@ -15882,6 +15932,10 @@ void Plater::priv::on_tab_selection_changing(wxBookCtrlEvent& e)
 
     const int new_sel = e.GetSelection();
     sidebar_layout.show = new_sel == MainFrame::tp3DEditor || new_sel == MainFrame::tpPreview;
+    // While startup is still settling, every tab change postpones the release, so the
+    // sidebar is applied only once the notebook has stopped restoring its tab.
+    if (!m_sidebar_ready)
+        m_sidebar_ready_timer.StartOnce(1500);
     update_sidebar();
     int old_sel = e.GetOldSelection();
     if (wxGetApp().preset_bundle && wxGetApp().preset_bundle->use_bbl_device_tab() && new_sel == MainFrame::tpMonitor &&

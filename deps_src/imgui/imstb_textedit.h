@@ -1229,6 +1229,24 @@ static void stb_text_undo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
 
    // we need to do two things: apply the undo record, and create a redo record
    u = s->undo_rec[s->undo_point-1];
+
+   // Never replay a record whose range no longer fits the current text.
+   // The edit state may have been recycled against a different (typically shorter,
+   // reformatted) buffer; replaying a stale record reads/writes out of bounds.
+   // Invalidate the whole stack rather than leaving the stale record on top, where
+   // it could partially apply once the text grows past its range again.
+   {
+      const int text_len = STB_TEXTEDIT_STRINGLEN(str);
+      if (text_len < 0 || u.where > text_len || u.where + u.delete_length > text_len)
+      {
+         s->undo_point = 0;
+         s->undo_char_point = 0;
+         s->redo_point = STB_TEXTEDIT_UNDOSTATECOUNT;
+         s->redo_char_point = STB_TEXTEDIT_UNDOCHARCOUNT;
+         return;
+      }
+   }
+
    r = &s->undo_rec[s->redo_point-1];
    r->char_storage = -1;
 
@@ -1298,6 +1316,20 @@ static void stb_text_redo(STB_TEXTEDIT_STRING *str, STB_TexteditState *state)
    // we need to do two things: apply the redo record, and create an undo record
    u = &s->undo_rec[s->undo_point];
    r = s->undo_rec[s->redo_point];
+
+   // Same range guard as stb_text_undo(); never replay a record that no
+   // longer fits the current text length; invalidate the stack on a hit.
+   {
+      const int text_len = STB_TEXTEDIT_STRINGLEN(str);
+      if (text_len < 0 || r.where > text_len || r.where + r.delete_length > text_len)
+      {
+         s->undo_point = 0;
+         s->undo_char_point = 0;
+         s->redo_point = STB_TEXTEDIT_UNDOSTATECOUNT;
+         s->redo_char_point = STB_TEXTEDIT_UNDOCHARCOUNT;
+         return;
+      }
+   }
 
    // we KNOW there must be room for the undo record, because the redo record
    // was derived from an undo record

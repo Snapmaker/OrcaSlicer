@@ -102,6 +102,7 @@
 #include "../Utils/GatewayProtocol.hpp"
 #include "../Utils/GatewayService.hpp"
 #include "../Utils/GatewayDevice.hpp"
+#include "../Utils/MoonRaker.hpp"
 #include "../Utils/Http.hpp"
 #include "../Utils/InstanceID.hpp"
 #include "../Utils/SnapLogClient.hpp"
@@ -982,7 +983,12 @@ static void generic_exception_handle()
 //#endif
 }
 
-std::atomic<bool> GUI_App::m_app_alive{true};
+// Written only on the main thread: set true at the top of on_init_inner()
+// (wxTheApp is valid from wxEntryStart on), cleared first thing in ~GUI_App.
+// Initializing false keeps worker-thread guards (SSWCP/Moonraker/versions
+// check) rejecting during the pre-OnInit startup window and in processes that
+// never run OnInit (the GUI-less gateway binary), where wxTheApp stays null.
+std::atomic<bool> GUI_App::m_app_alive{false};
 std::atomic<int>  GUI_App::m_version_check_cbs_inflight{0};
 
 void GUI_App::toggle_show_gcode_window()
@@ -2419,6 +2425,13 @@ int GUI_App::OnExit()
     stop_gateway_service();
     stop_sync_user_preset();
 
+    // Join the SSWCP / MoonRaker TimeoutMap workers while the app is still
+    // alive: their timeout callbacks dereference wxGetApp(), and the static
+    // maps otherwise live until process-exit static destruction, past the app
+    // object's lifetime (Sentry SNAPMAKER_ORCA-MG).
+    SSWCP::shutdown_timeout_workers();
+    Moonraker_Mqtt::shutdown_timeout_workers();
+
     if (m_device_manager) {
         delete m_device_manager;
         m_device_manager = nullptr;
@@ -2482,10 +2495,11 @@ bool GUI_App::on_init_inner()
 {
 #if defined(__linux__) || defined(__LINUX__)
     // Set the C library locale from environment variables so that character
-    // encoding conversions work correctly for non-ASCII text (e.g. Chinese).
+    // encoding conversions work correctly for non-ASCII text (e.g., Chinese).
     // This must be done early before any wxWidgets locale-sensitive operations.
     std::setlocale(LC_ALL, "");
 #endif
+    m_app_alive.store(true); // guards in worker threads accept calls from here on (single atomic, main-thread writes only)
     StartupProfiler profiler("GUI_App::on_init_inner");
 
     wxLog::SetActiveTarget(new wxBoostLog());
@@ -7809,6 +7823,12 @@ void GUI_App::check_updates(const bool verbose)
 	try {
 		updater_result = preset_updater->config_update(app_config->orig_version(), verbose ? PresetUpdater::UpdateParams::SHOW_TEXT_BOX : PresetUpdater::UpdateParams::SHOW_NOTIFICATION);
 		if (updater_result == PresetUpdater::R_INCOMPAT_EXIT) {
+			// This close may be vetoed by the modal-dialog guard when the
+			// update check completes while a dialog is open (CallAfter
+			// dispatches inside modal loops too); the user must then dismiss
+			// the dialog and quit again.
+			BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+				<< ": [R_INCOMPAT_EXIT] requesting app close after incompatible config update";
 			mainframe->Close();
 		}
 		else if (updater_result == PresetUpdater::R_INCOMPAT_CONFIGURED) {

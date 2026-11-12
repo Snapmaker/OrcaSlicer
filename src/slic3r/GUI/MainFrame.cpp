@@ -507,11 +507,22 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
             event.Skip();
             return;
         }
-        if (event.CanVeto() && m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true)) {
-            // prevents to open the save dirty project dialog
-            event.Veto();
-            BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< "cancelled by gizmo in editing";
-            return;
+        // A modal dialog or gizmo task is still active: destroying the main
+        // frame now would crash the nested modal loop.
+        if (event.CanVeto()) {
+            // Keep is_in_editing_mode() behind the CanVeto() check, matching
+            // the evaluation order of the original gizmo-only guard: its
+            // BrimEars branch calls update_model_object(), which must not
+            // run for non-vetoable close events.
+            const bool gizmo_editing = m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true);
+            if (gizmo_editing || any_modal_dialog_showing()) {
+                // prevents to open the save dirty project dialog
+                event.Veto();
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                    << ": [MODAL-CLOSE] close vetoed, task still active ("
+                    << (gizmo_editing ? "gizmo editing" : "modal dialog") << ")";
+                return;
+            }
         }
 
         //BBS:

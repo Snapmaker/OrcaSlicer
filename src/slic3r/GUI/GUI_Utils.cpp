@@ -521,6 +521,16 @@ void abort_all_modal_dialogs()
     }
 }
 
+bool any_modal_dialog_showing()
+{
+    for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
+        wxDialog* dlg = dynamic_cast<wxDialog*>(node->GetData());
+        if (dlg != nullptr && dlg->IsModal())
+            return true;
+    }
+    return false;
+}
+
 void fit_in_display(wxTopLevelWindow& window, wxSize desired_size)
 {
     const auto display_size = wxDisplay(window.GetParent()).GetClientArea();

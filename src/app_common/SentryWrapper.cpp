@@ -451,6 +451,15 @@ void exitSentry()
     exitSentryEx();
 #endif
 }
+
+void flushSentry(unsigned int timeout_ms)
+{
+#ifdef SLIC3R_SENTRY
+    if (get_sentry_flags())
+        sentry_flush(timeout_ms);
+#endif
+}
+
 void sentryReportLog(SENTRY_LOG_LEVEL   logLevel,
     const std::string& logContent,
     const std::string& funcModule,

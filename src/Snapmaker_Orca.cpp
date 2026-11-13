@@ -39,6 +39,12 @@ using namespace nlohmann;
 #include <atomic>
 #include <new>
 
+// GUI/CLI mode flag for the OOM farewell path (defined here because the
+// GUI/CLI decision sits early in this file; used by the farewell code at
+// the bottom): unattended CLI jobs must fail fast on the console instead
+// of waiting on a modal dialog.
+static std::atomic<bool> g_cli_mode{false};
+
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -1143,6 +1149,9 @@ int CLI::run(int argc, char **argv)
         downward_check = false;
 
     bool start_gui = m_actions.empty() && !downward_check;
+    // Remember the decision for the OOM farewell path: unattended CLI jobs
+    // must fail fast on the console instead of waiting on a modal dialog.
+    g_cli_mode.store(!start_gui, std::memory_order_relaxed);
     if (start_gui) {
         BOOST_LOG_TRIVIAL(info) << "no action, start gui directly" << std::endl;
 #ifdef SLIC3R_GUI
@@ -6397,14 +6406,12 @@ std::string CLI::output_filepath(const ModelObject &object, unsigned int index, 
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 
-// Emergency memory kept aside for the out-of-memory path. When the heap is
-// truly exhausted the new handler releases the pool, guaranteeing that the
-// Sentry report below — and the user-facing dialog the recovery chain shows
-// later — have memory to allocate from. Without the reserve, the report's own
-// allocations fail re-entrantly right when memory is fullest (e.g. rendering
-// a finished slice), and the re-thrown bad_alloc originates inside sentry's
-// SEH-guarded C frames, where it is captured as a native crash and never
-// reaches the wx dialog path.
+// Emergency memory kept aside for the out-of-memory path. This is a
+// BEST-EFFORT headroom, not a guarantee: after the free the bytes are on
+// the common heap where racing threads may take them first, and the dialog
+// can still fail on kernel-side limits (desktop heap, global commit
+// charge) this pool cannot influence. The hard guarantees of the farewell
+// path are the orderly ExitProcess and the 0xE0000001 exit code.
 // The pool is managed with raw HeapAlloc/HeapFree: probing with
 // operator new(nothrow) is NOT safe here — MSVC's nothrow wrapper still runs
 // the new handler on failure (verified by a debugger stack showing hundreds
@@ -6419,8 +6426,13 @@ static const size_t       OOM_EMERGENCY_POOL_BYTES = 1024 * 1024;
 // Set when the truly-exhausted farewell dialog is up; other threads' OOMs wait
 // for it instead of racing a second dialog.
 static std::atomic<bool>   g_farewell_in_progress{false};
+// g_cli_mode is declared near the top of this file (before its first use).
 // Exit code distinguishing an OOM farewell from other terminations.
 static const UINT          OOM_FATAL_EXIT_CODE = 0xE0000001u;
+// Console variant of the farewell text: plain narrow literal, written to
+// stderr without any allocation so it is safe on the exhausted heap.
+static const char          OOM_FAREWELL_CLI_TEXT[] =
+    "Snapmaker Orca: out of memory (fatal), exiting with code 0xE0000001.\n";
 
 static void reserve_oom_emergency_memory()
 {
@@ -6436,32 +6448,43 @@ static const wchar_t OOM_FAREWELL_TEXT[] =
     L"Snapmaker Orca has run out of memory and must close.\n\n"
     L"Your project may be too large for the available memory. Try closing other applications, reducing the model complexity or plate count, and restart.";
 
-// Say goodbye and end the process without allocating anything on the exhausted
-// heap: static text, a raw Win32 MessageBoxW (its core lives on the system
-// side), and an immediate ExitProcess (no unwinding, nothing left to fail).
-// text == nullptr skips the dialog (silent closeout) for callers that have
-// already informed the user through their own wx dialogs.
+// Say goodbye and end the process. Order matters (review finding): the
+// dialog goes FIRST - it needs the least heap (KB-level user32 buffers),
+// so its success probability is highest before anything else spends the
+// freed pool; when the dialog does fail (kernel desktop heap / global
+// commit limits - nothing this process can reserve), execution falls
+// straight through to the report below, so the report is not lost along
+// with the dialog. The report is queued (async), then a bounded
+// sentry_flush gives the SDK time to deliver before ExitProcess, which
+// offers no destructors or flush of its own. The hard guarantees are the
+// orderly ExitProcess and the 0xE0000001 exit code; dialog and report are
+// best-effort. text == nullptr skips the dialog for callers that have
+// already informed the user; CLI mode says goodbye on the console instead
+// (unattended jobs must fail fast, not wait on a modal dialog).
 [[noreturn]] void OomFarewellAndExit(const wchar_t *text)
 {
     if (!g_farewell_in_progress.exchange(true)) {
         // The process is about to end anyway: free the emergency pool first
-        // so the dialog's own optional decorations (icon etc.), which
-        // allocate on this heap, can too.
+        // so the steps below, which allocate on this heap, best-effort can.
         if (void *pool = g_oom_emergency_pool.exchange(nullptr, std::memory_order_relaxed))
             HeapFree(GetProcessHeap(), 0, pool);
-        // Report while we can: the freed pool gives the SDK its headroom and
-        // the catch below keeps any failure from eating the farewell dialog.
-        // (Reporting before the pool was freed was what crashed without a
-        // dialog in earlier designs.)
+        if (g_cli_mode.load(std::memory_order_relaxed)) {
+            fputs(OOM_FAREWELL_CLI_TEXT, stderr);
+            fflush(stderr);
+        } else if (text) {
+            MessageBoxW(nullptr, text, L"Snapmaker Orca error",
+                        MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+        }
         try {
             Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
                                     "memory allocation failed (out of memory, fatal farewell)",
                                     "OomFarewellAndExit", "out_of_memory", "fatal");
         } catch (...) {
         }
-        if (text)
-            MessageBoxW(nullptr, text, L"Snapmaker Orca error",
-                        MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+        try {
+            Slic3r::flushSentry(5000);
+        } catch (...) {
+        }
         ExitProcess(OOM_FATAL_EXIT_CODE);
     }
     Sleep(INFINITE); // another thread's OOM: the farewell ends us all

@@ -10,6 +10,12 @@ namespace Slic3r {
 
 	void exitSentry();
 
+	// Bounded flush for paths that exit the process right after reporting
+	// (the OOM farewell): waits up to timeout_ms for queued events to be
+	// delivered, without shutting the SDK down (the launcher owns its
+	// lifetime). Safe no-op when Sentry is not initialized.
+	void flushSentry(unsigned int timeout_ms);
+
     typedef enum SENTRY_LOG_LEVEL {
         SENTRY_LOG_TRACE   = -2,
         SENTRY_LOG_DEBUG   = -1,

@@ -1282,6 +1282,7 @@ wxWindow* PreferencesDialog::create_general_page()
     auto item_gcode_gpu_accel = create_item_checkbox(_L("GPU-accelerated G-code preview"), page,
         _L("Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."), 50, "gcode_preview_gpu_accel");
     auto item_model_station = create_item_checkbox(_L("Enable Snapmaker Space"), page, _L("When enabled, online models will be displayed on the Home page."), 50, "enable_model_station");
+    auto item_auto_connect  = create_item_checkbox(_L("Reconnect to the last printer on startup"), page, _L("When enabled, the last printer connected on the Device page is reconnected automatically when Snapmaker Orca starts."), 50, "auto_connect_last_device");
 #ifndef __APPLE__
     // macOS has no memory-warning dialog: get_available_physical_memory() returns 0
     // there by product decision, so the guard never fires and the toggle is dead UI.
@@ -1393,6 +1394,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(item_auto_arrange, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_gcode_gpu_accel, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_model_station, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_auto_connect, 0, wxTOP, FromDIP(3));
 #ifndef __APPLE__
     sizer_page->Add(item_memory_warning, 0, wxTOP, FromDIP(3));
 #endif

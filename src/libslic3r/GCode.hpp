@@ -650,9 +650,13 @@ private:
     std::set<unsigned int>                  m_initial_layer_extruders;
     // BBS
     int get_bed_temperature(const int extruder_id, const bool is_first_layer, const BedType bed_type) const;
-    // BBS: max bed temperature over all used extruders, so that the bed temperature always
-    // accommodates the highest-temperature filament of a compatible mixed print (e.g. PLA + TPU).
+    // BBS: max bed temperature over the extruders printing the first layer, so that the bed temperature
+    // accommodates the highest-temperature filament touching the bed in a compatible mixed print (e.g. PLA + TPU).
     int get_bed_temperature_max(const Print& print, const bool is_first_layer) const;
+    // Filaments printed on the first layer, set at the start of the export. A filament that starts higher up,
+    // such as a support interface, never touches the bed and must not raise its temperature.
+    std::vector<unsigned int>           m_bed_temperature_extruders;
+    static std::vector<unsigned int>    first_layer_extruders(const Print& print);
 
     std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);
     bool _needSAFC(const ExtrusionPath &path);

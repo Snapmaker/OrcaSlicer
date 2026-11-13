@@ -45,6 +45,14 @@ using namespace nlohmann;
 // of waiting on a modal dialog.
 static std::atomic<bool> g_cli_mode{false};
 
+// Thread that owns the farewell. A nested handler visit on THIS thread must
+// throw (the farewell's own catch(...) absorbs it and proceeds to the next
+// step); only OTHER threads sleep waiting for the process to end. Without
+// the distinction the farewell thread could put itself to Sleep(INFINITE)
+// when one of its own allocations (e.g. the over-SSO std::string arguments
+// of the report call) fails - a silent hang with no exit code.
+static std::atomic<DWORD> g_farewell_thread_id{0};
+
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -6464,6 +6472,7 @@ static const wchar_t OOM_FAREWELL_TEXT[] =
 [[noreturn]] void OomFarewellAndExit(const wchar_t *text)
 {
     if (!g_farewell_in_progress.exchange(true)) {
+        g_farewell_thread_id.store(GetCurrentThreadId(), std::memory_order_relaxed);
         // The process is about to end anyway: free the emergency pool first
         // so the steps below, which allocate on this heap, best-effort can.
         if (void *pool = g_oom_emergency_pool.exchange(nullptr, std::memory_order_relaxed))
@@ -6534,9 +6543,12 @@ __declspec(dllexport) int __stdcall Snapmaker_Orca_get_privacy_policy() { return
             static std::atomic<bool> handler_in_progress{false};
             if (handler_in_progress.exchange(true)) {
                 // Nested visit (a failure inside this handler's own work).
-                if (g_farewell_in_progress.load(std::memory_order_relaxed)) {
-                    // The farewell dialog is already up on another thread; just
-                    // wait for it to end the process.
+                // Only OTHER threads wait for the farewell to end the
+                // process; the farewell thread itself must throw so its own
+                // catch(...) absorbs the failure and proceeds (see
+                // g_farewell_thread_id).
+                if (g_farewell_in_progress.load(std::memory_order_relaxed) &&
+                    GetCurrentThreadId() != g_farewell_thread_id.load(std::memory_order_relaxed)) {
                     Sleep(INFINITE);
                 }
                 throw std::bad_alloc();

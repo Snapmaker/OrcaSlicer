@@ -455,7 +455,9 @@ void exitSentry()
 void flushSentry(unsigned int timeout_ms)
 {
 #ifdef SLIC3R_SENTRY
-    if (get_sentry_flags())
+    // same gating as sentryReportLogEx: with privacy off nothing was ever
+    // queued, so there is nothing to flush.
+    if (get_sentry_flags() && get_privacy_policy())
         sentry_flush(timeout_ms);
 #endif
 }

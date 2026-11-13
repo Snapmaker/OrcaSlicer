@@ -6469,7 +6469,7 @@ static const wchar_t OOM_FAREWELL_TEXT[] =
 // best-effort. text == nullptr skips the dialog for callers that have
 // already informed the user; CLI mode says goodbye on the console instead
 // (unattended jobs must fail fast, not wait on a modal dialog).
-[[noreturn]] void OomFarewellAndExit(const wchar_t *text)
+[[noreturn]] static void OomFarewellAndExit(const wchar_t *text)
 {
     if (!g_farewell_in_progress.exchange(true)) {
         g_farewell_thread_id.store(GetCurrentThreadId(), std::memory_order_relaxed);

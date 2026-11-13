@@ -15420,7 +15420,8 @@ static void sync_nozzle_hrc_warning_notification(NotificationManager* nm, PartPl
 
 // Recoverable-OOM notice, shared by the import / failed-slice / toolpath-
 // render paths: one dialog with the finalized product wording (kept verbatim)
-// and standard Yes/No buttons. Yes opens a directory picker and saves the
+// and standard Yes/No buttons. Yes opens a file save dialog (directory and
+// file name in one step) and saves the
 // project there; No closes and does nothing - the choice (and the risk) stay
 // with the user. The save is best-effort; with a low-memory state it may
 // fail or be cut short by a deeper OOM (which ends the process via the
@@ -15449,11 +15450,11 @@ void Plater::offer_save_on_low_memory()
         // writes a COPY (project filename and dirty state stay untouched, so
         // the regular unsaved-changes prompts keep working).
         if (export_3mf(dest) == 0) {
-            MessageDialog dlg(wxGetApp().mainframe, _L("Saved success."), wxString::Format(_(L("%s")), SLIC3R_APP_FULL_NAME), wxOK);
+            MessageDialog dlg(wxGetApp().mainframe, _L("A copy of the project has been saved."), wxString::Format(_(L("%s")), SLIC3R_APP_FULL_NAME), wxOK);
             dlg.ShowModal();
         }
         else {
-            WarningDialog dlg(wxGetApp().mainframe, _L("Saving the project failed. The project could not be saved."), wxEmptyString, wxYES_NO);
+            WarningDialog dlg(wxGetApp().mainframe, _L("Saving the project failed. The project could not be saved."), wxEmptyString, wxOK);
             dlg.ShowModal();
         }
     } catch (const std::bad_alloc&) {
@@ -15574,6 +15575,11 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 #endif
         }
         auto message = evt.format_error_message();
+        // The low-memory dialog is deferred via CallAfter, so it also runs for
+        // an OOM that arrived while a popup menu was tracked (the menu is
+        // closed by the time the posted event runs).
+        if (out_of_memory)
+            q->CallAfter([plater = q] { plater->offer_save_on_low_memory(); });
         if (evt.critical_error()) {
             if (q->m_tracking_popup_menu) {
                 // We don't want to pop-up a message box when tracking a pop-up menu.
@@ -15582,9 +15588,6 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
             } else {
                 if (!out_of_memory) {
                     show_error(q, message.first, message.second.size() != 0 && message.second[0] != 0);
-                }
-                else {
-                    q->CallAfter([plater = q] { plater->offer_save_on_low_memory(); });
                 }
 
                 notification_manager->set_slicing_progress_hidden();

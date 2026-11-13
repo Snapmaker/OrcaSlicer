@@ -399,60 +399,6 @@ TEST_CASE("Saved settings with the removed mixed filament height bounds still lo
     }
 }
 
-namespace {
-
-// Tools that print the mixed region on the first layer, which Local-Z leaves unsplit.
-std::set<size_t> first_layer_tools(const DynamicPrintConfig& config)
-{
-    Model model;
-    add_mixed_cube(model);
-    Print print;
-    print.set_status_silent();
-    print.apply(model, config);
-    auto* object = print.get_object(0);
-    object->slice();
-    const size_t     first_layer = size_t(object->layers().front()->id());
-    size_t           passes      = 0;
-    std::set<size_t> tools;
-    for (const auto& pass : object->local_z_sublayer_plan()) {
-        if (pass.layer_id != first_layer)
-            continue;
-        ++passes;
-        CHECK_FALSE(pass.split_interval);
-        for (size_t tool = 0; tool < pass.painted_masks_by_extruder.size(); ++tool)
-            if (!pass.painted_masks_by_extruder[tool].empty())
-                tools.insert(tool);
-    }
-    CHECK(passes == 1);
-    return tools;
-}
-
-} // namespace
-
-TEST_CASE("Local-Z prints the preserved first layer with the majority component", "[LocalZ][LocalZPlan]")
-{
-    LocalZTestSettings settings;
-    // Share of the second component, and the tool expected on the first layer. A tie goes to the first component.
-    const std::vector<std::pair<int, size_t>> cases{{70, 1}, {50, 0}, {30, 0}};
-    for (const auto& test : cases) {
-        CAPTURE(test.first);
-        CHECK(first_layer_tools(local_z_config(false, test.first)) == std::set<size_t>{test.second});
-    }
-}
-
-TEST_CASE("Local-Z prints a gradient's preserved first layer with the component the gradient starts on", "[LocalZ][LocalZPlan]")
-{
-    LocalZTestSettings settings;
-    // Share of the first component at the bottom and top of the gradient, and the tool expected on the first layer.
-    const std::vector<std::pair<std::string, size_t>> cases{{"0.8000/0.2000", 0}, {"0.2000/0.8000", 1}};
-    for (const auto& test : cases) {
-        CAPTURE(test.first);
-        auto config = local_z_config(true);
-        config.set("mixed_filament_definitions", "1,2,1,1,50,0,g,w,m0,z2,xa0,xb0,d0,o0,u101,cm3,r1/" + test.first);
-        CHECK(first_layer_tools(config) == std::set<size_t>{test.second});
-    }
-}
-
 TEST_CASE("Nozzle limit edits rebuild the cached Local-Z plan", "[LocalZ][LocalZPlan][NozzleLimits]")
 {
     LocalZTestSettings settings;

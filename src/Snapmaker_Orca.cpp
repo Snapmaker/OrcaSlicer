@@ -1412,6 +1412,17 @@ int CLI::run(int argc, char **argv)
                 //LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig|LoadStrategy::AddDefaultInstances;
                 //if (load_aux) strategy = strategy | LoadStrategy::LoadAuxiliary;
                 model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
+                // The Application metadata marks a project, but the preset names read below come from
+                // Metadata/project_settings.config. If any is missing, take the geometry-only path. The loader
+                // fills config, project_presets and plate_data_src the same way with or without that metadata.
+                if (is_bbl_3mf && first_file &&
+                    (config.option<ConfigOptionString>("printer_settings_id") == nullptr ||
+                     config.option<ConfigOptionString>("print_settings_id") == nullptr ||
+                     config.option<ConfigOptionStrings>("filament_settings_id") == nullptr)) {
+                    BOOST_LOG_TRIVIAL(warning) << "3mf file " << file
+                                               << " is missing project settings, loading it as a geometry-only 3mf\n";
+                    is_bbl_3mf = false;
+                }
                 if (is_bbl_3mf)
                 {
                     if (!first_file)

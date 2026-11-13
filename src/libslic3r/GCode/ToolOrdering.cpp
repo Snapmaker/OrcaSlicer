@@ -156,7 +156,9 @@ static std::vector<unsigned int> solve_extruder_order(const std::vector<std::vec
     if (id >= wipe_volumes.size())
         return all_extruders;
 	}
-	
+    if (start_extruder_id && *start_extruder_id >= wipe_volumes.size())
+        return all_extruders;
+
     bool add_start_extruder_flag = false;
 
     if (start_extruder_id) {
@@ -576,8 +578,10 @@ std::vector<unsigned int> ToolOrdering::generate_first_layer_tool_order(const Pr
             return tool_order;
 
         for (auto layerm : target_layer->regions()) {
-            int extruder_id = layerm->region().config().option("wall_filament")->getInt();
-            
+            const int extruder_id = int(first_layer_wall_extruder(*object, *target_layer, *layerm));
+            if (extruder_id == 0)
+                continue;
+
             for (auto expoly : layerm->raw_slices) {
                 const double nozzle_diameter = print.config().nozzle_diameter.get_at(0);
                 const coordf_t initial_layer_line_width = print.config().get_abs_value("initial_layer_line_width", nozzle_diameter);
@@ -640,7 +644,9 @@ std::vector<unsigned int> ToolOrdering::generate_first_layer_tool_order(const Pr
         return tool_order;
 
     for (auto layerm : target_layer->regions()) {
-        int extruder_id = layerm->region().config().option("wall_filament")->getInt();
+        const int extruder_id = int(first_layer_wall_extruder(object, *target_layer, *layerm));
+        if (extruder_id == 0)
+            continue;
         for (auto expoly : layerm->raw_slices) {
             const double nozzle_diameter = object.print()->config().nozzle_diameter.get_at(0);
             const coordf_t line_width = object.config().get_abs_value("line_width", nozzle_diameter);
@@ -1762,6 +1768,21 @@ int WipingExtrusions::get_support_interface_extruder_overrides(const PrintObject
         return iter->second;
 
     return -1;
+}
+
+// A mixed filament is a recipe, not a tool. The first-layer tool order must hold the
+// physical filament that prints the region's walls on that layer; return 0 if there is none.
+unsigned int ToolOrdering::first_layer_wall_extruder(const PrintObject& object, const Layer& layer, const LayerRegion& layerm) const
+{
+    int layer_index = 0;
+    for (const Layer* candidate : object.layers()) {
+        if (candidate == &layer)
+            break;
+        ++layer_index;
+    }
+    const unsigned int resolved = resolve_mixed(unsigned(layerm.region().config().wall_filament.value), layer_index, float(layer.print_z),
+                                                float(layer.height), &object);
+    return resolved <= m_num_physical ? resolved : 0;
 }
 
 // Resolve a 1-based filament ID through the mixed-filament manager.

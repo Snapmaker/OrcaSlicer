@@ -569,3 +569,43 @@ TEST_CASE("Local-Z prints a mixed region too short for the nozzle limits and war
     });
     CHECK(warned);
 }
+
+TEST_CASE("A raft under a mixed-filament object is printed with a physical filament", "[LocalZ][GCode][ToolOrdering]")
+{
+    LocalZTestSettings settings;
+    bool               whole_objects = false;
+    SECTION("Painted zones only") {}
+    SECTION("Whole objects") { whole_objects = true; }
+    Model model;
+    add_mixed_cube(model);
+    auto config = local_z_config(false, 33);
+    config.set("raft_layers", 2);
+    config.set("dithering_local_z_whole_objects", whole_objects);
+    const size_t num_physical = config.option<ConfigOptionStrings>("filament_colour")->values.size();
+    Print        print;
+    print.is_BBL_printer() = false;
+    print.set_status_silent();
+    print.apply(model, config);
+    print.process();
+
+    // The raft has no filament of its own. It must inherit a component of the mix, never the mixed filament itself.
+    ToolOrdering ordering(print, (unsigned int) -1, false);
+    size_t       raft_layers = 0;
+    unsigned int highest_tool = 0;
+    for (const LayerTools& layer_tools : ordering) {
+        raft_layers += layer_tools.has_support && !layer_tools.has_object;
+        for (const unsigned int tool : layer_tools.extruders)
+            highest_tool = std::max(highest_tool, tool);
+    }
+    CHECK(raft_layers == 2);
+    CHECK(highest_tool < num_physical);
+
+    ExportFile           output;
+    GCodeProcessorResult result;
+    print.export_gcode(output.path.string(), &result, nullptr);
+    unsigned int highest_printed_tool = 0;
+    for (const auto& move : result.moves)
+        if (move.type == EMoveType::Extrude)
+            highest_printed_tool = std::max(highest_printed_tool, unsigned(move.extruder_id));
+    CHECK(highest_printed_tool < num_physical);
+}

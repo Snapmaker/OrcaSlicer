@@ -42,16 +42,9 @@ using namespace nlohmann;
 // GUI/CLI mode flag for the OOM farewell path (defined here because the
 // GUI/CLI decision sits early in this file; used by the farewell code at
 // the bottom): unattended CLI jobs must fail fast on the console instead
-// of waiting on a modal dialog.
+// of waiting on a modal dialog. (Portable type: this file is compiled on
+// every platform; Win32-only types must stay inside the _MSC_VER guard.)
 static std::atomic<bool> g_cli_mode{false};
-
-// Thread that owns the farewell. A nested handler visit on THIS thread must
-// throw (the farewell's own catch(...) absorbs it and proceeds to the next
-// step); only OTHER threads sleep waiting for the process to end. Without
-// the distinction the farewell thread could put itself to Sleep(INFINITE)
-// when one of its own allocations (e.g. the over-SSO std::string arguments
-// of the report call) fails - a silent hang with no exit code.
-static std::atomic<DWORD> g_farewell_thread_id{0};
 
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -6434,6 +6427,15 @@ static const size_t       OOM_EMERGENCY_POOL_BYTES = 1024 * 1024;
 // Set when the truly-exhausted farewell dialog is up; other threads' OOMs wait
 // for it instead of racing a second dialog.
 static std::atomic<bool>   g_farewell_in_progress{false};
+// Thread that owns the farewell. A nested handler visit on THIS thread must
+// throw (the farewell's own catch(...) absorbs it and proceeds to the next
+// step); only OTHER threads sleep waiting for the process to end. Without
+// the distinction the farewell thread could put itself to Sleep(INFINITE)
+// when one of its own allocations (e.g. the over-SSO std::string arguments
+// of the report call) fails - a silent hang with no exit code. Declared
+// here (inside the Windows guard) because DWORD is a Win32 type and this
+// file is compiled on every platform.
+static std::atomic<DWORD>  g_farewell_thread_id{0};
 // g_cli_mode is declared near the top of this file (before its first use).
 // Exit code distinguishing an OOM farewell from other terminations.
 static const UINT          OOM_FATAL_EXIT_CODE = 0xE0000001u;

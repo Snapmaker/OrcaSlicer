@@ -37,7 +37,6 @@
 #include <boost/nowide/cstdio.hpp>
 #include <boost/nowide/fstream.hpp>
 #include <wx/progdlg.h>
-#include <wx/msgdlg.h>
 #include <wx/numformatter.h>
 
 #include <array>

@@ -15428,24 +15428,29 @@ static void sync_nozzle_hrc_warning_notification(NotificationManager* nm, PartPl
 // handler's own farewell).
 void Plater::offer_save_on_low_memory()
 {
-    WarningDialog ask_dlg(wxGetApp().mainframe, _L("Your project may be too large for the available memory. The operation has been "
-                               "automatically terminated. Try closing other applications, reducing the model "
-                               "complexity or plate count, and restart.\n\n"
-                               "We strongly recommend saving your current project. Continuing with Snapmaker Orca "
-                               "may cause the app to crash unexpectedly and lose unsaved changes. Save project now?"), wxEmptyString, 
-                            wxYES_NO);
-    if (ask_dlg.ShowModal() != wxID_YES)
-        return;
-    const wxString project_file = get_project_filename(".3mf");
-    const std::string leaf = project_file.empty() ?
-        std::string("project.3mf") :
-        boost::filesystem::path(into_u8(project_file)).filename().string();
-    wxFileDialog save_dlg(this, _L("Save project"), "", from_u8(leaf),
-                          file_wildcards(FT_PROJECT), wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
-    if (save_dlg.ShowModal() != wxID_OK)
-        return;
-    const boost::filesystem::path dest(save_dlg.GetPath().utf8_str().data());
+    // Runs from CallAfter on the wx event loop, which offers no exception
+    // guard for these events (same class of dispatch as idle/paint,
+    // wxWidgets #24704): an allocation failure inside the dialogs below must
+    // not escape, or the process dies without any notice. Best-effort only -
+    // on failure the notice is skipped and the app keeps running.
     try {
+        WarningDialog ask_dlg(wxGetApp().mainframe, _L("Your project may be too large for the available memory. The operation has been "
+                                "automatically terminated. Try closing other applications, reducing the model "
+                                "complexity or plate count, and restart.\n\n"
+                                "We strongly recommend saving your current project. Continuing with Snapmaker Orca "
+                                "may cause the app to crash unexpectedly and lose unsaved changes. Save project now?"), wxEmptyString,
+                                wxYES_NO);
+        if (ask_dlg.ShowModal() != wxID_YES)
+            return;
+        const wxString project_file = get_project_filename(".3mf");
+        const std::string leaf = project_file.empty() ?
+            std::string("project.3mf") :
+            boost::filesystem::path(into_u8(project_file)).filename().string();
+        wxFileDialog save_dlg(this, _L("Save project"), "", from_u8(leaf),
+                            file_wildcards(FT_PROJECT), wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+        if (save_dlg.ShowModal() != wxID_OK)
+            return;
+        const boost::filesystem::path dest(save_dlg.GetPath().utf8_str().data());
         // export_3mf reports failure by return code (no exception); the save
         // writes a COPY (project filename and dirty state stay untouched, so
         // the regular unsaved-changes prompts keep working).
@@ -15461,6 +15466,8 @@ void Plater::offer_save_on_low_memory()
         show_error(wxGetApp().mainframe, _L("Saving failed because of low memory; the project could not be saved."));
     } catch (const std::exception &e) {
         show_error(wxGetApp().mainframe, _L("Save failed") + from_u8(e.what()));
+    } catch (...) {
+        // even the failure notices above may fail to allocate; swallow
     }
 }
 

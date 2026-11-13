@@ -6,6 +6,7 @@
 #include <charconv>
 #include "Extruder.hpp"
 #include "Point.hpp"
+#include "Polygon.hpp"
 #include "PrintConfig.hpp"
 #include "GCode/CoolingBuffer.hpp"
 
@@ -126,6 +127,10 @@ public:
     // Returns whether this flavor supports separate print and travel acceleration.
     static bool supports_separate_travel_acceleration(GCodeFlavor flavor);
   private:
+    Polygon m_bed_printable_area;
+    Pointfs m_nozzle_offsets;
+    bool spiral_lift_fits_printable_area(const Vec2d &center, double radius) const;
+
 	// Extruders are sorted by their ID, so that binary search is possible.
     std::vector<Extruder> m_extruders;
     bool            m_single_extruder_multi_material;

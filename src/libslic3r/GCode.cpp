@@ -3085,7 +3085,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         // BBS: the single bed temperature value accommodates the highest-temperature filament of the print
         // (max over all used extruders instead of the initial extruder only).
         int bed_temp_single = 0;
-        for (const unsigned int extruder_id : print.extruders())
+        for (const unsigned int extruder_id : print.extruders(false, true))
             bed_temp_single = std::max(bed_temp_single, first_bed_temp_opt->get_at(extruder_id));
         this->placeholder_parser().set("bed_temperature_initial_layer_single", new ConfigOptionInt(bed_temp_single));
         this->placeholder_parser().set("bed_temperature_initial_layer_vector", new ConfigOptionString());
@@ -4029,12 +4029,13 @@ int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer,
 
 // BBS
 // Max bed temperature over all used extruders (object/support/wipe tower/brim-introduced extruders),
+// where support filaments only count when support extrusions were actually generated,
 // so a compatible mixed print (e.g. PLA 65C + TPU 35C) always runs the highest bed temperature.
 // A value of 0 means the filament does not support the current bed type, and is naturally skipped by max().
 int GCode::get_bed_temperature_max(const Print& print, const bool is_first_layer) const
 {
     int max_bed_temp = 0;
-    for (const unsigned int extruder_id : print.extruders())
+    for (const unsigned int extruder_id : print.extruders(false, true))
         max_bed_temp = std::max(
             max_bed_temp, get_bed_temperature(extruder_id, is_first_layer, print.config().curr_bed_type));
     return max_bed_temp;

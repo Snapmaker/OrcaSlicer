@@ -15581,9 +15581,11 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         if (out_of_memory)
             q->CallAfter([plater = q] { plater->offer_save_on_low_memory(); });
         if (evt.critical_error()) {
-            if (q->m_tracking_popup_menu) {
-                // We don't want to pop-up a message box when tracking a pop-up menu.
-                // We postpone the error message instead.
+            if (q->m_tracking_popup_menu && !out_of_memory) {
+                // We don't want to pop-up a message box when tracking a pop-up
+                // menu. We postpone the error message instead. An OOM takes the
+                // scheduled low-memory dialog above - postponing here as well
+                // would pop two dialogs once the menu closes.
                 q->m_tracking_popup_menu_error_message = message.first;
             } else {
                 if (!out_of_memory) {

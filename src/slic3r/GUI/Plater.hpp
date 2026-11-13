@@ -320,8 +320,8 @@ public:
     int  save_project_if_dirty(const wxString& reason);
     // Recoverable-OOM notice (import/slice/render failures): one dialog with
     // the finalized product wording, standard Yes/No buttons; Yes opens a
-    // directory picker and saves the project there, No closes and does
-    // nothing - the choice (and the risk) stay with the user.
+    // file save dialog and saves a copy of the project there, No closes and
+    // does nothing - the choice (and the risk) stay with the user.
     void offer_save_on_low_memory();
     void reset_project_dirty_after_save();
     void reset_project_dirty_initial_presets();

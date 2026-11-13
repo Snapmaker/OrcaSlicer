@@ -972,6 +972,12 @@ static void generic_exception_handle()
                                               "Your project may be too large for the available memory. Try closing other applications, reducing the model complexity or plate count, and restart."));
         wxMessageBox(errmsg, wxString::Format(_(L("%s error")), SLIC3R_APP_FULL_NAME), wxOK | wxICON_ERROR);
 
+        // terminate() gives the SDK no flush of its own; give the queued
+        // report the same bounded delivery window as the farewell path.
+        try {
+            Slic3r::flushSentry(5000);
+        } catch (...) {
+        }
         std::terminate();
         //throw;
      } catch (const boost::io::bad_format_string& ex) {

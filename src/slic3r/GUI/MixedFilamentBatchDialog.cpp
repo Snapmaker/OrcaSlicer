@@ -24,6 +24,7 @@
 #include <cctype>
 #include <cmath>
 #include <thread>
+#include <unordered_map>
 
 #include <wx/scrolwin.h>
 #include <wx/dcbuffer.h>
@@ -62,11 +63,12 @@ static constexpr size_t kMultiColorComponentCount     = 3;
 
 // UI-list cap: the number of source/palette color rows the legend renders. Past this cap
 // the tail colors are dropped (see load_palette_colors) and a deferred warning is shown once
-// build_ui is up. This guards legend rendering against an unbounded color list — it is NOT
-// the project filament-slot limit. The slot limit is MAXIMUM_FILAMENT_NUMBER (libslic3r.h),
-// total_filaments = num_physical + enabled_mixed, enforced at apply time by
-// add_batch_custom_filaments and predicted post-match by handle_batch_match_result.
-static constexpr size_t kMaxColors = 64;
+// build_ui is up. The palette is every physical slot plus every enabled mixed recipe, so the
+// cap is the combined slot space (MAXIMUM_EXTRUDER_NUMBER + MAXIMUM_MIXED_FILAMENT_NUMBER):
+// a project at both limits still lists every color. The number of NEW mixed rows a match may
+// create is a separate limit (MAXIMUM_MIXED_FILAMENT_NUMBER), enforced at apply time by
+// add_batch_custom_filaments and predicted post-match by predict_slot_overflow.
+static constexpr size_t kMaxColors = MAXIMUM_FILAMENT_NUMBER;
 
 // ΔE color-difference grade thresholds (PRD 6.2.5). The match-quality tooltip bands a
 // mapping's delta_e into Good / Fair / Poor. Product-owned values — adjust here when the
@@ -772,7 +774,8 @@ void MixedFilamentBatchDialog::load_model_colors()
             if (!mv || mv->type() != ModelVolumeType::MODEL_PART) continue;
 
             for (int eid : mv->get_extruders()) {
-                if (eid < 1 || eid > int(MAXIMUM_EXTRUDER_NUMBER)) continue;
+                // Painted ids cover physical slots and virtual mixed recipes.
+                if (eid < 1 || eid > int(MAXIMUM_FILAMENT_NUMBER)) continue;
 
                 std::string color_hex;
                 if (size_t(eid - 1) < co->values.size()) {
@@ -830,14 +833,14 @@ void MixedFilamentBatchDialog::load_model_colors()
         });
     }
 
-    // Product spec: cap at 64 distinct colors. This loop is the dedup source (each push is
+    // Cap at kMaxColors distinct colors. This loop is the dedup source (each push is
     // a unique validated color), so the cap applies to unique colors. Drop the tail beyond
     // kMaxColors. The warning is deferred to build_ui because m_warning_panel is still null
     // here — the ctor runs load_model_colors before build_banners/build_ui, so calling
     // display_warning now would hit the early `if (!m_warning_panel) return` and be lost.
     while (m_model_colors.size() > kMaxColors) {
         m_model_colors.pop_back();
-        m_pending_64_color_warning = true;
+        m_pending_color_limit_warning = true;
     }
 }
 
@@ -855,8 +858,8 @@ void MixedFilamentBatchDialog::load_model_colors()
 // them: apply_batch_match_to_model walks model volumes' extruders and only remaps ids that
 // actually appear, so an unused palette id never triggers a virtual-filament allocation.
 //
-// Dedup / validation / 64-color cap mirror load_model_colors exactly (same helpers, same
-// m_pending_64_color_warning deferred-display contract — m_warning_panel is null here).
+// Dedup / validation / kMaxColors cap mirror load_model_colors exactly (same helpers, same
+// m_pending_color_limit_warning deferred-display contract — m_warning_panel is null here).
 void MixedFilamentBatchDialog::load_palette_colors()
 {
     m_model_colors.clear();
@@ -906,10 +909,10 @@ void MixedFilamentBatchDialog::load_palette_colors()
         });
     }
 
-    // Same 64-color cap + deferred-warning contract as load_model_colors (see comment there).
+    // Same kMaxColors cap + deferred-warning contract as load_model_colors (see comment there).
     while (m_model_colors.size() > kMaxColors) {
         m_model_colors.pop_back();
-        m_pending_64_color_warning = true;
+        m_pending_color_limit_warning = true;
     }
 }
 
@@ -1148,11 +1151,12 @@ void MixedFilamentBatchDialog::build_ui()
     // initial state was never set.
     update_nav_arrow_state();
 
-    // Deferred from load_model_colors: if the model had >64 distinct colors, the extras were
-    // dropped there. m_warning_panel is now created (build_banners ran above in build_ui),
-    // so the advisory can finally be shown.
-    if (m_pending_64_color_warning)
-        display_warning(_L("Filament color limit reached (64 colors). Colors over the limit have been removed."));
+    // Deferred from load_palette_colors: if the palette had more than kMaxColors distinct
+    // colors, the extras were dropped there. m_warning_panel is now created (build_banners
+    // ran above in build_ui), so the advisory can finally be shown.
+    if (m_pending_color_limit_warning)
+        display_warning(wxString::Format(_L("Filament color limit reached (%d colors). Colors over the limit have been removed."),
+                                         int(kMaxColors)));
 }
 
 void MixedFilamentBatchDialog::build_banners()
@@ -2054,7 +2058,7 @@ void MixedFilamentBatchDialog::on_manual_selection_changed()
     // There is no pre-match ratio guard; ratio warnings come only from this post-match check.
     //
     // Note: when no match is shown (m_match_completed == false), a pre-existing banner —
-    // e.g. the 64-color limit advisory from display_warning at build_ui — is intentionally
+    // e.g. the color-limit advisory from display_warning at build_ui — is intentionally
     // NOT cleared here. It persists until the next Start/Re-match (which Hides all banners).
     // This is acceptable: the advisory is still contextually relevant while the user is
     // picking filaments for the over-limit model.
@@ -2326,9 +2330,44 @@ bool MixedFilamentBatchDialog::predict_slot_overflow() const
     const auto* bundle = wxGetApp().preset_bundle;
     if (!bundle)
         return false;
+
+    // Confirm rewrites a mapping onto an existing custom mixed row when one of the mapping's
+    // source slots IS that row, and allocates a new row only otherwise (the in-place block of
+    // the Color Mixing Match handler in Plater.cpp). Mirror that decision here: the palette
+    // lists every existing recipe as a source color, so counting each of them as a new row
+    // would report an overflow for any project that already holds many recipes.
+    // Source ids are dialog-time virtual ids: enabled rows numbered after the physical slots.
+    const size_t num_physical = m_physical_colors.size();
+    std::unordered_map<unsigned int, bool> custom_row_by_vid;
+    {
+        unsigned int vid = static_cast<unsigned int>(num_physical) + 1;
+        for (const MixedFilament& row : bundle->mixed_filaments.mixed_filament_legacy_rows()) {
+            if (!row.enabled || row.deleted)
+                continue;
+            custom_row_by_vid.emplace(vid++, row.custom);
+        }
+    }
+    // Physical slot count the recipes are validated against at apply time.
+    const size_t apply_physical = m_result.is_recommended_mode && m_result.recommended_physical_colors.size() >= 4 ?
+                                      std::max<size_t>(4, num_physical) :
+                                      num_physical;
+    auto edits_existing_row = [&custom_row_by_vid, apply_physical](const ColorMappingEntry& mapping) {
+        const MixedColorMatchRecipeResult& recipe = mapping.recipe;
+        if (!recipe.valid || recipe.component_a < 1 || recipe.component_a > apply_physical || recipe.component_b < 1 ||
+            recipe.component_b > apply_physical || recipe.component_a == recipe.component_b)
+            return false;
+        // The first source that is a mixed row decides, as at Confirm; auto rows are never rewritten.
+        for (unsigned int source_id : mapping.source_extruder_ids) {
+            const auto it = custom_row_by_vid.find(source_id);
+            if (it != custom_row_by_vid.end())
+                return it->second;
+        }
+        return false;
+    };
+
     size_t new_mixed_rows = 0;
     for (const auto& mapping : m_result.mappings)
-        if (!mapping.is_pure_recipe && !mapping.in_place_edited)
+        if (!mapping.is_pure_recipe && !mapping.in_place_edited && !edits_existing_row(mapping))
             ++new_mixed_rows;
     // Batch insertion precedes cleanup; count disabled saved recipes as well.
     return bundle->mixed_filaments.registered_count() + new_mixed_rows > MAXIMUM_MIXED_FILAMENT_NUMBER;
@@ -2800,7 +2839,7 @@ void MixedFilamentBatchDialog::handle_batch_match_result(const BatchMatchResult&
 void MixedFilamentBatchDialog::update_mapping_legend()
 {
     // Freeze the legend panel for the whole clear+rebuild so wxMSW doesn't repaint after
-    // every child create/destroy (up to 64 rows × 4 sub-windows = hundreds of partial
+    // every child create/destroy (up to kMaxColors rows × 4 sub-windows = over a thousand partial
     // paints → visible flicker). RAII guarantees Thaw on every exit path, including
     // exceptions (harness cpp-wxwidgets §132). Held for the whole function: Refresh()
     // calls issued while frozen are coalesced and flushed at Thaw (the destructor at

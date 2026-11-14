@@ -96,7 +96,8 @@ private:
     void check_manual_recipe_ratio();
 
     void set_match_buttons_state(bool matching);
-    // Count pending insertions against the saved mixed-recipe limit before cleanup.
+    // Count the rows Confirm has to insert against the saved mixed-recipe limit before cleanup.
+    // Mappings Confirm rewrites onto an existing custom row are not insertions.
     bool predict_slot_overflow() const;
     // Post-match advisory priority: slot overflow (data-loss) outranks the ratio hint —
     // the red error banner and the orange ratio banner are mutually exclusive. Shows the
@@ -156,7 +157,7 @@ private:
     // When empty, the filament is rendered as a single-color swatch (fallback to m_physical_colors[idx]).
     std::vector<std::string>     m_physical_multi_colors;
     std::vector<int>             m_physical_color_modes;
-    bool                         m_pending_64_color_warning = false; // deferred from load_model_colors until after build_ui
+    bool                         m_pending_color_limit_warning = false; // deferred from load_palette_colors until after build_ui
 
     int m_filament_selections[4] = {0, 1, 2, 3};
 

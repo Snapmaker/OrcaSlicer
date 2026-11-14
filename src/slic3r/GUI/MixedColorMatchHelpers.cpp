@@ -1684,7 +1684,9 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
 std::vector<ModelColorEntry> extract_model_colors(const Print& print)
 {
     std::vector<ModelColorEntry> colors;
-    static constexpr int MAX_EXTRUDER_ID = int(MAXIMUM_EXTRUDER_NUMBER);
+    // Volume extruder ids cover physical slots and virtual mixed recipes.
+    static constexpr int    MAX_EXTRUDER_ID = int(MAXIMUM_FILAMENT_NUMBER);
+    static constexpr size_t MAX_COLORS      = MAXIMUM_FILAMENT_NUMBER;
 
     auto& filament_colours = print.config().filament_colour.values;
 
@@ -1767,10 +1769,10 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
         }
     }
 
-    if (colors.size() > 64) {
+    if (colors.size() > MAX_COLORS) {
         BOOST_LOG_TRIVIAL(warning)
-            << "extract_model_colors: truncating " << colors.size() << " colors to 64";
-        colors.resize(64);
+            << "extract_model_colors: truncating " << colors.size() << " colors to " << MAX_COLORS;
+        colors.resize(MAX_COLORS);
     }
 
     BOOST_LOG_TRIVIAL(info)

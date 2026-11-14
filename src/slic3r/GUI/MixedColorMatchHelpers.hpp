@@ -237,7 +237,7 @@ struct BatchMatchResult
 
 /// Extract all unique colors from a multi-color 3D model.
 /// Uses ModelVolume::get_extruders() → Print::config().filament_colour[].
-/// Caps at 64 colors. Logs and skips malformed colors.
+/// Caps at MAXIMUM_FILAMENT_NUMBER colors. Logs and skips malformed colors.
 std::vector<ModelColorEntry> extract_model_colors(const Slic3r::Print& print);
 
 /// Main entry: batch-match all model colors to filament recipes.

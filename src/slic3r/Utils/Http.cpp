@@ -450,14 +450,19 @@ void Http::priv::http_perform()
 	::curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headers_cb);
 
 	::curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
-#if LIBCURL_VERSION_MAJOR >= 7 && LIBCURL_VERSION_MINOR >= 32
+// Use LIBCURL_VERSION_NUM for the version test: the MAJOR/MINOR pair test breaks for
+// curl 8.x (MINOR < 32), which would fall through to the legacy CURLOPT_PROGRESSFUNCTION
+// below with the wrong callback signature and feed garbage progress values to the
+// downloader (e.g. dlnow/dltotal read as curl_off_t from double arguments).
+// CURLOPT_XFERINFOFUNCTION was added in libcurl 7.32.0 (0x072000).
+#if LIBCURL_VERSION_NUM >= 0x072000
 	::curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, xfercb);
 	::curl_easy_setopt(curl, CURLOPT_XFERINFODATA, static_cast<void*>(this));
 #ifndef _WIN32
 	(void)xfercb_legacy;   // prevent unused function warning
 #endif
 #else
-	::curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, xfercb);
+	::curl_easy_setopt(curl, CURLOPT_PROGRESSFUNCTION, xfercb_legacy);
 	::curl_easy_setopt(curl, CURLOPT_PROGRESSDATA, static_cast<void*>(this));
 #endif
 

@@ -4024,7 +4024,7 @@ PageShp TabFilament::add_filament_overrides_page()
     PageShp page = add_options_page(L("Setting Overrides"), "custom-gcode_setting_override"); // ORCA: icon only visible on placeholders
     ConfigOptionsGroupShp optgroup = page->new_optgroup(L("Retraction"), L"param_retraction");
 
-    auto append_single_option_line = [optgroup, this](const std::string& opt_key)
+    auto append_single_option_line = [this](ConfigOptionsGroupShp optgroup, const std::string& opt_key)
     {
         Line line {"",""};
         //BBS
@@ -4095,7 +4095,18 @@ PageShp TabFilament::add_filament_overrides_page()
                                         //SoftFever
                                         // "filament_seam_gap"
                                      })
-        append_single_option_line(opt_key);
+        append_single_option_line(optgroup, opt_key);
+
+    // GH #957: Ironing overrides — the section was missing entirely (the
+    // filament_ironing_* options did not exist), so per-filament ironing
+    // settings could not be configured at all.
+    ConfigOptionsGroupShp ironing_optgroup = page->new_optgroup(L("Ironing"), L"param_ironing");
+    for (const std::string opt_key : {  "filament_ironing_flow",
+                                        "filament_ironing_spacing",
+                                        "filament_ironing_inset",
+                                        "filament_ironing_speed"
+                                     })
+        append_single_option_line(ironing_optgroup, opt_key);
 
     return page;
 }
@@ -4181,6 +4192,38 @@ void TabFilament::update_filament_overrides_page(const DynamicPrintConfig* print
             if (!is_checked) {
                 const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
                 boost::any printer_config_value = optgroup->get_config_value(*printers_config, printer_opt_key, extruder_idx);
+                field->update_na_value(printer_config_value);
+                field->set_value(printer_config_value, false);
+            }
+
+            field->toggle(is_checked);
+        }
+    }
+
+    // GH #957: Ironing overrides. A checked box means the filament sets its
+    // own ironing value (non-nil); unchecked means "use the process value",
+    // shown as N/A. The ironing options are not flow-variant, so they use
+    // the extruder index like the other non-flow-variant overrides above.
+    const auto ironing_it = std::find_if(page->m_optgroups.begin(), page->m_optgroups.end(),
+        [](const ConfigOptionsGroupShp og) { return og->title == "Ironing"; });
+    if (ironing_it != page->m_optgroups.end()) {
+        ConfigOptionsGroupShp ironing_optgroup = *ironing_it;
+        for (const std::string& opt_key : { "filament_ironing_flow",
+                                            "filament_ironing_spacing",
+                                            "filament_ironing_inset",
+                                            "filament_ironing_speed" }) {
+            const int option_index = is_filament_flow_variant_option(opt_key) ? flow_index : extruder_idx;
+            const ConfigOptionVectorBase* option = dynamic_cast<const ConfigOptionVectorBase*>(m_config->option(opt_key));
+            bool is_checked = option != nullptr && !option->is_nil(option_index);
+            m_overrides_options[opt_key]->Enable(true);
+            m_overrides_options[opt_key]->SetValue(is_checked);
+
+            Field* field = ironing_optgroup->get_fieldc(opt_key, option_index);
+            if (field == nullptr) continue;
+
+            if (!is_checked) {
+                const std::string printer_opt_key = opt_key.substr(strlen("filament_"));
+                boost::any printer_config_value = ironing_optgroup->get_config_value(*printers_config, printer_opt_key, extruder_idx);
                 field->update_na_value(printer_config_value);
                 field->set_value(printer_config_value, false);
             }
@@ -4675,14 +4718,18 @@ void TabFilament::toggle_options()
 
 
         // Orca: adaptive pressure advance and calibration model
-        // If PA is not enabled, disable adaptive pressure advance and hide the model section
-        // If adaptive PA is not enabled, hide the adaptive PA model section
-        toggle_option("adaptive_pressure_advance", pa);
-        toggle_option("adaptive_pressure_advance_overhangs", pa);
+        // GH #957: adaptive pressure advance is independently configurable — it
+        // overrides the regular pressure advance value when enabled, so it must
+        // not be gated on regular pressure advance being on. Gating it on `pa`
+        // made the checkbox unclickable (and the model/overhangs/bridges rows
+        // invisible) whenever regular PA was off, which is the state most U1
+        // profiles ship in. The sub-rows are shown when adaptive PA itself is on.
+        toggle_option("adaptive_pressure_advance", true);
+        toggle_option("adaptive_pressure_advance_overhangs", true);
         bool has_adaptive_pa = m_config->opt_bool("adaptive_pressure_advance", 0);
-        toggle_line("adaptive_pressure_advance_overhangs", has_adaptive_pa && pa);
-        toggle_line("adaptive_pressure_advance_model", has_adaptive_pa && pa);
-        toggle_line("adaptive_pressure_advance_bridges", has_adaptive_pa && pa);
+        toggle_line("adaptive_pressure_advance_overhangs", has_adaptive_pa);
+        toggle_line("adaptive_pressure_advance_model", has_adaptive_pa);
+        toggle_line("adaptive_pressure_advance_bridges", has_adaptive_pa);
 
         bool is_pellet_printer = cfg.opt_bool("pellet_modded_printer");
         toggle_line("pellet_flow_coefficient", is_pellet_printer);

@@ -1844,12 +1844,15 @@ int GCodeProcessor::get_gcode_last_filament(const std::string& gcode_str)
 }
 
 //BBS: get last z position from gcode
-bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double& z)
+bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double& z, double start_z)
 {
     int str_size = gcode_str.size();
     int start_index = 0;
     int end_index = 0;
     bool is_z_changed = false;
+    // G-code defaults to absolute positioning (G90).
+    bool is_relative = false;
+    double current_z = start_z;
     while (end_index < str_size) {
         //find a full line
         if (gcode_str[end_index] != '\n') {
@@ -1862,6 +1865,15 @@ bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double&
             line_str.erase(0, line_str.find_first_not_of(" "));
             line_str.erase(line_str.find_last_not_of(";") + 1);
             line_str.erase(line_str.find_last_not_of(" ") + 1);
+
+            // Track absolute / relative positioning mode (G90 / G91). A relative Z
+            // move (e.g. the U1 change-filament lift "G91 / G1 Z1.5 / G90") is a delta
+            // from the current Z, not an absolute position (GH #1083).
+            if (line_str.size() >= 3 && line_str[0] == 'G' && line_str[1] == '9' && (line_str[2] == '0' || line_str[2] == '1')) {
+                char next = (line_str.size() > 3) ? line_str[3] : '\0';
+                if (next == '\0' || next == ' ' || next == '\t' || next == '\r' || next == ';')
+                    is_relative = (line_str[2] == '1');
+            }
 
             //command which may have z movement
             if (line_str.size() > 5 && (line_str.find("G0 ") == 0
@@ -1885,7 +1897,10 @@ bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double&
                     auto [pend, ec] = fast_float::from_chars(c, end, temp_z);
                     if (pend != c && is_end_of_word(*pend)) {
                         // The axis value has been parsed correctly.
-                        z = temp_z;
+                        if (is_relative)
+                            current_z += temp_z;
+                        else
+                            current_z = temp_z;
                         is_z_changed = true;
                     }
                 }
@@ -1895,6 +1910,8 @@ bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double&
         start_index = end_index + 1;
         end_index = start_index;
     }
+    if (is_z_changed)
+        z = current_z;
     return is_z_changed;
 }
 

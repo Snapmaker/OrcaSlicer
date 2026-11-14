@@ -1351,8 +1351,20 @@ static inline void compute_local_z_gradient_component_heights(int mix_b_percent,
     const double pct_a = 1.0 - pct_b;
     const double lo    = std::max<double>(0.01, lower_bound);
     const double hi    = std::max<double>(lo, upper_bound);
-    h_a = lo + pct_a * (hi - lo);
-    h_b = lo + pct_b * (hi - lo);
+    // The component heights must be proportional to the requested mix so that
+    // h_a / (h_a + h_b) == pct_a. The previous linear interpolation
+    // (lo + pct * (hi - lo)) added lo to both heights, biasing the ratio
+    // toward 50/50: e.g. a 33/67 mix produced a 40/60 split (h_a = 0.0796,
+    // h_b = 0.1204 with the default bounds lo = 0.04, hi = 0.16), which is
+    // why a 25/75 setting was needed to get a 1:2 split at 0.2 mm layers and
+    // a 21/79 setting at 0.24 mm layers (GH #614). Keep the same cycle
+    // height (hi + lo) so the total is unchanged, and clamp each component
+    // into [lo, hi] so extreme mixes still respect the per-sublayer bounds
+    // (the ratio then degrades gracefully, as it must when a component
+    // cannot be thinner than lo or thicker than hi).
+    const double cycle_h = hi + lo;
+    h_a = std::clamp(pct_a * cycle_h, lo, hi);
+    h_b = std::clamp(pct_b * cycle_h, lo, hi);
 }
 
 static bool choose_local_z_start_with_component_a(const std::vector<double> &pass_heights,

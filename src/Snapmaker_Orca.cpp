@@ -1857,8 +1857,16 @@ int CLI::run(int argc, char **argv)
     // requires resetting the extruder position at each layer". See GH #1184.
     if (new_printer_name.empty() && new_process_name.empty() && current_printer_name.empty() && current_process_name.empty()) {
         AppConfig app_config;
-        if (app_config.load().empty()) {
-            try {
+        try {
+            // NB: AppConfig::load() itself can throw (e.g. std::out_of_range
+            // when the config file is missing/empty: the Win32 JSON reader
+            // substr()s past the end of an empty string and only catches
+            // nlohmann::parse_error). In CLI mode the data dir is empty
+            // unless --datadir is given, so the app config is normally NOT
+            // found here. Keep the load() call inside the try so a load
+            // failure falls back to the built-in defaults instead of
+            // terminating the process with an unhandled exception (0xE06D7363).
+            if (app_config.load().empty()) {
                 PresetBundle preset_bundle;
                 preset_bundle.load_presets(app_config, ForwardCompatibilitySubstitutionRule::Enable);
                 const Preset &selected_printer = preset_bundle.printers.get_selected_preset();
@@ -1891,9 +1899,9 @@ int CLI::run(int argc, char **argv)
                     new_print_compatible_printers = load_process_config.option<ConfigOptionStrings>("compatible_printers", true)->values;
                     BOOST_LOG_TRIVIAL(info) << boost::format("CLI fallback: using saved presets, printer %1%, process %2%") % new_printer_name % new_process_name;
                 }
-            } catch (const std::exception &ex) {
-                BOOST_LOG_TRIVIAL(warning) << "CLI fallback: failed to load saved presets, using built-in defaults: " << ex.what();
             }
+        } catch (const std::exception &ex) {
+            BOOST_LOG_TRIVIAL(warning) << "CLI fallback: failed to load saved presets, using built-in defaults: " << ex.what();
         }
     }
 

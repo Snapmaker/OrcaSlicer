@@ -1962,8 +1962,36 @@ int CLI::run(int argc, char **argv)
 
     if (is_bbl_3mf && (load_filament_count > 0) && (load_filaments_set.size() == 1))
     {
-        disable_wipe_tower_after_mapping = true;
-        BOOST_LOG_TRIVIAL(info) << boost::format("map all the filaments to the same one, load_filament_count %1%")%load_filament_count;
+        // Same preset name does not mean the same filament: several "Generic PLA"
+        // configs can carry different colours. Only map them to one filament (and
+        // disable the prime tower) when the effective colours are also the same.
+        // Check the loaded filament configs first, then the project config from
+        // the 3MF (GH #1119).
+        std::set<std::string> filament_color_set;
+        for (const DynamicPrintConfig &fila_config : load_filaments_config) {
+            const ConfigOptionStrings *color_opt = fila_config.option<ConfigOptionStrings>("filament_colour");
+            if (color_opt != nullptr) {
+                for (const std::string &color : color_opt->values) {
+                    if (!color.empty())
+                        filament_color_set.emplace(color);
+                }
+            }
+        }
+        if (filament_color_set.size() <= 1) {
+            const ConfigOptionStrings *project_colors = m_print_config.option<ConfigOptionStrings>("filament_colour");
+            if (project_colors != nullptr) {
+                for (const std::string &color : project_colors->values) {
+                    if (!color.empty())
+                        filament_color_set.emplace(color);
+                }
+            }
+        }
+        if (filament_color_set.size() <= 1) {
+            disable_wipe_tower_after_mapping = true;
+            BOOST_LOG_TRIVIAL(info) << boost::format("map all the filaments to the same one, load_filament_count %1%")%load_filament_count;
+        } else {
+            BOOST_LOG_TRIVIAL(info) << boost::format("filaments share one preset name but have %1% distinct colours, keeping prime tower enabled")%filament_color_set.size();
+        }
     }
 
     //load system config if needed

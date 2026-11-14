@@ -66,6 +66,8 @@ using namespace nlohmann;
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/SL1.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/AppConfig.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Time.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/BlacklistedLibraryCheck.hpp"
@@ -1844,6 +1846,54 @@ int CLI::run(int argc, char **argv)
             boost::nowide::cerr << "invalid printer_technology " <<printer_technology<<", from config "<< file <<std::endl;
             record_exit_reson(outfile_dir, CLI_INVALID_PRINTER_TECH, 0, cli_errors[CLI_INVALID_PRINTER_TECH], sliced_info);
             flush_and_exit(CLI_INVALID_PRINTER_TECH);
+        }
+    }
+
+    // Fallback for bare STL input: no --load-settings machine/process and no
+    // 3MF-embedded presets. Use the presets the user has selected in the GUI
+    // (stored in the app config) instead of the built-in "Default Printer" /
+    // "Default Setting" (200x200x100 bed, relative E distances, empty layer
+    // G-code), which fails Print::validate() with "Relative extruder addressing
+    // requires resetting the extruder position at each layer". See GH #1184.
+    if (new_printer_name.empty() && new_process_name.empty() && current_printer_name.empty() && current_process_name.empty()) {
+        AppConfig app_config;
+        if (app_config.load().empty()) {
+            try {
+                PresetBundle preset_bundle;
+                preset_bundle.load_presets(app_config, ForwardCompatibilitySubstitutionRule::Enable);
+                const Preset &selected_printer = preset_bundle.printers.get_selected_preset();
+                const Preset &selected_process = preset_bundle.prints.get_selected_preset();
+                if (selected_printer.name != "Default Printer" && selected_process.name != "Default Setting") {
+                    // Machine (printer) preset.
+                    new_printer_name = selected_printer.name;
+                    new_printer_config_is_system = selected_printer.is_system;
+                    load_machine_config = selected_printer.config;
+                    load_machine_config.set("printer_settings_id", new_printer_name, true);
+                    const std::string &printer_inherits = load_machine_config.option<ConfigOptionString>("inherits", true)->value;
+                    new_printer_system_name = printer_inherits.empty() ? new_printer_name : printer_inherits;
+                    printer_model = load_machine_config.option<ConfigOptionString>("printer_model", true)->value;
+                    if (!printer_model.empty()) {
+                        std::string printer_model_path = resources_dir() + "/profiles/BBL/machine_full/" + printer_model + ".json";
+                        if (boost::filesystem::exists(printer_model_path)) {
+                            std::map<std::string, std::string> key_values;
+                            load_key_values_from_json(printer_model_path, key_values);
+                            if (key_values.find("model_id") != key_values.end())
+                                printer_model_id = key_values["model_id"];
+                        }
+                    }
+                    // Process preset.
+                    new_process_name = selected_process.name;
+                    new_process_config_is_system = selected_process.is_system;
+                    load_process_config = selected_process.config;
+                    load_process_config.set("print_settings_id", new_process_name, true);
+                    const std::string &process_inherits = load_process_config.option<ConfigOptionString>("inherits", true)->value;
+                    new_process_system_name = process_inherits.empty() ? new_process_name : process_inherits;
+                    new_print_compatible_printers = load_process_config.option<ConfigOptionStrings>("compatible_printers", true)->values;
+                    BOOST_LOG_TRIVIAL(info) << boost::format("CLI fallback: using saved presets, printer %1%, process %2%") % new_printer_name % new_process_name;
+                }
+            } catch (const std::exception &ex) {
+                BOOST_LOG_TRIVIAL(warning) << "CLI fallback: failed to load saved presets, using built-in defaults: " << ex.what();
+            }
         }
     }
 

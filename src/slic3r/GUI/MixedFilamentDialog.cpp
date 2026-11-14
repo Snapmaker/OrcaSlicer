@@ -1396,6 +1396,67 @@ static TriPt tri_clamp_pt(TriPt p, TriPt v0, TriPt v1, TriPt v2)
              w0 * v0.y + w1 * v1.y + w2 * v2.y };
 }
 
+// The color field of a triangle picker with corners v0..v2 blending c0..c2, on the card
+// background. Rendered into `cache` only when the size, the background or the blend inputs
+// differ from what the cache holds; every other paint (scrolling into view, dragging the
+// selection) reuses the bitmap. The result is invalid while the panel has no size.
+static const wxBitmap& tri_gradient_bitmap(MixedTriGradientCache& cache, const wxSize& size, TriPt v0, TriPt v1, TriPt v2,
+                                           const wxColour& c0, const wxColour& c1, const wxColour& c2)
+{
+    const wxColour    bg  = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
+    const std::string key = blend_preview_key({c0, c1, c2});
+    if (cache.bitmap.IsOk() && cache.size == size && cache.background == bg && cache.blend_key == key)
+        return cache.bitmap;
+
+    cache.bitmap = wxBitmap();
+    const int img_w = size.GetWidth();
+    const int img_h = size.GetHeight();
+    if (img_w <= 0 || img_h <= 0)
+        return cache.bitmap;
+
+    // Create image for gradient rendering (more efficient than DrawPoint)
+    wxImage img(img_w, img_h);
+    // Fill with background color matching card
+    img.SetRGB(wxRect(0, 0, img_w, img_h), bg.Red(), bg.Green(), bg.Blue());
+    unsigned char* data = img.GetData();
+
+    const int min_y = (int)std::min({v0.y, v1.y, v2.y});
+    const int max_y = (int)std::max({v0.y, v1.y, v2.y});
+    const int min_x = (int)std::min({v0.x, v1.x, v2.x});
+    const int max_x = (int)std::max({v0.x, v1.x, v2.x});
+
+    // One prediction per whole-percent ratio, shared by every pixel that rounds to it.
+    std::vector<wxColour> predicted_colors(101 * 101);
+    // Draw gradient only inside triangle
+    for (int py = min_y; py <= max_y; ++py) {
+        for (int px = min_x; px <= max_x; ++px) {
+            TriPt p = {(double)px, (double)py};
+            double w0, w1, w2;
+            tri_bary(p, v0, v1, v2, w0, w1, w2);
+            // Skip points outside triangle (negative barycentric coordinates)
+            constexpr double EPSILON = 0.001;
+            if (w0 < -EPSILON || w1 < -EPSILON || w2 < -EPSILON) continue;
+            if (px < 0 || px >= img_w || py < 0 || py >= img_h) continue;
+
+            const int idx = (py * img_w + px) * 3;
+            const int wa        = std::clamp(int(std::lround(w0 * 100.0)), 0, 100);
+            const int wb        = std::clamp(int(std::lround(w1 * 100.0)), 0, 100 - wa);
+            wxColour& predicted = predicted_colors[wa * 101 + wb];
+            if (!predicted.IsOk())
+                predicted = blend_preview_colors({c0, c1, c2}, {double(wa), double(wb), double(100 - wa - wb)});
+            data[idx]     = predicted.Red();
+            data[idx + 1] = predicted.Green();
+            data[idx + 2] = predicted.Blue();
+        }
+    }
+
+    cache.bitmap     = wxBitmap(img);
+    cache.size       = size;
+    cache.background = bg;
+    cache.blend_key  = key;
+    return cache.bitmap;
+}
+
 // ---------------------------------------------------------------------------
 
 int MixedFilamentDialog::get_filament_index(int row_idx) const
@@ -1895,49 +1956,11 @@ void MixedFilamentDialog::build_tri_picker(wxWindow* parent)
         auto [v0, v1, v2] = get_verts();
 
         wxColour c0 = safe_col(0), c1 = safe_col(1), c2 = safe_col(2);
-        std::vector<wxColour> predicted_colors(101 * 101);
 
-        int min_y = (int)std::min({v0.y, v1.y, v2.y});
-        int max_y = (int)std::max({v0.y, v1.y, v2.y});
-        int min_x = (int)std::min({v0.x, v1.x, v2.x});
-        int max_x = (int)std::max({v0.x, v1.x, v2.x});
-
-        // Create image for gradient rendering (more efficient than DrawPoint)
-        const int img_w = sz.GetWidth();
-        const int img_h = sz.GetHeight();
-        wxImage img(img_w, img_h);
-        
-        // Fill with background color matching card
-        const wxColour bg = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
-        img.SetRGB(wxRect(0, 0, img_w, img_h), bg.Red(), bg.Green(), bg.Blue());
-        unsigned char* data = img.GetData();
-
-        // Draw gradient only inside triangle
-        for (int py = min_y; py <= max_y; ++py) {
-            for (int px = min_x; px <= max_x; ++px) {
-                TriPt p = {(double)px, (double)py};
-                double w0, w1, w2;
-                tri_bary(p, v0, v1, v2, w0, w1, w2);
-                // Skip points outside triangle (negative barycentric coordinates)
-                constexpr double EPSILON = 0.001;
-                if (w0 < -EPSILON || w1 < -EPSILON || w2 < -EPSILON) continue;
-                if (px < 0 || px >= img_w || py < 0 || py >= img_h) continue;
-
-                const int idx = (py * img_w + px) * 3;
-                const int wa        = std::clamp(int(std::lround(w0 * 100.0)), 0, 100);
-                const int wb        = std::clamp(int(std::lround(w1 * 100.0)), 0, 100 - wa);
-                wxColour& predicted = predicted_colors[wa * 101 + wb];
-                if (!predicted.IsOk())
-                    predicted = blend_preview_colors({c0, c1, c2}, {double(wa), double(wb), double(100 - wa - wb)});
-                data[idx]     = predicted.Red();
-                data[idx + 1] = predicted.Green();
-                data[idx + 2] = predicted.Blue();
-            }
-        }
-
-        // Draw the image
-        wxBitmap bmp(img);
-        dc.DrawBitmap(bmp, 0, 0);
+        // Draw the color field, rendered only when its inputs changed
+        const wxBitmap& bmp = tri_gradient_bitmap(m_tri_cache, sz, v0, v1, v2, c0, c1, c2);
+        if (bmp.IsOk())
+            dc.DrawBitmap(bmp, 0, 0);
 
         // Draw triangle outline (#D9D9D9 per Figma)
         wxPoint pts[3] = {{(int)v0.x, (int)v0.y}, {(int)v1.x, (int)v1.y}, {(int)v2.x, (int)v2.y}};
@@ -2035,40 +2058,10 @@ void MixedFilamentDialog::build_match_tri_picker(wxWindow* parent)
         wxSize sz = m_match_tri_picker->GetClientSize();
         auto [v0, v1, v2] = get_verts();
         wxColour c0 = safe_col(0), c1 = safe_col(1), c2 = safe_col(2);
-        std::vector<wxColour> predicted_colors(101 * 101);
 
-        int min_y = (int)std::min({v0.y, v1.y, v2.y});
-        int max_y = (int)std::max({v0.y, v1.y, v2.y});
-        int min_x = (int)std::min({v0.x, v1.x, v2.x});
-        int max_x = (int)std::max({v0.x, v1.x, v2.x});
-
-        const int img_w = sz.GetWidth(), img_h = sz.GetHeight();
-        wxImage img(img_w, img_h);
-        const wxColour bg = StateColor::darkModeColorFor(wxColour("#FFFFFF"));
-        img.SetRGB(wxRect(0, 0, img_w, img_h), bg.Red(), bg.Green(), bg.Blue());
-        unsigned char* data = img.GetData();
-
-        for (int py = min_y; py <= max_y; ++py) {
-            for (int px = min_x; px <= max_x; ++px) {
-                TriPt p = {(double)px, (double)py};
-                double w0, w1, w2;
-                tri_bary(p, v0, v1, v2, w0, w1, w2);
-                constexpr double EPSILON = 0.001;
-                if (w0 < -EPSILON || w1 < -EPSILON || w2 < -EPSILON) continue;
-                if (px < 0 || px >= img_w || py < 0 || py >= img_h) continue;
-                const int idx = (py * img_w + px) * 3;
-                const int wa        = std::clamp(int(std::lround(w0 * 100.0)), 0, 100);
-                const int wb        = std::clamp(int(std::lround(w1 * 100.0)), 0, 100 - wa);
-                wxColour& predicted = predicted_colors[wa * 101 + wb];
-                if (!predicted.IsOk())
-                    predicted = blend_preview_colors({c0, c1, c2}, {double(wa), double(wb), double(100 - wa - wb)});
-                data[idx]     = predicted.Red();
-                data[idx + 1] = predicted.Green();
-                data[idx + 2] = predicted.Blue();
-            }
-        }
-        wxBitmap bmp(img);
-        dc.DrawBitmap(bmp, 0, 0);
+        const wxBitmap& bmp = tri_gradient_bitmap(m_match_tri_cache, sz, v0, v1, v2, c0, c1, c2);
+        if (bmp.IsOk())
+            dc.DrawBitmap(bmp, 0, 0);
 
         wxPoint pts[3] = {{(int)v0.x, (int)v0.y}, {(int)v1.x, (int)v1.y}, {(int)v2.x, (int)v2.y}};
         dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#D9D9D9")), 1));

@@ -11,6 +11,7 @@
 #include <atomic>
 #include <cctype>
 #include <fstream>
+#include <iomanip>
 #include <set>
 #include <queue>
 #include <sstream>
@@ -28,7 +29,44 @@
 namespace Slic3r { namespace GUI {
 namespace {
 std::shared_ptr<const MixedFilamentDisplayContext> preview_color_context;
+
+// What the preview blends for one color: its hex, plus the material and transmission
+// distance of the palette slot that has this color when the palette agrees on one.
+MixedFilamentColorInput preview_color_input(const MixedFilamentDisplayContext* context, const wxColour& requested, int percent)
+{
+    const wxColour          color = requested.IsOk() ? requested : wxColour("#26A69A");
+    MixedFilamentColorInput input{color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString(), percent};
+    if (context) {
+        bool found = false, ambiguous = false;
+        for (size_t slot = 0; slot < context->physical_colors.size(); ++slot) {
+            if (wxColour(context->physical_colors[slot]) != color)
+                continue;
+            const std::string id = slot < context->physical_material_ids.size() ? context->physical_material_ids[slot] : std::string();
+            const double      td = slot < context->physical_tds.size() ? context->physical_tds[slot] : 0.0;
+            if (found && (input.material_id.value_or("") != id || input.td_mm.value_or(0.0) != td)) {
+                ambiguous = true;
+                break;
+            }
+            found = true;
+            if (!id.empty())
+                input.material_id = id;
+            if (td > 0.0)
+                input.td_mm = td;
+        }
+        // Equal RGB does not establish identity when two active materials disagree.
+        if (ambiguous) {
+            input.material_id = "uncalibrated:ambiguous";
+            input.td_mm.reset();
+        }
+    }
+    return input;
 }
+
+MixedFilamentColorEngine preview_color_engine(const MixedFilamentDisplayContext* context)
+{
+    return context && context->color_engine ? *context->color_engine : MixedFilamentManager::color_engine();
+}
+} // namespace
 
 wxColour blend_preview_colors(const std::vector<wxColour>& colors, const std::vector<double>& weights)
 {
@@ -37,36 +75,21 @@ wxColour blend_preview_colors(const std::vector<wxColour>& colors, const std::ve
     for (size_t i = 0; i < colors.size() && i < weights.size(); ++i) {
         if (!std::isfinite(weights[i]) || weights[i] <= 0)
             continue;
-        const wxColour          color = colors[i].IsOk() ? colors[i] : wxColour("#26A69A");
-        MixedFilamentColorInput input{color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString(), int(std::lround(weights[i] * 10000))};
-        if (context) {
-            bool found = false, ambiguous = false;
-            for (size_t slot = 0; slot < context->physical_colors.size(); ++slot) {
-                if (wxColour(context->physical_colors[slot]) != color)
-                    continue;
-                const std::string id = slot < context->physical_material_ids.size() ? context->physical_material_ids[slot] : std::string();
-                const double      td = slot < context->physical_tds.size() ? context->physical_tds[slot] : 0.0;
-                if (found && (input.material_id.value_or("") != id || input.td_mm.value_or(0.0) != td)) {
-                    ambiguous = true;
-                    break;
-                }
-                found = true;
-                if (!id.empty())
-                    input.material_id = id;
-                if (td > 0.0)
-                    input.td_mm = td;
-            }
-            // Equal RGB does not establish identity when two active materials disagree.
-            if (ambiguous) {
-                input.material_id = "uncalibrated:ambiguous";
-                input.td_mm.reset();
-            }
-        }
-        inputs.push_back(std::move(input));
+        inputs.push_back(preview_color_input(context.get(), colors[i], int(std::lround(weights[i] * 10000))));
     }
-    return wxColour(blend_mixed_color_inputs_auto(inputs, context && context->color_engine ?
-                                                                        *context->color_engine :
-                                                                        MixedFilamentManager::color_engine()));
+    return wxColour(blend_mixed_color_inputs_auto(inputs, preview_color_engine(context.get())));
+}
+
+std::string blend_preview_key(const std::vector<wxColour>& colors)
+{
+    const auto         context = std::atomic_load(&preview_color_context);
+    std::ostringstream key;
+    key << std::setprecision(17) << int(preview_color_engine(context.get()));
+    for (const wxColour& color : colors) {
+        const MixedFilamentColorInput input = preview_color_input(context.get(), color, 0);
+        key << '|' << input.color_hex << ';' << input.material_id.value_or("") << ';' << input.td_mm.value_or(0.0);
+    }
+    return key.str();
 }
 
 wxColour parse_mixed_color(const std::string& value)

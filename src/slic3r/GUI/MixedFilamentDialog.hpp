@@ -29,6 +29,16 @@ class MixedGradientStops;
 class MixedColorMatchPanel;
 class MatchRangeSlider;
 
+// Rendered color field of a triangle picker. Predicting it takes thousands of blends, far
+// too slow to repeat on every paint, so it is kept until what it was rendered from changes.
+struct MixedTriGradientCache
+{
+    wxBitmap    bitmap;
+    wxSize      size;       // client size it was rendered for, which also fixes the corners
+    wxColour    background;
+    std::string blend_key;  // blend_preview_key() of the three corner colors
+};
+
 class MixedFilamentDialog : public DPIDialog
 {
 public:
@@ -159,6 +169,8 @@ private:
 
     double m_tri_wx{1.0/3.0}, m_tri_wy{1.0/3.0}, m_tri_wz{1.0/3.0};
     bool   m_tri_dragging{false};
+    MixedTriGradientCache m_tri_cache;
+    MixedTriGradientCache m_match_tri_cache;
 
     // Match-specific tri-picker state (fully independent from ratio)
     std::vector<int>    m_match_tri_indices;

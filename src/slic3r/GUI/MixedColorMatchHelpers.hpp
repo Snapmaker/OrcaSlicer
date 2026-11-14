@@ -139,6 +139,12 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
 // searches receive an explicit snapshot through their API instead.
 wxColour blend_preview_colors(const std::vector<wxColour>& colors, const std::vector<double>& weights);
 
+// Everything blend_preview_colors reads besides the weights: the color engine and, per
+// color, its hex and the material and transmission distance the palette resolves it to.
+// While the key for a set of colors is unchanged, equal weights blend to equal colors,
+// so a rendering of those blends can be kept instead of predicted again.
+std::string blend_preview_key(const std::vector<wxColour>& colors);
+
 // ---- display context helpers ----
 MixedFilamentDisplayContext build_mixed_filament_display_context(
     const std::vector<std::string> &physical_colors);

@@ -18,6 +18,7 @@
 #endif /* WIN32 */
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <cstring>
 #include <iostream>
@@ -6119,6 +6120,24 @@ int CLI::run(int argc, char **argv)
     return 0;
 }
 
+// Resolve the per-user data folder, using exactly the same resolution the
+// GUI uses when <exe-dir>/data_dir does not exist (GUI_App::OnInit):
+// wxStandardPaths::GetUserDataDir() on Windows/macOS, ${XDG_CONFIG_HOME}
+// (or ~/.config) + app name on Linux. The app name is SLIC3R_APP_KEY,
+// which is also what the GUI sets via SetAppName().
+static std::string get_user_data_dir()
+{
+#if defined(__linux__) || defined(__LINUX__)
+    // Since version 2.3, config dir on Linux is in ${XDG_CONFIG_HOME}.
+    const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
+    std::string dir = (xdg_config_home != nullptr && *xdg_config_home != '\0') ?
+        xdg_config_home : (wxFileName::GetHomeDir() + wxS("/.config")).ToUTF8().data();
+    return dir + "/" + SLIC3R_APP_KEY;
+#else
+    return wxStandardPaths::Get().GetUserDataDir().ToUTF8().data();
+#endif
+}
+
 // Return the app-directory config folder (<exe-dir>/data_dir), creating
 // it if it does not exist. This is the portable location the GUI already
 // prefers when it exists (GUI_App::OnInit), so using it here makes the
@@ -6136,6 +6155,17 @@ static std::string get_portable_data_dir()
     const boost::filesystem::path app_data_dir = app_folder / "data_dir";
     if (!boost::filesystem::exists(app_data_dir))
         boost::filesystem::create_directories(app_data_dir);
+    // First use of the app-directory folder: migrate the user's existing
+    // config (AppConfig + user presets) from the per-user data folder
+    // when one is detected, so the saved printer/process selection
+    // carries over instead of starting empty (GH #1184). Best effort
+    // only — the migration no-ops when the app-directory folder already
+    // has its own config, and a failed migration never breaks startup.
+    try {
+        Slic3r::PresetBundle::migrate_user_config_to_portable_data_dir(get_user_data_dir(), app_data_dir.string());
+    } catch (...) {
+        // Best effort only; the (possibly empty) folder is still usable.
+    }
     return app_data_dir.string();
 }
 

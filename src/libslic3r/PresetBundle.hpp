@@ -59,6 +59,17 @@ public:
     void            setup_directories();
     void            copy_files(const std::string& from);
 
+    // Best-effort migration of the user's existing config into a newly
+    // created app-directory (portable) data folder: copies the AppConfig
+    // file (SLIC3R_APP_KEY.conf, holding the saved printer/process/
+    // filament selection) and the user preset folder from user_data_dir
+    // to portable_data_dir, but only when a config exists in
+    // user_data_dir and portable_data_dir has none yet. Never overwrites
+    // an existing file in portable_data_dir and never throws; logs and
+    // returns false when a copy fails, so a failed migration never
+    // breaks startup or slicing. portable_data_dir must already exist.
+    static bool     migrate_user_config_to_portable_data_dir(const std::string& user_data_dir, const std::string& portable_data_dir);
+
     struct PresetPreferences {
         std::string printer_model_id;// name of a preferred printer model
         std::string printer_variant; // name of a preferred printer variant

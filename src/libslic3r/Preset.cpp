@@ -2839,8 +2839,21 @@ std::vector<std::string> PresetCollection::diameters_of_selected_printer()
     std::set<std::string> diameters;
     auto printer_model = m_edited_preset.config.opt_string("printer_model");
     for (auto &preset : m_presets) {
-        if (preset.is_visible && preset.config.opt_string("printer_model") == printer_model)
-            diameters.insert(preset.config.opt_string("printer_variant"));
+        // List every nozzle size the printer model supports, not only the
+        // variants currently visible in the app config. A system preset is
+        // hidden when its nozzle variant was not enabled in the Config
+        // Wizard, but the nozzle dropdown is the very control that switches
+        // to that preset (and forces it visible on selection), so filtering
+        // it out here makes the size unselectable -- and disables the
+        // dropdown entirely when only one size is visible (e.g. a U1 stuck
+        // at 0.2mm with 0.4/0.6/0.8 heads available). Visible user presets
+        // are still listed as before.
+        if (preset.config.opt_string("printer_model") == printer_model
+            && (preset.is_system || preset.is_visible)) {
+            const std::string variant = preset.config.opt_string("printer_variant");
+            if (!variant.empty())
+                diameters.insert(variant);
+        }
     }
     return std::vector<std::string>{diameters.begin(), diameters.end()};
 }

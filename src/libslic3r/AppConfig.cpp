@@ -540,9 +540,18 @@ std::string AppConfig::load()
         input_stream << ifs.rdbuf();
         std::string total_string = input_stream.str();
         size_t last_pos = total_string.find_last_of('}');
-        std::string left_string = total_string.substr(0, last_pos+1);
-        //skip the "\n"
-        std::string right_string = total_string.substr(last_pos+2);
+        // A missing or empty config file (or one with no closing brace)
+        // has last_pos == npos; substr(last_pos+2) would then throw
+        // std::out_of_range, which load() does not catch (it only catches
+        // nlohmann::parse_error). Treat the file as corrupt: empty strings
+        // make json::parse() below fail, so the normal parse-error /
+        // backup-recovery path handles it.
+        std::string left_string, right_string;
+        if (last_pos != std::string::npos) {
+            left_string = total_string.substr(0, last_pos + 1);
+            //skip the "\n"
+            right_string = total_string.substr(last_pos + 2);
+        }
 
         std::string md5_str = appconfig_md5_hash_line({left_string.data()});
         // Verify the checksum of the config file without taking just for debugging purpose.
@@ -568,8 +577,14 @@ std::string AppConfig::load()
             back_input_stream << backup_ifs.rdbuf();
             std::string back_total_string = back_input_stream.str();
             size_t back_last_pos = back_total_string.find_last_of('}');
-            std::string back_left_string = back_total_string.substr(0, back_last_pos+1);
-            std::string back_right_string = back_total_string.substr(back_last_pos+2);
+            // Same guard as above: an empty backup file has no closing
+            // brace, and substr(back_last_pos+2) would throw
+            // std::out_of_range out of this catch block.
+            std::string back_left_string, back_right_string;
+            if (back_last_pos != std::string::npos) {
+                back_left_string = back_total_string.substr(0, back_last_pos + 1);
+                back_right_string = back_total_string.substr(back_last_pos + 2);
+            }
 
             std::string back_md5_str = appconfig_md5_hash_line({back_left_string.data()});
             // Verify the checksum of the config file without taking just for debugging purpose.

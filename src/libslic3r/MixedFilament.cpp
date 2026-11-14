@@ -1948,7 +1948,8 @@ void MixedFilamentManager::add_custom_filament(unsigned int component_a,
 void MixedFilamentManager::add_batch_custom_filaments(
     const std::vector<MixedFilamentBatchEntry>& entries,
     const std::vector<std::string>&             filament_colours,
-    std::vector<unsigned int>*                  out_assigned_ids)
+    std::vector<unsigned int>*                  out_assigned_ids,
+    size_t                                      reserved_headroom)
 {
     if (out_assigned_ids != nullptr) {
         out_assigned_ids->clear();
@@ -1966,7 +1967,10 @@ void MixedFilamentManager::add_batch_custom_filaments(
     const size_t kMax = MAXIMUM_FILAMENT_NUMBER;
 
     for (const auto& e : entries) {
-        if (current_total >= kMax) {
+        // GH #786: allow the transient peak up to (kMax + reserved_headroom);
+        // the caller removes reserved_headroom filaments right after this call,
+        // so the final total is still <= kMax.
+        if (current_total >= kMax + reserved_headroom) {
             if (out_assigned_ids != nullptr) out_assigned_ids->push_back(0u);
             continue;
         }

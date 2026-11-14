@@ -2899,7 +2899,32 @@ Sidebar::Sidebar(Plater *parent)
         }
         std::vector<unsigned int> assigned_ids;
         set_progress(3);
-        mgr.add_batch_custom_filaments(batch_entries, colors_vec, &assigned_ids);
+        // GH #786: the add below runs BEFORE cleanup_unused_filaments_after_batch_match
+        // frees the replaced physical filaments, so without headroom the 64-filament
+        // cap drops mixes whenever physical + mixes temporarily exceeds 64 (e.g.
+        // 33 physical + 33 mixes = 66). Compute how many physical filaments the
+        // cleanup will free (all physicals not in selected_physical_ids, with the
+        // same survivor floor as compute_redundant_filaments: at least one physical
+        // is kept) and let the add use that headroom. The final total after the
+        // cleanup below is still <= MAXIMUM_FILAMENT_NUMBER. A plain reorder
+        // (remove first, then add) is NOT safe: the remap in
+        // apply_batch_match_to_model needs the new mix ids, and deleting physicals
+        // before it would orphan the model's references to them.
+        size_t batch_headroom = 0;
+        {
+            const size_t num_physical = colors_vec.size();
+            std::vector<bool> phys_kept(num_physical + 1, false);
+            for (unsigned int id : model_result.selected_physical_ids)
+                if (id >= 1 && id <= num_physical)
+                    phys_kept[id] = true;
+            size_t kept_count = 0;
+            for (size_t i = 1; i <= num_physical; ++i)
+                if (phys_kept[i]) ++kept_count;
+            if (kept_count == 0 && num_physical >= 1)
+                kept_count = 1; // survivor floor
+            batch_headroom = num_physical - kept_count;
+        }
+        mgr.add_batch_custom_filaments(batch_entries, colors_vec, &assigned_ids, batch_headroom);
 
         // Replace dialog-computed target ids with the actual virtual ids assigned by
         // add_batch_custom_filaments.

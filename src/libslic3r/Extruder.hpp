@@ -7,6 +7,14 @@
 namespace Slic3r {
 
 class GCodeConfig;
+class ConfigBase;
+
+// Index of extruder_id in a retraction vector (retraction_length, retraction_speed,
+// deretraction_speed, retract_length_toolchange). A filament override lays these out
+// per flow-variant slot (filament_flow_step_size, e.g. 2,1,1,1 -> 5 values). Without an
+// override, for example every filament slot nil, the vector keeps the printer's one
+// value per head, and the flow-variant index would run past its end onto head 0.
+size_t retract_value_index(const ConfigBase &config, size_t value_count, unsigned int extruder_id);
 
 class Extruder
 {

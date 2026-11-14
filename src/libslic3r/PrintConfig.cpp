@@ -7891,10 +7891,17 @@ void DynamicPrintConfig::normalize_fdm(int used_filaments)
 
     if (this->has("wipe_tower_filament")) {
         // If invalid, replace with 0.
-        int extruder      = this->opt<ConfigOptionInt>("wipe_tower_filament")->value;
-        int num_extruders = this->opt<ConfigOptionFloats>("nozzle_diameter")->size();
-        if (extruder < 0 || extruder > num_extruders)
-            this->option("wipe_tower_filament")->setInt(0);
+        int extruder = this->opt<ConfigOptionInt>("wipe_tower_filament")->value;
+        // nozzle_diameter is a machine option and is absent when normalizing
+        // a bare process preset (e.g. CLI --load-settings); without it the
+        // extruder count is unknown, so skip the range check instead of
+        // dereferencing a null pointer (GH #689).
+        const ConfigOptionFloats *nozzle_diameter_opt = this->opt<ConfigOptionFloats>("nozzle_diameter");
+        if (nozzle_diameter_opt != nullptr) {
+            int num_extruders = (int) nozzle_diameter_opt->size();
+            if (extruder < 0 || extruder > num_extruders)
+                this->option("wipe_tower_filament")->setInt(0);
+        }
     }
 
     if (!this->has("solid_infill_filament") && this->has("sparse_infill_filament"))

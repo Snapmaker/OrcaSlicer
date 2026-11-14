@@ -65,8 +65,12 @@ static constexpr double LARGE_BED_THRESHOLD = 2147;
 static constexpr size_t MAXIMUM_EXTRUDER_NUMBER = 64;
 
 // Physical tool slots and virtual mixed recipes have independent limits.
-static constexpr size_t MAXIMUM_MIXED_FILAMENT_NUMBER = 256;
-static constexpr size_t MAXIMUM_FILAMENT_NUMBER       = MAXIMUM_EXTRUDER_NUMBER + MAXIMUM_MIXED_FILAMENT_NUMBER;
+// A project can be grown to at most MAXIMUM_PHYSICAL_FILAMENT_NUMBER physical filaments. Projects
+// and printers that already carry more still load, so per-extruder storage and the filament id
+// space below keep the full MAXIMUM_EXTRUDER_NUMBER range.
+static constexpr size_t MAXIMUM_PHYSICAL_FILAMENT_NUMBER = 16;
+static constexpr size_t MAXIMUM_MIXED_FILAMENT_NUMBER    = 256;
+static constexpr size_t MAXIMUM_FILAMENT_NUMBER          = MAXIMUM_EXTRUDER_NUMBER + MAXIMUM_MIXED_FILAMENT_NUMBER;
 
 // Orca: maximum line width is 5 times the nozzle diameter
 static constexpr float MAX_LINE_WIDTH_MULTIPLIER = 5;

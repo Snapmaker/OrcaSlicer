@@ -3120,7 +3120,7 @@ Sidebar::Sidebar(Plater *parent)
     ScalableButton* add_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "add_filament");
     add_btn->SetToolTip(_L("Add one filament"));
     add_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e){
-        if (p->combos_filament.size() >= MAXIMUM_EXTRUDER_NUMBER)
+        if (p->combos_filament.size() >= MAXIMUM_PHYSICAL_FILAMENT_NUMBER)
             return;
         PresetBundle* pb = wxGetApp().preset_bundle;
         if (!pb || pb->mixed_filaments.total_filaments(p->combos_filament.size()) >= MAXIMUM_FILAMENT_NUMBER)
@@ -4173,9 +4173,10 @@ void Sidebar::on_filaments_change(size_t num_filaments, bool sync_mixed)
     update_mixed_filament_panel();
     update_color_mix_panel();
 
-    // Disable add buttons when combined filament limit reached
+    // Disable add buttons when the physical or combined filament limit is reached
     if (PresetBundle *pb = wxGetApp().preset_bundle) {
-        const bool can_add = pb->mixed_filaments.total_filaments(combos_filament().size()) < MAXIMUM_FILAMENT_NUMBER;
+        const bool can_add = combos_filament().size() < MAXIMUM_PHYSICAL_FILAMENT_NUMBER &&
+                             pb->mixed_filaments.total_filaments(combos_filament().size()) < MAXIMUM_FILAMENT_NUMBER;
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
@@ -6804,9 +6805,10 @@ void Sidebar::update_color_mix_panel()
     });
     p->m_panel_color_mix_content->Refresh();
 
-    // Disable add buttons when combined filament limit reached
+    // Disable add buttons when the physical or combined filament limit is reached
     if (preset_bundle) {
-        const bool can_add = preset_bundle->mixed_filaments.total_filaments(num_physical) < MAXIMUM_FILAMENT_NUMBER;
+        const bool can_add = num_physical < MAXIMUM_PHYSICAL_FILAMENT_NUMBER &&
+                             preset_bundle->mixed_filaments.total_filaments(num_physical) < MAXIMUM_FILAMENT_NUMBER;
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
@@ -7310,7 +7312,7 @@ std::vector<unsigned int> Sidebar::get_ui_ordered_filament_ids() const
 }
 
 void Sidebar::add_filament() {
-    if (p->combos_filament.size() >= MAXIMUM_EXTRUDER_NUMBER) return;
+    if (p->combos_filament.size() >= MAXIMUM_PHYSICAL_FILAMENT_NUMBER) return;
     PresetBundle* pb = wxGetApp().preset_bundle;
     if (!pb || pb->mixed_filaments.total_filaments(p->combos_filament.size()) >= MAXIMUM_FILAMENT_NUMBER) return;
     wxColour    new_col        = Plater::get_next_color_for_filament();
@@ -7412,7 +7414,8 @@ void Sidebar::on_filaments_delete(size_t filament_id)
     }
 
     if (PresetBundle *pb = wxGetApp().preset_bundle) {
-        const bool can_add = pb->mixed_filaments.total_filaments(p->combos_filament.size()) < MAXIMUM_FILAMENT_NUMBER;
+        const bool can_add = p->combos_filament.size() < MAXIMUM_PHYSICAL_FILAMENT_NUMBER &&
+                             pb->mixed_filaments.total_filaments(p->combos_filament.size()) < MAXIMUM_FILAMENT_NUMBER;
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
@@ -8203,7 +8206,7 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
 }
 
 void Sidebar::add_custom_filament(wxColour new_col) {
-    if (p->combos_filament.size() >= MAXIMUM_EXTRUDER_NUMBER) return;
+    if (p->combos_filament.size() >= MAXIMUM_PHYSICAL_FILAMENT_NUMBER) return;
     PresetBundle* pb = wxGetApp().preset_bundle;
     if (!pb || pb->mixed_filaments.total_filaments(p->combos_filament.size()) >= MAXIMUM_FILAMENT_NUMBER) return;
 
@@ -8603,7 +8606,7 @@ void Sidebar::continue_sync_filament_dialog(bool got_machine_info, const std::st
         size_t combo_Size = p->combos_filament.size();
         if (effective_size != combo_Size) {
             if (effective_size > combo_Size &&
-                    (effective_size > MAXIMUM_EXTRUDER_NUMBER ||
+                    (effective_size > MAXIMUM_PHYSICAL_FILAMENT_NUMBER ||
                         preset_bundle->mixed_filaments.total_filaments(effective_size) >= MAXIMUM_FILAMENT_NUMBER)) {
                 effective_size = combo_Size;
             }
@@ -11079,7 +11082,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         }
 
                         int filament_size = sidebar->combos_filament().size();
-                        const int filament_limit = std::min({size, int(MAXIMUM_EXTRUDER_NUMBER), int(MAXIMUM_FILAMENT_NUMBER)});
+                        // Filaments added to cover the model's extruder ids are new ones: stay within
+                        // the physical limit. (A geometry-only project import already adopted the
+                        // file's own physical count above, which may exceed it.)
+                        const int filament_limit = std::min({size, int(MAXIMUM_PHYSICAL_FILAMENT_NUMBER), int(MAXIMUM_FILAMENT_NUMBER)});
                         while (filament_size < filament_limit) {
                             int         filament_count = filament_size + 1;
                             wxGetApp().plater()->confirm_auto_generated_gradients(filament_count);

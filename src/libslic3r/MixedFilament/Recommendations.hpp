@@ -34,7 +34,7 @@ struct MixedFilamentRecommendation
 class MixedFilamentRecommendations
 {
 public:
-    static constexpr size_t MAX_PHYSICAL_FILAMENTS = 16;
+    static constexpr size_t MAX_PHYSICAL_FILAMENTS = MAXIMUM_PHYSICAL_FILAMENT_NUMBER;
 
     MixedFilamentRecommendations(const MixedFilamentDisplayContext&          context,
                                  const std::vector<std::string>&             material_types,

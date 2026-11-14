@@ -2215,7 +2215,9 @@ void MixedFilamentDialog::update_compatibility_warning()
 
     if (!is_filament_compatible(fids)) {
         if (auto pair = find_incompatible_filament_pair(fids)) {
-            set_error(wxString::Format(_L("Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."), pair->first, pair->second));
+            // GH #878: "same type" was wrong — some different types ARE compatible
+            // (e.g. PETG mixes with PCTG). Say "compatible filaments" instead.
+            set_error(wxString::Format(_L("Filament %d and Filament %d cannot be mixed. Please select compatible filaments."), pair->first, pair->second));
         } else {
             set_error(_L("Different filament types cannot be mixed. Please correct the settings."));
         }

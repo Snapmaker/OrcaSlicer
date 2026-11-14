@@ -229,10 +229,18 @@ public:
     // If `out_assigned_ids` is non-null it is filled with one entry per input
     // `entries[i]`: the 1-based virtual filament id actually created, or 0 when
     // the entry was dropped (cap reached, or invalid components).
+    // `reserved_headroom` (GH #786): number of filaments the caller guarantees
+    // will be removed immediately after this call (e.g. the replaced physical
+    // filaments a batch match is about to clean up). The cap is applied to
+    // (current_total - reserved_headroom) so the transient peak during the add
+    // does not drop mixes that the follow-up cleanup would have made room for;
+    // the final total after that cleanup is still <= MAXIMUM_FILAMENT_NUMBER.
+    // Callers that do not remove filaments afterwards must leave it at 0.
     void add_batch_custom_filaments(
         const std::vector<MixedFilamentBatchEntry>& entries,
         const std::vector<std::string>&             filament_colours,
-        std::vector<unsigned int>*                  out_assigned_ids = nullptr);
+        std::vector<unsigned int>*                  out_assigned_ids = nullptr,
+        size_t                                      reserved_headroom = 0);
 
     // Remove all custom rows, keep auto-generated ones.
     void clear_custom_entries();

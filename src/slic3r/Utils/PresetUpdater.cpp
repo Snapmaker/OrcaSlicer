@@ -114,13 +114,17 @@ struct Update
 	bool forced_update;
 	//BBS: add directory support
 	bool is_directory {false};
+	// The "bbl" printer-config update installs Bambu printer definitions (resources/printers),
+	// not slicer presets: its payload has version.txt + printer definition JSONs and no
+	// machine/filament/process subdirectories, so it must not be validated as a preset tree.
+	bool is_printer_config {false};
 
     bool can_install{true};
 
 	Update() {}
 	//BBS: add directory support
 	//BBS: use changelog string instead of url
-	Update(fs::path &&source, fs::path &&target, const Version &version, std::string vendor, std::string changelog, std::string description, bool forced = false, bool is_dir = false, bool can_install = true)
+	Update(fs::path &&source, fs::path &&target, const Version &version, std::string vendor, std::string changelog, std::string description, bool forced = false, bool is_dir = false, bool can_install = true, bool printer_config = false)
 		: source(std::move(source))
 		, target(std::move(target))
 		, version(version)
@@ -129,6 +133,7 @@ struct Update
 		, descriptions(std::move(description))
 		, forced_update(forced)
 		, is_directory(is_dir)
+        , is_printer_config(printer_config)
         , can_install(can_install)
 	{}
 
@@ -152,6 +157,24 @@ struct Update
             auto validate_staging = [this](const fs::path &staging) -> bool {
                 if (vendor.empty())
                     return true;
+
+                if (is_printer_config) {
+                    // Printer-definition payload (resources/printers): version.txt plus the
+                    // printer definition JSONs. It has no machine/filament/process preset
+                    // subdirectories and does not depend on a vendor preset JSON, so neither
+                    // of the preset-tree checks below applies to it.
+                    if (!fs::exists(staging / "version.txt")) {
+                        BOOST_LOG_TRIVIAL(error) << Slic3r::format("Profile staging for %1% is missing version.txt", vendor);
+                        return false;
+                    }
+                    boost::system::error_code ec;
+                    for (fs::directory_iterator it(staging, ec), end; it != end && !ec; it.increment(ec)) {
+                        if (it->path().extension() == ".json")
+                            return true;
+                    }
+                    BOOST_LOG_TRIVIAL(error) << Slic3r::format("Profile staging for %1% has no printer definition files", vendor);
+                    return false;
+                }
 
                 const bool has_preset_tree = fs::exists(staging / PRESET_PRINTER_NAME) || fs::exists(staging / PRESET_FILAMENT_NAME) ||
                                              fs::exists(staging / PRESET_PRINT_NAME);
@@ -1480,7 +1503,9 @@ Updates PresetUpdater::priv::get_printer_config_updates(bool update) const
             version.comment = j["description"];
         } catch (...) {}
     }
-    updates.updates.emplace_back(std::move(resc_folder), std::move(config_folder), version, "bbl", change_log, version.comment, false, true);
+    // Printer-definition payload (resources/printers), not a preset tree: pass is_printer_config
+    // so install() validates version.txt + printer definition JSONs instead of preset subdirectories.
+    updates.updates.emplace_back(std::move(resc_folder), std::move(config_folder), version, "bbl", change_log, version.comment, false, true, true, true);
     return updates;
 }
 

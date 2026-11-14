@@ -1,4 +1,5 @@
 // Orca: WipeTower2 for all non bbl printers, support all MMU device and toolchanger.
+#include "../Extruder.hpp"
 #include "WipeTower2.hpp"
 
 #include <cassert>
@@ -1604,8 +1605,8 @@ void WipeTower2::set_extruder(size_t idx, const PrintConfig& config)
     m_used_filament_length.resize(
         std::max(m_used_filament_length.size(), idx + 1)); // makes sure that the vector is big enough so we don't have to check later
 
-    m_filpar[idx].retract_length = get_value_at(config, config.retraction_length, ConfigFlowDomain::Filament, idx);
-    m_filpar[idx].retract_speed  = get_value_at(config, config.retraction_speed, ConfigFlowDomain::Filament, idx);
+    m_filpar[idx].retract_length = config.retraction_length.get_at(retract_value_index(config, config.retraction_length.size(), idx));
+    m_filpar[idx].retract_speed  = config.retraction_speed.get_at(retract_value_index(config, config.retraction_speed.size(), idx));
     m_filpar[idx].wipe_dist = config.wipe_distance.get_at(idx);
 
     if (config.enable_tower_interface_features.value) {

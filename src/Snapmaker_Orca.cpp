@@ -6119,6 +6119,26 @@ int CLI::run(int argc, char **argv)
     return 0;
 }
 
+// Return the app-directory config folder (<exe-dir>/data_dir), creating
+// it if it does not exist. This is the portable location the GUI already
+// prefers when it exists (GUI_App::OnInit), so using it here makes the
+// CLI and the GUI share one universal config location in the install
+// folder instead of a per-user data folder, and no --datadir is needed.
+// The executable directory is resolved at runtime from the running
+// binary; no path is hardcoded.
+static std::string get_portable_data_dir()
+{
+    auto app_folder = boost::filesystem::path(wxStandardPaths::Get().GetExecutablePath().ToUTF8().data()).parent_path();
+#ifdef __APPLE__
+    // On macOS, the executable is inside the .app bundle.
+    app_folder = app_folder.parent_path().parent_path().parent_path();
+#endif
+    const boost::filesystem::path app_data_dir = app_folder / "data_dir";
+    if (!boost::filesystem::exists(app_data_dir))
+        boost::filesystem::create_directories(app_data_dir);
+    return app_data_dir.string();
+}
+
 bool CLI::setup(int argc, char **argv)
 {
     // Detect the operating system flavor after SLIC3R_LOGLEVEL is set.
@@ -6203,6 +6223,17 @@ bool CLI::setup(int argc, char **argv)
             m_config.option(optdef.first, true);
 
     set_data_dir(m_config.opt_string("datadir"));
+    if (data_dir().empty() && !m_actions.empty()) {
+        // No --datadir was given and a CLI action was requested: use the
+        // app-directory config folder, creating it if needed, so the
+        // saved-presets fallback in CLI::run loads the user's presets
+        // from the install folder instead of the built-in "Default
+        // Printer" / "Default Setting", which fails Print::validate()
+        // with -51 (GH #1184). The data dir is left empty when no CLI
+        // action was given, so a GUI startup still resolves it itself
+        // in GUI_App::OnInit.
+        set_data_dir(get_portable_data_dir());
+    }
 
     //FIXME Validating at this stage most likely does not make sense, as the config is not fully initialized yet.
     if (!validity.empty()) {

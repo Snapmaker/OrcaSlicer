@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 #include "libslic3r/Print.hpp"
 #include "libslic3r/libslic3r.h"
@@ -15,6 +16,84 @@ using namespace Slic3r::Test;
 std::regex perimeters_regex("G1 X[-0-9.]* Y[-0-9.]* E[-0-9.]* ; perimeter");
 std::regex infill_regex("G1 X[-0-9.]* Y[-0-9.]* E[-0-9.]* ; infill");
 std::regex skirt_regex("G1 X[-0-9.]* Y[-0-9.]* E[-0-9.]* ; skirt");
+
+TEST_CASE("Snapmaker 2.0 exports finalize native header metadata", "[PrintGCode][SnapmakerHeader]")
+{
+    Print print;
+    Model model;
+    print.is_BBL_printer() = false;
+    const double retraction = GENERATE(0.0, 0.8);
+    Test::init_print({TestMesh::cube_20x20x20}, print, model,
+                     {{"printer_model", "Snapmaker A350"}, {"machine_start_gcode", ""}, {"remaining_times", true},
+                      {"retraction_length", std::to_string(retraction)}, {"retract_length_toolchange", "2.5"},
+                      {"nozzle_temperature_initial_layer", "215"}, {"curr_bed_type", "High Temp Plate"},
+                      {"hot_plate_temp_initial_layer", "55"}});
+    const std::string output = Test::gcode(print);
+
+    REQUIRE(output.find(";Header Start\n;file_total_lines: ") == 0);
+    const std::string prefix = ";Header Start\n;file_total_lines: ";
+    const size_t line_count = std::stoull(output.substr(prefix.size()));
+    CHECK(line_count == static_cast<size_t>(std::count(output.begin(), output.end(), '\n')));
+    const size_t header_end = output.find(";Header End\n");
+    REQUIRE(header_end != std::string::npos);
+    const std::string header = output.substr(0, header_end + std::string(";Header End\n").size());
+    INFO(header);
+    CHECK(header_end < output.find("; HEADER_BLOCK_START\n"));
+    const size_t time = output.find(";estimated_time(s): ");
+    REQUIRE(time < header_end);
+    CHECK(std::stoull(output.substr(time + std::string(";estimated_time(s): ").size())) > 0);
+    CHECK(output.find(";layer_number: ") < header_end);
+    CHECK(output.find("_GP_SNAPMAKER_PRINTING_TIME_PLACEHOLDER") == std::string::npos);
+    auto value = [&header](const std::string& key) {
+        const std::string prefix = ";" + key + ": ";
+        const size_t pos = header.find(prefix);
+        REQUIRE(pos != std::string::npos);
+        return std::stod(header.substr(pos + prefix.size()));
+    };
+    // GcodeParser.checkParamsRequired() needs a line count AND an explicitly supplied retraction distance, including zero.
+    CHECK(value("file_total_lines") > 0);
+    CHECK_THAT(value("Extruder 0 Retraction Distance"), WithinAbs(retraction, 0.001));
+    CHECK_THAT(value("Extruder 0 Switch Retraction Distance"), WithinAbs(2.5, 0.001));
+    CHECK(value("nozzle_temperature(\xC2\xB0" "C)") == 215);
+    CHECK(value("build_plate_temperature(\xC2\xB0" "C)") == 55);
+    for (const char axis : std::string("xyz")) {
+        const std::string suffix = std::string(1, axis) + "(mm)";
+        CHECK(value("min_" + suffix) <= value("max_" + suffix));
+    }
+    CHECK_THAT(value("max_z(mm)"), WithinAbs(20.0, 0.01));
+}
+
+TEST_CASE("Snapmaker dual headers retain distinct tool retraction metadata", "[PrintGCode][SnapmakerHeader]")
+{
+    Print print;
+    Model model;
+    print.is_BBL_printer() = false;
+    Test::init_print({TestMesh::cube_20x20x20}, print, model,
+                     {{"printer_model", "Snapmaker A350 Dual"}, {"machine_start_gcode", ""},
+                      {"nozzle_diameter", "0.4,0.4"}, {"filament_diameter", "1.75,1.75"}, {"filament_type", "PLA,PLA"},
+                      {"retraction_length", "0.6,1.2"}, {"retract_length_toolchange", "2,3"},
+                      {"nozzle_temperature_initial_layer", "210,220"}});
+    const std::string output = Test::gcode(print);
+    const std::string header = output.substr(0, output.find(";Header End\n"));
+    CHECK(header.find(";Extruder 0 Retraction Distance: 0.600\n") != std::string::npos);
+    CHECK(header.find(";Extruder 1 Retraction Distance: 1.200\n") != std::string::npos);
+    CHECK(header.find(";Extruder 0 Switch Retraction Distance: 2.000\n") != std::string::npos);
+    CHECK(header.find(";Extruder 1 Switch Retraction Distance: 3.000\n") != std::string::npos);
+    CHECK(header.find(";nozzle_temperature(\xC2\xB0" "C): 210\n") != std::string::npos);
+    CHECK(header.find(";nozzle_1_temperature(\xC2\xB0" "C): 220\n") != std::string::npos);
+}
+
+TEST_CASE("Other Snapmaker models do not acquire the SM2 header", "[PrintGCode][SnapmakerHeader]")
+{
+    Print print;
+    Model model;
+    print.is_BBL_printer() = false;
+    const std::string printer_model = GENERATE("Snapmaker U1", "Snapmaker Artisan");
+    Test::init_print({TestMesh::cube_20x20x20}, print, model, {{"printer_model", printer_model}, {"machine_start_gcode", ""}});
+    const std::string output = Test::gcode(print);
+    CHECK(output.find(";Header Start\n") == std::string::npos);
+    CHECK(output.find(";Extruder 0 Retraction Distance:") == std::string::npos);
+}
 
 SCENARIO( "PrintGCode basic functionality", "[PrintGCode]") {
     GIVEN("A default configuration and a print test object") {

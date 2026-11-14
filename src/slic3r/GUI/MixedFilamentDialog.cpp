@@ -24,6 +24,7 @@
 #include <wx/wrapsizer.h>
 
 #include <algorithm>
+#include <functional>
 #include <numeric>
 #include <utility>
 #include <set>
@@ -127,6 +128,239 @@ private:
     }
 
     void on_capture_lost(wxMouseCaptureLostEvent&) { m_dragging = false; }
+};
+
+// ---------------------------------------------------------------------------
+// Recommendation swatches, all drawn by one window
+// ---------------------------------------------------------------------------
+// The grid is rebuilt on every mode switch and offers a swatch for each pair and triple of
+// filaments: hundreds with ten filaments, thousands at the physical limit. As one child
+// window each they took about a millisecond apiece to create and nearly half that to
+// destroy, which is what made switching modes lag. Here a swatch is a rectangle: laid out
+// when the grid is filled, sampled and painted only when it scrolls into view.
+class MixedSwatchGrid : public wxPanel
+{
+public:
+    struct Swatch
+    {
+        MixedFilament         mf;              // display_color of a solid swatch, or the gradient recipe
+        wxString              tooltip;
+        int                   min_weight{100}; // smallest component share, for set_min_weight()
+        std::function<void()> activate;        // run on click
+    };
+    struct Group
+    {
+        wxString            title;             // empty: no heading above the swatches
+        std::vector<Swatch> swatches;
+    };
+
+    explicit MixedSwatchGrid(wxWindow* parent) : wxPanel(parent, wxID_ANY)
+    {
+        SetBackgroundStyle(wxBG_STYLE_PAINT);
+        Bind(wxEVT_PAINT, [this](wxPaintEvent&) { paint(); });
+        Bind(wxEVT_SIZE, [this](wxSizeEvent& e) {
+            if (GetClientSize().x != m_laid_out_width)
+                layout();
+            e.Skip();
+        });
+        Bind(wxEVT_MOTION, [this](wxMouseEvent& e) { hover(cell_at(e.GetPosition())); });
+        Bind(wxEVT_LEAVE_WINDOW, [this](wxMouseEvent&) { hover(NONE); });
+        Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e) {
+            const size_t hit = cell_at(e.GetPosition());
+            if (hit == NONE)
+                return;
+            // Copied first: the handler may refill the grid and with it this cell.
+            const std::function<void()> activate = m_cells[hit].swatch.activate;
+            if (activate)
+                activate();
+        });
+    }
+
+    // Replace the content. Every swatch is shown until set_min_weight() filters them.
+    void set_groups(std::vector<Group> groups, const MixedFilamentDisplayContext& context)
+    {
+        m_context = context;
+        m_cells.clear();
+        m_titles.clear();
+        m_min_weight = 0;
+        hover(NONE);
+        for (Group& group : groups) {
+            for (Swatch& swatch : group.swatches)
+                m_cells.push_back(Cell{std::move(swatch), m_titles.size()});
+            m_titles.push_back(std::move(group.title));
+        }
+        layout();
+    }
+
+    // Hide the swatches whose smallest component share is below `min_weight` and close the gaps.
+    void set_min_weight(int min_weight)
+    {
+        m_min_weight = min_weight;
+        hover(NONE);
+        layout();
+    }
+
+private:
+    static constexpr size_t NONE    = size_t(-1);
+    static constexpr int    COLUMNS = 10;
+    static constexpr int    SIZE    = 24; // DIP, as the badges this replaces
+    static constexpr int    GAP     = 6;
+
+    struct Cell
+    {
+        Swatch                swatch;
+        size_t                group{0};
+        wxRect                rect;           // empty while filtered out
+        bool                  sampled{false}; // colors below are valid
+        wxColour              solid;
+        std::vector<wxColour> gradient;       // bottom to top; empty for a solid swatch
+    };
+
+    static wxFont title_font() { return Label::Body_12.Bold(); }
+
+    // Same arrangement the per-swatch windows had in their grid sizers: rows of ten columns
+    // that share the panel's width, a heading and a gap around each titled group.
+    void layout()
+    {
+        const int size = FromDIP(SIZE), gap = FromDIP(GAP);
+        // The card is a little narrower than ten swatches and their gaps, so the columns
+        // close up slightly; a swatch stays centered in its column.
+        const int natural = COLUMNS * size + (COLUMNS - 1) * gap;
+        const int width   = GetClientSize().x > 0 ? GetClientSize().x : natural;
+        const int column_width = (width - (COLUMNS - 1) * gap) / COLUMNS;
+        const int inset        = (column_width - size) / 2;
+        m_laid_out_width       = width;
+        int       title_height = 0;
+        {
+            wxClientDC dc(this);
+            dc.SetFont(title_font());
+            // One pixel more than the text, the height a wxStaticText heading takes.
+            title_height = dc.GetCharHeight() + 1;
+        }
+        m_title_y.assign(m_titles.size(), -1);
+        int    y = 0, column = 0;
+        size_t group = NONE;
+        const auto close_group = [&]() {
+            if (group == NONE)
+                return;
+            y += size;
+            if (!m_titles[group].empty())
+                y += FromDIP(12);
+            column = 0;
+        };
+        for (Cell& cell : m_cells) {
+            cell.rect = wxRect();
+            if (cell.swatch.min_weight < m_min_weight)
+                continue;
+            if (cell.group != group) {
+                close_group();
+                group = cell.group;
+                if (!m_titles[group].empty()) {
+                    m_title_y[group] = y;
+                    y += title_height + FromDIP(8);
+                }
+            }
+            if (column == COLUMNS) {
+                y += size + gap;
+                column = 0;
+            }
+            cell.rect = wxRect(column * (column_width + gap) + inset, y, size, size);
+            ++column;
+        }
+        close_group();
+        // The height does not depend on the width, so a resize never changes the minimum size.
+        SetMinSize(wxSize(natural, y));
+        InvalidateBestSize();
+        Refresh();
+    }
+
+    size_t cell_at(const wxPoint& point) const
+    {
+        for (size_t i = 0; i < m_cells.size(); ++i)
+            if (m_cells[i].rect.Contains(point))
+                return i;
+        return NONE;
+    }
+
+    void hover(size_t cell)
+    {
+        if (cell == m_hovered)
+            return;
+        m_hovered = cell;
+        if (cell == NONE)
+            UnsetToolTip();
+        else
+            SetToolTip(m_cells[cell].swatch.tooltip);
+    }
+
+    void paint()
+    {
+        wxPaintDC    window_dc(this);
+        const wxRect dirty = GetUpdateRegion().GetBox();
+        if (dirty.IsEmpty())
+            return;
+        // Buffer only what is being repainted: the grid can be far taller than its viewport.
+        wxBitmap   buffer(dirty.GetSize());
+        wxMemoryDC dc(buffer);
+        dc.SetDeviceOrigin(-dirty.x, -dirty.y);
+        dc.SetBrush(wxBrush(GetBackgroundColour()));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.DrawRectangle(dirty);
+
+        dc.SetFont(title_font());
+        dc.SetTextForeground(MFDTheme::muted_text());
+        for (size_t group = 0; group < m_titles.size(); ++group)
+            if (m_title_y[group] >= 0)
+                dc.DrawText(m_titles[group], 0, m_title_y[group]);
+        for (Cell& cell : m_cells)
+            if (cell.rect.Intersects(dirty))
+                draw(dc, cell);
+
+        dc.SetDeviceOrigin(0, 0);
+        window_dc.Blit(dirty.GetPosition(), dirty.GetSize(), &dc, wxPoint(0, 0));
+    }
+
+    // Drawn the way MixedFilamentBadge draws a swatch without a number.
+    void draw(wxDC& dc, Cell& cell)
+    {
+        if (!cell.sampled) {
+            cell.sampled = true;
+            cell.solid   = parse_mixed_color(cell.swatch.mf.display_color);
+            if (is_layer_gradient(cell.swatch.mf))
+                for (int i = 0; i <= 64; ++i)
+                    cell.gradient.emplace_back(mixed_gradient_display_color(cell.swatch.mf, m_context, double(i) / 64.0));
+        }
+        const wxRect& rect  = cell.rect;
+        const auto    light = [](const wxColour& c) { return c.Red() > 224 && c.Green() > 224 && c.Blue() > 224; };
+        bool          border;
+        if (cell.gradient.size() >= 2) {
+            for (int y = rect.GetBottom(); y >= rect.GetTop(); --y) {
+                const double pos = double(rect.GetBottom() - y) / double(rect.GetHeight());
+                dc.SetPen(wxPen(interpolate_color(cell.gradient, pos)));
+                dc.DrawLine(rect.GetLeft(), y, rect.GetLeft() + rect.GetWidth(), y);
+            }
+            border = light(cell.gradient[0]) && light(cell.gradient[1]);
+        } else {
+            dc.SetBrush(wxBrush(cell.solid));
+            dc.SetPen(*wxTRANSPARENT_PEN);
+            dc.DrawRectangle(rect);
+            border = light(cell.solid);
+        }
+        // Very light swatches get an outline so they do not vanish into a light card.
+        if (border) {
+            dc.SetPen(*wxGREY_PEN);
+            dc.SetBrush(*wxTRANSPARENT_BRUSH);
+            dc.DrawRectangle(rect);
+        }
+    }
+
+    MixedFilamentDisplayContext m_context;
+    std::vector<Cell>           m_cells;
+    std::vector<wxString>       m_titles;  // one per group
+    std::vector<int>            m_title_y; // -1 while the group has nothing to show
+    int                         m_min_weight{0};
+    int                         m_laid_out_width{-1}; // client width the columns were spread over
+    size_t                      m_hovered{NONE};
 };
 
 // ---------------------------------------------------------------------------
@@ -1208,8 +1442,7 @@ void MixedFilamentDialog::build_ui()
         swatch_title->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_swatch_card_sizer->Add(swatch_title, 0, wxALL, FromDIP(16));
 
-        m_swatch_grid_panel = new wxPanel(m_swatch_card, wxID_ANY, wxDefaultPosition,
-                                          wxDefaultSize);
+        m_swatch_grid_panel = new MixedSwatchGrid(m_swatch_card);
         m_swatch_grid_panel->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         build_swatch_grid();
         m_swatch_card_sizer->Add(m_swatch_grid_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
@@ -1900,10 +2133,8 @@ void MixedFilamentDialog::rebuild_filament_rows()
     update_ratio_or_tri_visibility();
     rebuild_legend();
 
-    if (m_swatch_grid_panel) {
-        m_swatch_grid_panel->DestroyChildren();
+    if (m_swatch_grid_panel)
         build_swatch_grid();
-    }
 
     // Refresh card containers so backgrounds repaint after child changes
     if (m_filament_card) {
@@ -2858,16 +3089,12 @@ void MixedFilamentDialog::build_swatch_grid()
     }
 
     m_swatch_min_weights.clear();
-    auto*        groups      = new wxBoxSizer(wxVERTICAL);
-    wxGridSizer* grid        = nullptr;
-    int          group_count = 0;
-    const bool   grouped     = m_current_mode == MODE_RATIO || m_current_mode == MODE_GRADIENT;
-    if (!grouped) {
-        grid = new wxGridSizer(10, FromDIP(6), FromDIP(6));
-        groups->Add(grid, 0, wxEXPAND);
-    }
+    std::vector<MixedSwatchGrid::Group> groups;
+    int                                 group_count = 0;
+    const bool                          grouped     = m_current_mode == MODE_RATIO || m_current_mode == MODE_GRADIENT;
+    if (!grouped)
+        groups.emplace_back();
 
-    int badge_idx = 0;
     for (const auto& cand : candidates) {
         {
             std::vector<unsigned int> fids;
@@ -2878,16 +3105,11 @@ void MixedFilamentDialog::build_swatch_grid()
         }
 
         if (grouped && group_count != cand.n_rows) {
-            group_count          = cand.n_rows;
-            const wxString title = m_current_mode == MODE_GRADIENT ?
-                                       (group_count == 2 ? _L("2-Material Gradients") : _L("3-Material Gradients")) :
-                                       (group_count == 2 ? _L("2-Material Mixes") : _L("3-Material Mixes"));
-            auto*          label = new wxStaticText(m_swatch_grid_panel, wxID_ANY, title);
-            label->SetFont(Label::Body_12.Bold());
-            MFDTheme::apply_text(label, MFDTheme::muted_text());
-            groups->Add(label, 0, wxBOTTOM, FromDIP(8));
-            grid = new wxGridSizer(10, FromDIP(6), FromDIP(6));
-            groups->Add(grid, 0, wxEXPAND | wxBOTTOM, FromDIP(12));
+            group_count = cand.n_rows;
+            groups.emplace_back();
+            groups.back().title = m_current_mode == MODE_GRADIENT ?
+                                      (group_count == 2 ? _L("2-Material Gradients") : _L("3-Material Gradients")) :
+                                      (group_count == 2 ? _L("2-Material Mixes") : _L("3-Material Mixes"));
         }
 
         MixedFilament mf;
@@ -2907,10 +3129,11 @@ void MixedFilamentDialog::build_swatch_grid()
             mf.display_color = wxString::Format("#%02X%02X%02X", cand.color.Red(), cand.color.Green(), cand.color.Blue()).ToStdString();
         }
 
-        auto* badge = new MixedFilamentBadge(m_swatch_grid_panel, wxID_ANY, ++badge_idx, mf, display_context, false, 24);
-        badge->SetToolTip(cand.tooltip);
+        MixedSwatchGrid::Swatch swatch;
+        swatch.mf      = mf;
+        swatch.tooltip = cand.tooltip;
 
-        badge->Bind(wxEVT_BUTTON, [this, cand](wxCommandEvent&) {
+        swatch.activate = [this, cand]() {
             if (m_current_mode == MODE_MATCH) {
                 // Directly update tri picker with preset config (no target update, no recipe search)
                 if (cand.n_rows >= 3) {
@@ -2978,7 +3201,7 @@ void MixedFilamentDialog::build_swatch_grid()
                 self->m_scrolled_content->FitInside();
                 self->Layout();
             });
-        });
+        };
 
         // Single-filament badges are always visible regardless of the min-mix slider.
         int min_w = 100;
@@ -2988,40 +3211,22 @@ void MixedFilamentDialog::build_swatch_grid()
             min_w = static_cast<int>(std::min({cand.wx, cand.wy, cand.wz}) * 100.0 + 0.5);
         // n_rows == 1 or unknown: badge is always visible (sentinel 100).
         m_swatch_min_weights.push_back(min_w);
+        swatch.min_weight = min_w;
 
-        grid->Add(badge, 0, wxALIGN_CENTER);
+        groups.back().swatches.push_back(std::move(swatch));
     }
 
-    m_swatch_grid_panel->SetSizer(groups);
-    m_swatch_grid_panel->Layout();
+    m_swatch_grid_panel->set_groups(std::move(groups), display_context);
 }
 
 /**
- * Rebuild the swatch grid sizer in match mode without recreating widgets.
- * Hides badges whose minimum component weight falls below m_match_min_pct
- * and reflows the remaining visible badges into a new grid sizer.
+ * Apply the match-mode minimum ratio to the swatch grid: swatches whose smallest
+ * component weight falls below m_match_min_pct are hidden and the rest close up.
  */
 void MixedFilamentDialog::rebuild_swatch_sizer()
 {
     if (m_current_mode != MODE_MATCH) return;
-    auto& children = m_swatch_grid_panel->GetChildren();
-
-    // Guard: the grid panel children must correspond 1:1 with swatch badges.
-    if (children.size() != m_swatch_min_weights.size()) return;
-
-    const int cols = 10;
-    auto* new_grid = new wxGridSizer(cols, FromDIP(6), FromDIP(6));
-    for (size_t i = 0; i < children.size() && i < m_swatch_min_weights.size(); ++i) {
-        bool visible = m_swatch_min_weights[i] >= m_match_min_pct;
-        children[i]->Show(visible);
-        if (visible)
-            new_grid->Add(children[i], 0, wxALIGN_CENTER);
-    }
-
-    // SetSizer replaces and auto-deletes the old sizer.
-    // Windows survive because Add() defaults to no ownership.
-    m_swatch_grid_panel->SetSizer(new_grid);
-    m_swatch_grid_panel->Layout();
+    m_swatch_grid_panel->set_min_weight(m_match_min_pct);
     m_swatch_card->Layout();
     m_swatch_card->Refresh();
     m_scrolled_content->FitInside();

@@ -28,6 +28,7 @@ class MixedGradientSelector;
 class MixedGradientStops;
 class MixedColorMatchPanel;
 class MatchRangeSlider;
+class MixedSwatchGrid;
 
 // Rendered color field of a triangle picker. Predicting it takes thousands of blends, far
 // too slow to repeat on every paint, so it is kept until what it was rendered from changes.
@@ -98,7 +99,7 @@ private:
     wxSizerItem*            m_ratio_tri_spacer      = nullptr;
     wxPanel*                m_strip_panel         = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
-    wxPanel*                m_swatch_grid_panel   = nullptr;
+    MixedSwatchGrid*        m_swatch_grid_panel   = nullptr;
     wxStaticText*                           m_swatch_title          = nullptr;
     std::vector<int>         m_swatch_min_weights;
     wxPanel*                m_error_panel           = nullptr;

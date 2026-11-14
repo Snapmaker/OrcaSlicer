@@ -932,7 +932,10 @@ void MixedFilamentDialog::build_ui()
                     slot = m_filament_rows.size() - 1 - slot;
                 on_filament_selection_changed(slot, filament_index);
             });
-        m_gradient_effect_card_sizer->Add(m_gradient_stops, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
+        // The editor insets its bar by 12 so the end stops' circles fit; a 4 margin here puts
+        // the bar and the fields on the card's 16 content edge, in line with the title.
+        m_gradient_effect_card_sizer->Add(m_gradient_stops, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(4));
+        m_gradient_effect_card_sizer->AddSpacer(FromDIP(4));
 
         auto *preview_labels = new wxBoxSizer(wxHORIZONTAL);
         for (const auto& text : {_L("Layered"), _L("Blended")}) {

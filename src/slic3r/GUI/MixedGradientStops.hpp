@@ -5,13 +5,13 @@
 #include "MFDTheme.hpp"
 #include "Widgets/ComboBox.hpp"
 #include "Widgets/Label.hpp"
+#include "Widgets/TextInput.hpp"
 #include "wxExtensions.hpp"
 #include <wx/stattext.h>
 #include <wx/sizer.h>
 #include <wx/dcbuffer.h>
 #include <wx/panel.h>
 #include <wx/textctrl.h>
-#include <wx/slider.h>
 #include <wx/graphics.h>
 #include <algorithm>
 #include <cmath>
@@ -19,6 +19,116 @@
 #include <memory>
 
 namespace Slic3r::GUI {
+
+// Slider drawn in the dialog's own style (same look as MatchRangeSlider in
+// MixedFilamentDialog.cpp). The native trackbar ignores the dark theme.
+// Mirrors the part of the wxSlider interface the stop editor uses.
+class MixedGradientGapSlider : public wxPanel
+{
+public:
+    MixedGradientGapSlider(wxWindow* parent, int value, int min_value, int max_value)
+        : wxPanel(parent, wxID_ANY), m_min(min_value), m_max(std::max(min_value, max_value))
+    {
+        m_value = std::clamp(value, m_min, m_max);
+        SetMinSize(wxSize(FromDIP(60), FromDIP(22)));
+        SetBackgroundStyle(wxBG_STYLE_PAINT);
+        MFDTheme::apply_window(this);
+        Bind(wxEVT_PAINT, [this](wxPaintEvent&) { paint(); });
+        Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent& e) {
+            m_dragging = true;
+            if (!HasCapture())
+                CaptureMouse();
+            change(value_from_x(e.GetX()));
+        });
+        Bind(wxEVT_MOTION, [this](wxMouseEvent& e) {
+            if (m_dragging)
+                change(value_from_x(e.GetX()));
+        });
+        Bind(wxEVT_LEFT_UP, [this](wxMouseEvent&) {
+            m_dragging = false;
+            if (HasCapture())
+                ReleaseMouse();
+        });
+        Bind(wxEVT_MOUSE_CAPTURE_LOST, [this](wxMouseCaptureLostEvent&) { m_dragging = false; });
+    }
+    ~MixedGradientGapSlider() override
+    {
+        if (HasCapture())
+            ReleaseMouse();
+    }
+
+    int  GetValue() const { return m_value; }
+    int  GetMax() const { return m_max; }
+    void SetRange(int min_value, int max_value)
+    {
+        m_min   = min_value;
+        m_max   = std::max(min_value, max_value);
+        m_value = std::clamp(m_value, m_min, m_max);
+        Refresh();
+    }
+    void SetValue(int value)
+    {
+        m_value = std::clamp(value, m_min, m_max);
+        Refresh();
+    }
+
+private:
+    int value_from_x(int x) const
+    {
+        const double thumb = FromDIP(12);
+        const double track = std::max(1.0, GetClientSize().x - thumb);
+        return m_min + int(std::lround((x - thumb / 2.0) / track * (m_max - m_min)));
+    }
+    // Only a change made by the user is reported; SetValue() stays silent.
+    void change(int value)
+    {
+        value = std::clamp(value, m_min, m_max);
+        if (value == m_value)
+            return;
+        m_value = value;
+        Refresh();
+        wxCommandEvent event(wxEVT_SLIDER, GetId());
+        event.SetEventObject(this);
+        event.SetInt(m_value);
+        ProcessWindowEvent(event);
+    }
+    void paint()
+    {
+        wxAutoBufferedPaintDC dc(this);
+        dc.SetBackground(wxBrush(MFDTheme::card_background()));
+        dc.Clear();
+        std::unique_ptr<wxGraphicsContext> gc(wxGraphicsContext::Create(dc));
+        if (!gc)
+            return;
+        gc->SetAntialiasMode(wxANTIALIAS_DEFAULT);
+        const double   scale    = FromDIP(100) / 100.0;
+        const wxSize   size     = GetClientSize();
+        const double   thumb    = 12.0 * scale;
+        const double   track_h  = 3.0 * scale;
+        const double   track_x  = thumb / 2.0;
+        const double   track_w  = std::max(1.0, size.x - thumb);
+        const double   track_y  = (size.y - track_h) / 2.0;
+        const double   fraction = m_max > m_min ? double(m_value - m_min) / double(m_max - m_min) : 0.0;
+        const wxColour accent   = StateColor::darkModeColorFor(wxColour("#009688"));
+        gc->SetPen(*wxTRANSPARENT_PEN);
+        gc->SetBrush(wxBrush(StateColor::darkModeColorFor(wxColour("#EBEBEB"))));
+        gc->DrawRoundedRectangle(track_x, track_y, track_w, track_h, track_h / 2.0);
+        if (fraction > 0.0) {
+            // Never narrower than its own corner rounding; the thumb covers the difference.
+            gc->SetBrush(wxBrush(accent));
+            gc->DrawRoundedRectangle(track_x, track_y, std::max(track_w * fraction, track_h), track_h, track_h / 2.0);
+        }
+        const double radius = thumb / 2.0 - scale;
+        gc->SetBrush(*wxWHITE_BRUSH);
+        gc->SetPen(wxPen(accent, std::max(1, int(std::lround(1.5 * scale)))));
+        gc->DrawEllipse(track_x + track_w * fraction - radius, size.y / 2.0 - radius, 2.0 * radius, 2.0 * radius);
+    }
+
+    int  m_value{0};
+    int  m_min{0};
+    int  m_max{100};
+    bool m_dragging{false};
+};
 
 // The recipe and predictor are supplied by the dialog so this control does not
 // keep a second copy of the selected materials or calibration.
@@ -56,51 +166,52 @@ public:
         }
         m_filament_combo->SetToolTip(
             _L("Choose a filament for the selected color stop. Selecting a filament already in use swaps the two stops."));
-        sizer->Add(m_filament_combo, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
+        // The rows below share the bar's side inset, so their edges line up with it.
+        const int side = FromDIP(12);
+        // Nested so the gap under the combo disappears with it when a transition is selected.
+        auto* combo_row = new wxBoxSizer(wxVERTICAL);
+        combo_row->Add(m_filament_combo, 0, wxEXPAND | wxBOTTOM, FromDIP(8));
+        sizer->Add(combo_row, 0, wxEXPAND | wxLEFT | wxRIGHT, side);
         m_filament_combo->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent&) {
             const int selected = m_filament_combo->GetSelection();
             if (m_selected % 2 == 0 && selected != wxNOT_FOUND && m_filament_changed)
                 m_filament_changed(m_selected / 2, selected);
         });
+        // One row for both numbers: position on the left, solid width against the right edge,
+        // directly above the gap field.
         auto* row        = new wxBoxSizer(wxHORIZONTAL);
-        m_position_label = label(_L("Position:"));
-        row->Add(m_position_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
-        m_position = input("0.0");
-        m_position->Disable();
-        row->Add(m_position, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
-        row->Add(label("%"), 0, wxALIGN_CENTER_VERTICAL);
-        sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
+        m_position_label = label(this, _L("Position:"));
+        row->Add(m_position_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+        m_position_box = input(this, "0.0");
+        m_position     = m_position_box->GetTextCtrl();
+        m_position_box->Enable(false);
+        row->Add(m_position_box, 0, wxALIGN_CENTER_VERTICAL);
+        row->AddStretchSpacer();
         m_width_panel = new wxPanel(this);
         MFDTheme::apply_window(m_width_panel);
-        auto* width_row   = new wxBoxSizer(wxHORIZONTAL);
-        auto* width_label = new wxStaticText(m_width_panel, wxID_ANY, _L("Solid-color width:"));
-        width_label->SetFont(::Label::Body_14);
-        MFDTheme::apply_text(width_label);
-        m_width = new wxTextCtrl(m_width_panel, wxID_ANY, "3.0", wxDefaultPosition, wxSize(FromDIP(40), -1), wxTE_PROCESS_ENTER);
-        m_width->SetFont(::Label::Body_14);
-        MFDTheme::apply_input(m_width);
-        auto* width_unit = new wxStaticText(m_width_panel, wxID_ANY, "%");
-        width_unit->SetFont(::Label::Body_14);
-        MFDTheme::apply_text(width_unit);
-        width_row->Add(width_label, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
-        width_row->Add(m_width, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
-        width_row->Add(width_unit, 0, wxALIGN_CENTER_VERTICAL);
+        auto* width_row = new wxBoxSizer(wxHORIZONTAL);
+        // Shortened from "Solid-color width:" so both fields fit one row.
+        width_row->Add(label(m_width_panel, _L("Solid width:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(6));
+        auto* width_box = input(m_width_panel, "3.0");
+        m_width         = width_box->GetTextCtrl();
+        width_row->Add(width_box, 0, wxALIGN_CENTER_VERTICAL);
         m_width_panel->SetSizer(width_row);
         m_width_panel->SetToolTip(
             _L("Width of this solid color as a percentage of the complete gradient. Drag the square handles below the bar to adjust it."));
-        sizer->Add(m_width_panel, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
+        row->Add(m_width_panel, 0, wxALIGN_CENTER_VERTICAL);
         m_width_panel->Hide();
+        sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, side);
+        // The minimum gap still limits how close two handles can be dragged, at DEFAULT_GAP,
+        // but its row is not shown. SHOW_GAP_ROW brings the controls back.
         auto* gap_row = new wxBoxSizer(wxHORIZONTAL);
-        gap_row->Add(label(_L("Min Stop Gap:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
-        m_gap_slider = new wxSlider(this, wxID_ANY, 10, 0, 50);
-        m_gap_slider->SetTickFreq(10);
-        m_gap_slider->SetMinSize(wxSize(FromDIP(60), -1));
-        MFDTheme::apply_window(m_gap_slider);
+        gap_row->Add(label(this, _L("Min Stop Gap:")), 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
+        m_gap_slider = new MixedGradientGapSlider(this, DEFAULT_GAP, 0, 50);
         gap_row->Add(m_gap_slider, 1, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
-        m_gap = input("10");
-        gap_row->Add(m_gap, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
-        gap_row->Add(label("%"), 0, wxALIGN_CENTER_VERTICAL);
-        sizer->Add(gap_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
+        auto* gap_box = input(this, wxString::Format("%d", DEFAULT_GAP));
+        m_gap         = gap_box->GetTextCtrl();
+        gap_row->Add(gap_box, 0, wxALIGN_CENTER_VERTICAL);
+        sizer->Add(gap_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, side);
+        sizer->Show(gap_row, SHOW_GAP_ROW, true);
         SetSizer(sizer);
         auto position_changed = [this](wxEvent& event) {
             double     pct;
@@ -211,7 +322,9 @@ public:
     {
         const auto stops   = mixed_gradient_stops(m_recipe(), m_context.num_physical);
         const int  max_gap = stops.size() > 1 ? int(100 / (stops.size() - 1)) : 50;
-        const int  gap     = std::min(m_gap_slider->GetValue(), max_gap);
+        // With the row hidden nothing can raise the gap again after more colors lowered it,
+        // so it is taken from the default each time instead of from its last value.
+        const int gap = std::min(SHOW_GAP_ROW ? m_gap_slider->GetValue() : DEFAULT_GAP, max_gap);
         m_gap_slider->SetRange(0, max_gap);
         m_gap_slider->SetValue(gap);
         m_gap->ChangeValue(wxString::Format("%d", gap));
@@ -220,19 +333,22 @@ public:
     }
 
 private:
-    wxStaticText* label(const wxString& text)
+    static constexpr bool SHOW_GAP_ROW = false; // the "Min Stop Gap" slider and field
+    static constexpr int  DEFAULT_GAP  = 10;    // percent of the gradient
+
+    wxStaticText* label(wxWindow* parent, const wxString& text)
     {
-        auto* result = new wxStaticText(this, wxID_ANY, text);
-        result->SetFont(::Label::Body_14);
+        auto* result = new wxStaticText(parent, wxID_ANY, text);
+        result->SetFont(::Label::Body_13);
         MFDTheme::apply_text(result);
         return result;
     }
-    wxTextCtrl* input(const wxString& text)
+    // The application's own themed field, with the unit drawn inside it.
+    TextInput* input(wxWindow* parent, const wxString& text)
     {
-        auto* result = new wxTextCtrl(this, wxID_ANY, text, wxDefaultPosition, wxDefaultSize, wxTE_PROCESS_ENTER);
-        result->SetFont(::Label::Body_14);
-        result->SetMinSize(wxSize(FromDIP(40), -1));
-        MFDTheme::apply_input(result);
+        const wxSize size(FromDIP(70), FromDIP(26));
+        auto*        result = new TextInput(parent, text, "%", "", wxDefaultPosition, size, wxTE_PROCESS_ENTER);
+        result->SetMinSize(size);
         return result;
     }
     void sync_position()
@@ -262,7 +378,7 @@ private:
         }
         m_position_label->SetLabel(m_selected % 2 != 0 ? _L("Position (relative):") : _L("Position:"));
         m_position->ChangeValue(wxString::Format("%.1f", position * 100.0));
-        m_position->Enable(m_selected > 0 && m_selected + 1 < stops.size());
+        m_position_box->Enable(m_selected > 0 && m_selected + 1 < stops.size());
         const bool interior           = m_selected > 0 && m_selected + 1 < stops.size() && m_selected % 2 == 0;
         changed_visibility            = changed_visibility || m_width_panel->IsShown() != interior;
         m_width_panel->Show(interior);
@@ -418,13 +534,14 @@ private:
     std::vector<wxString>                          m_filament_names;
     std::function<void(size_t, int)>               m_filament_changed;
     ComboBox*                                      m_filament_combo{nullptr};
+    TextInput*                                     m_position_box{nullptr};
     wxPanel*                                       m_width_panel{nullptr};
     wxTextCtrl*                                    m_width{nullptr};
     int                                            m_width_edge{0};
     wxPanel*                                       m_canvas{nullptr};
     wxStaticText*                                  m_position_label{nullptr};
     wxTextCtrl *                                   m_position{nullptr}, *m_gap{nullptr};
-    wxSlider*                                      m_gap_slider{nullptr};
+    MixedGradientGapSlider*                        m_gap_slider{nullptr};
     size_t                                         m_selected{0};
     bool                                           m_dragging{false};
 };

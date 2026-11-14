@@ -4607,7 +4607,14 @@ void PrintConfigDef::init_fff_params()
                      "This is enabled automatically with Subdivide Mix Layer. Turn it off to keep infill on the normal layer height.\n\n"
                      "It can improve internal color mixing, but may add toolchanges and affect infill behavior.");
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionBool(false));
+    // GH #717: default true so the tooltip holds on every route, not just the
+    // GUI toggle handler (Tab::on_value_change auto-enables this when SML is
+    // turned on, but the CLI never runs that handler, so a gradient sliced
+    // from the CLI kept its infill at a flat 1:1 mix and the whole-object
+    // gradient came out ~50/50 instead of the requested ramp). The option
+    // only takes effect while Subdivide Mix Layer is on, and the user can
+    // still turn it off explicitly to keep infill on the normal layer height.
+    def->set_default_value(new ConfigOptionBool(true));
 
     def = this->add("dithering_local_z_direct_multicolor", coBool);
     def->label = L("Use direct multicolor Local-Z solver");

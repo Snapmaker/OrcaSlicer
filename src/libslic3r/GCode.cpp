@@ -2626,6 +2626,12 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
 
     m_enable_cooling_markers = true;
     this->apply_print_config(print.config());
+    // Small area flow compensation is a region option, so it is not set by apply_print_config().
+    // Apply the default object/region configs here so the compensator creation check below sees the
+    // user's setting (upstream OrcaSlicer 2.4.2 does the same). Without this, m_config still holds
+    // the default (off) and the compensator is never created even when the option is enabled.
+    m_config.apply(print.default_object_config());
+    m_config.apply(print.default_region_config());
 
     // m_volumetric_speed = DoExport::autospeed_volumetric_limit(print);
     print.throw_if_canceled();

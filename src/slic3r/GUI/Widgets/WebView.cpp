@@ -1,6 +1,7 @@
 #include "WebView.hpp"
 #include "slic3r/GUI/GUI_App.hpp"
 #include "slic3r/Utils/MacDarkMode.hpp"
+#include "libslic3r/Utils.hpp" // GH #984: Slic3r::data_dir() for the cookie database path
 
 #include <algorithm>
 #include <boost/log/trivial.hpp>
@@ -32,9 +33,19 @@
 #include <slic3r/Utils/Http.hpp>
 #elif defined __linux__
 #include <gtk/gtk.h>
+#include <boost/filesystem.hpp>
 #define WEBKIT_API
 struct WebKitWebView;
+struct WebKitWebContext;
+struct WebKitCookieManager;
 struct WebKitJavascriptResult;
+// WebKitCookiePersistentStorage (webkit2/webkit-web-context.h):
+//   WEBKIT_COOKIE_PERSISTENT_STORAGE_TEXT   = 0
+//   WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE = 1
+typedef enum {
+    WEBKIT_COOKIE_PERSISTENT_STORAGE_TEXT   = 0,
+    WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE = 1
+} WebKitCookiePersistentStorage;
 extern "C" {
 WEBKIT_API void
 webkit_web_view_run_javascript                       (WebKitWebView             *web_view,
@@ -48,6 +59,43 @@ webkit_web_view_run_javascript_finish                (WebKitWebView             
 						      GError                    **error);
 WEBKIT_API void
 webkit_javascript_result_unref              (WebKitJavascriptResult *js_result);
+// GH #984: persistent cookie storage for the Snapmaker auth web view.
+// WebKitGTK uses an in-memory cookie store unless persistent storage is
+// explicitly configured, so the login was lost on every restart.
+WEBKIT_API WebKitWebContext *
+webkit_web_view_get_context                          (WebKitWebView             *web_view);
+WEBKIT_API WebKitCookieManager *
+webkit_web_context_get_cookie_manager                (WebKitWebContext          *context);
+WEBKIT_API void
+webkit_cookie_manager_set_persistent_storage         (WebKitCookieManager       *cookie_manager,
+                                                      const gchar               *filename,
+                                                      WebKitCookiePersistentStorage storage);
+}
+
+// GH #984: enable SQLite persistent cookie storage on a Linux WebKit web view,
+// so the Snapmaker account login survives application restarts. Must be called
+// after the web view is created (the native backend exists then). The database
+// lives under the app's normal per-user data directory, as upstream OrcaSlicer
+// does for PrinterWebView (data_dir()/cache/cookies.db).
+static void enable_persistent_cookie_storage(wxWebView *webView)
+{
+    if (webView == nullptr)
+        return;
+    auto *native_view = static_cast<WebKitWebView *>(webView->GetNativeBackend());
+    if (native_view == nullptr)
+        return;
+    WebKitWebContext *context = webkit_web_view_get_context(native_view);
+    if (context == nullptr)
+        return;
+    WebKitCookieManager *cookie_manager = webkit_web_context_get_cookie_manager(context);
+    if (cookie_manager == nullptr)
+        return;
+    boost::filesystem::path cookies_path = boost::filesystem::path(Slic3r::data_dir()) / "cache" / "cookies.db";
+    boost::system::error_code ec;
+    boost::filesystem::create_directories(cookies_path.parent_path(), ec);
+    if (ec)
+        BOOST_LOG_TRIVIAL(warning) << "Failed to create cookie cache directory " << cookies_path.parent_path().string() << ": " << ec.message();
+    webkit_cookie_manager_set_persistent_storage(cookie_manager, cookies_path.string().c_str(), WEBKIT_COOKIE_PERSISTENT_STORAGE_SQLITE);
 }
 #endif
 
@@ -608,6 +656,11 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         static_cast<WebViewWebKit *>(webView)->AttachNavigationGate();
 #else
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+#if defined(__linux__)
+        // GH #984: persist WebKit cookies so the Snapmaker account login
+        // survives application restarts (WebKitGTK defaults to in-memory).
+        enable_persistent_cookie_storage(webView);
+#endif
 #endif
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
                                                Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));

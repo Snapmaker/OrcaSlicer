@@ -1234,9 +1234,11 @@ void ToolOrdering::reorder_extruders_for_minimum_flush_volume()
     auto extruders_to_hash_key = [](const std::vector<unsigned int>& extruders,
         std::optional<unsigned int> initial_extruder_id) -> uint128_t {
             uint128_t hash_key = 0;
-            // high 16 bit define initial extruder ,others define extruder set
+            // The low MAXIMUM_FILAMENT_NUMBER bits define the extruder set, the bits above them the initial extruder.
+            // The two ranges must not overlap: with a smaller offset, a layer using a filament index at or above
+            // the offset gets the key of a different layer and its cached order, which drops that filament.
             if (initial_extruder_id)
-                hash_key |= (uint128_t(1) << (16 + *initial_extruder_id));
+                hash_key |= (uint128_t(1) << (MAXIMUM_FILAMENT_NUMBER + *initial_extruder_id));
             for (auto item : extruders)
                 hash_key |= (uint128_t(1) << item);
             return hash_key;

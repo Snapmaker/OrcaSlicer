@@ -1916,15 +1916,15 @@ std::vector<int> PartPlate::get_extruders(bool conside_custom_gcode) const
         }
 
 		const int obj_wall_extr = effective_feature_filament(mo->config, glb_config, "wall_filament");
-		if (obj_wall_extr != 1)
+		if (obj_wall_extr != 0)
 			plate_extruders.push_back(obj_wall_extr);
 
 		const int object_sparse_infill_extr = effective_feature_filament(mo->config, glb_config, "sparse_infill_filament");
-		if (object_sparse_infill_extr != 1)
+		if (object_sparse_infill_extr != 0)
 			plate_extruders.push_back(object_sparse_infill_extr);
 
 		const int obj_solid_infill_extr = effective_feature_filament(mo->config, glb_config, "solid_infill_filament");
-		if (obj_solid_infill_extr != 1)
+		if (obj_solid_infill_extr != 0)
 			plate_extruders.push_back(obj_solid_infill_extr);
 
 	}

@@ -825,6 +825,10 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("preheat_steps", have_ooze_prevention && (preheat_steps > 0));
 
     bool have_prime_tower = config->opt_bool("enable_prime_tower");
+    toggle_line("toolchange_prime_enable", !have_prime_tower);
+    bool have_toolchange_prime = !have_prime_tower && config->opt_bool("toolchange_prime_enable");
+    for (auto el : { "toolchange_prime_length_min", "toolchange_prime_length_max", "toolchange_prime_idle_time", "toolchange_prime_skip_time", "toolchange_prime_on_printer" })
+        toggle_line(el, have_toolchange_prime);
     for (auto el : { "prime_tower_width", "prime_tower_brim_width"})
         toggle_line(el, have_prime_tower);
 

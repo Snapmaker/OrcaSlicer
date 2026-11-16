@@ -4,6 +4,7 @@
 
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Thread.hpp"
+#include "slic3r/Utils/Http.hpp"
 #include "GUI.hpp"
 #include "GUI_App.hpp"
 #include "GUI_Preview.hpp"
@@ -288,9 +289,14 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
     //m_vebview_release_note->SetMaxSize(wxSize(FromDIP(560), FromDIP(430)));
     m_vebview_release_note->Bind(wxEVT_WEBVIEW_NAVIGATING,[this](wxWebViewEvent& event){
         const wxString nav_url = event.GetURL();
-        if (nav_url.StartsWith("file://")) {
-            // The local shell page (releasenote.html) is the only in-dialog navigation;
-            // backends may also emit an initial about:blank, which falls through to Veto.
+        // The platform WebView backend performs an explicit about:blank initial
+        // navigation after Create() and only navigates to the real target once the
+        // script bridge is installed (WebView.cpp keeps it pending until then).
+        // Cancelling that first navigation prevents the shell page from ever
+        // committing, so it must be allowed through like the shell page itself.
+        // The shell page is matched on its file name: the backend reports the URI
+        // percent-encoded/canonicalized, and full-path equality proved brittle.
+        if (nav_url == wxString("about:blank") || is_shell_page_url(nav_url)) {
             return;
         }
         if (nav_url.StartsWith("http://") || nav_url.StartsWith("https://")) {
@@ -298,6 +304,7 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
             // upstream OrcaSlicer) and never navigate inside the update dialog.
             wxLaunchDefaultBrowser(nav_url);
         }
+        BOOST_LOG_TRIVIAL(warning) << "UpdateVersionDialog: blocked in-dialog navigation to " << nav_url;
         event.Veto();
     });
 
@@ -315,6 +322,12 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
 
     m_simplebook_release_note->AddPage(m_scrollwindows_release_note, wxEmptyString, false);
     m_simplebook_release_note->AddPage(m_vebview_release_note, wxEmptyString, false);
+
+    // One-shot watchdog: if the shell page never reports readiness (missing
+    // WebView2 runtime, failed shell page load), fall back to the plain-text page
+    // instead of showing an empty note area. Late readiness recovers in
+    // OnTitleChanged.
+    m_webview_fallback_timer.Bind(wxEVT_TIMER, [this](wxTimerEvent&) { on_webview_watchdog(); });
 
 
     
@@ -446,6 +459,13 @@ void UpdateVersionDialog::OnTitleChanged(wxWebViewEvent& event)
     double height = 0;
     if (event.GetString().ToDouble(&height)) {
         m_webview_loaded = true;
+        m_webview_fallback_timer.Stop();
+        // The webview proved alive after all (e.g. a slow cold start outlasted the
+        // watchdog): undo the plain-text fallback and put the rich-text page back.
+        if (m_webview_fallback_shown) {
+            m_webview_fallback_shown = false;
+            m_simplebook_release_note->SetSelection(1);
+        }
         inject_release_note();
     }
     event.Skip();
@@ -467,33 +487,40 @@ void UpdateVersionDialog::OnError(wxWebViewEvent& event)
     event.Skip();
 }
 
-static std::string url_encode(const std::string& value) {
-	std::ostringstream escaped;
-	escaped.fill('0');
-	escaped << std::hex;
-	for (std::string::const_iterator i = value.begin(), n = value.end(); i != n; ++i) {
-		std::string::value_type c = (*i);
-
-		// Keep alphanumeric and other accepted characters intact. The cast avoids
-		// passing a negative value for UTF-8 lead bytes to isalnum() (undefined behavior).
-		if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~') {
-			escaped << c;
-			continue;
-		}
-
-		// Any other characters are percent-encoded
-		escaped << std::uppercase;
-		escaped << '%' << std::setw(2) << int((unsigned char)c);
-		escaped << std::nouppercase;
-	}
-	return escaped.str();
+/** @brief True when the navigation target is this dialog's own shell page (releasenote.html). */
+bool UpdateVersionDialog::is_shell_page_url(const wxString& nav_url) const
+{
+    // Compare on the file NAME: the backend reports the URI percent-encoded and
+    // canonicalized, while full-path string equality proved brittle. The name is
+    // unique within tooltip/, so arbitrary file:// targets are still rejected.
+    wxString path = nav_url;
+    const size_t hash = path.Find('#');
+    if (hash != wxNOT_FOUND)
+        path = path.Left(hash);
+    const size_t qmark = path.Find('?');
+    if (qmark != wxNOT_FOUND)
+        path = path.Left(qmark);
+    for (size_t i = 0; i < path.size(); ++i) {
+        const int ch = static_cast<int>(path[i]);
+        if (ch >= 'A' && ch <= 'Z')
+            path[i] = static_cast<wxChar>(ch - 'A' + 'a');
+    }
+    return path.EndsWith("releasenote.html");
 }
 
 bool UpdateVersionDialog::ShowReleaseNote(std::string content)
 {
 	// keepImages=true: inline images of the release note are rendered inside the dialog.
 	// fixFeishuMerges runs from the showMarkdown wrapper installed by releasenote.html.
-	RunScript("window.showMarkdown('" + url_encode(content) + "', true);");
+	// Http::url_encode fail-opens (returns the input unchanged when curl cannot
+	// initialise); a raw quote would terminate the JS string literal. Skip the
+	// injection rather than send a broken script.
+	const std::string encoded = Http::url_encode(content);
+	if (encoded.empty() && !content.empty()) {
+		BOOST_LOG_TRIVIAL(error) << "ShowReleaseNote: url_encode failed, skipping markdown injection";
+		return true;
+	}
+	RunScript("window.showMarkdown('" + encoded + "', true);");
     return true;
 }
 
@@ -512,6 +539,39 @@ void UpdateVersionDialog::inject_release_note()
     // Keep the source for page reloads. The page skips duplicate renders within
     // its document, so height notifications do not rebuild the note or its images.
     ShowReleaseNote(m_pending_release_note);
+}
+
+/** @brief Rebuild the plain-text page and switch to it (webview shell page unavailable). */
+void UpdateVersionDialog::show_plain_text_fallback()
+{
+    // Only a never-ready webview falls back; once the shell page reported
+    // readiness the rich-text path owns the note area. An error arriving before
+    // update_version_info (empty pending note) has nothing to show yet either.
+    if (m_webview_loaded || m_webview_fallback_shown || m_pending_release_note.empty() || !m_scrollwindows_release_note)
+        return;
+    m_webview_fallback_shown = true;
+    m_webview_fallback_timer.Stop();
+
+    // Same layout the dialog used before the rich-markdown switch (restored from
+    // the pre-webview version of update_version_info).
+    wxBoxSizer* sizer_text_release_note = new wxBoxSizer(wxVERTICAL);
+    auto        static_text_release_note = new ::Label(m_scrollwindows_release_note, from_u8(m_pending_release_note), LB_AUTO_WRAP);
+    static_text_release_note->SetMinSize(wxSize(FromDIP(560), -1));
+    static_text_release_note->SetMaxSize(wxSize(FromDIP(560), -1));
+    sizer_text_release_note->Add(static_text_release_note, 0, wxALL, 5);
+    m_scrollwindows_release_note->SetSizer(sizer_text_release_note);
+    m_scrollwindows_release_note->Layout();
+    m_scrollwindows_release_note->Fit();
+    m_simplebook_release_note->SetSelection(0);
+}
+
+/** @brief Watchdog: no numeric title event in time means the shell page will never inject. */
+void UpdateVersionDialog::on_webview_watchdog()
+{
+    if (!m_webview_loaded) {
+        BOOST_LOG_TRIVIAL(warning) << "UpdateVersionDialog: shell page not ready after timeout, falling back to plain text";
+        show_plain_text_fallback();
+    }
 }
 
 void UpdateVersionDialog::on_dpi_changed(const wxRect &suggested_rect) {
@@ -548,6 +608,10 @@ void UpdateVersionDialog::update_version_info(wxString release_note, wxString ve
 
     m_simplebook_release_note->SetMaxSize(wxSize(FromDIP(560), FromDIP(430)));
     m_simplebook_release_note->SetSelection(1);
+    // If the shell page never reports readiness (missing WebView2 runtime, failed
+    // load), the watchdog falls back to the plain-text page instead of leaving an
+    // empty note area.
+    m_webview_fallback_timer.StartOnce(15000);
     m_text_up_info->SetLabel(wxString::Format(_L("Click to download new version in default browser: %s"), version));
     // If the shell page is already ready (title event seen), inject right away;
     // otherwise OnTitleChanged catches up once the page reports it is alive.

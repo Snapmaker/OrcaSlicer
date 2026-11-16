@@ -108,6 +108,9 @@
         };
         // Cache only within this document. C++ retains the source and may resend it
         // after height notifications; a reload creates a fresh cache and renders again.
+        // Test exemption: fixFeishuMerges and this wrapper have no automated tests
+        // (no JS/HTML test infrastructure in this repo); verified manually on Feishu
+        // exports -- merged tables, task lists, empty cells, nested tables, CJK text.
         (function () {
             var original = window.showMarkdown;
             var lastData = null;

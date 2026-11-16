@@ -37,6 +37,7 @@
 #include "Widgets/ScrolledWindow.hpp"
 #include <wx/hashmap.h>
 #include <wx/webview.h>
+#include <wx/timer.h>
 
 namespace Slic3r { namespace GUI {
 
@@ -88,6 +89,12 @@ public:
     wxWebView* CreateTipView(wxWindow* parent);
     void OnTitleChanged(wxWebViewEvent& event);
     void OnError(wxWebViewEvent& event);
+    // True when nav_url is this dialog's own shell page; compares the file name
+    // (case-folded, fragment/query stripped) instead of the full URI.
+    bool is_shell_page_url(const wxString& nav_url) const;
+    // Plain-text fallback for a webview shell page that never became ready.
+    void show_plain_text_fallback();
+    void on_webview_watchdog();
     bool ShowReleaseNote(std::string content);
     void RunScript(std::string script);
     // Push the pending markdown into the webview once its shell page is ready;
@@ -118,6 +125,10 @@ public:
     std::string       m_pending_release_note;
     // Shell page reported its summary height (numeric document.title); safe to RunScript.
     bool              m_webview_loaded{false};
+    // One-shot watchdog armed in update_version_info: falls back to the plain-text
+    // page when the shell page never reports readiness.
+    wxTimer           m_webview_fallback_timer;
+    bool              m_webview_fallback_shown{false};
 };
 
 class SecondaryCheckDialog : public DPIFrame

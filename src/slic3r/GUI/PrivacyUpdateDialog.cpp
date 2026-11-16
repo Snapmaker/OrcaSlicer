@@ -1,6 +1,8 @@
 #include "PrivacyUpdateDialog.hpp"
 #include "GUI_App.hpp"
+#include "slic3r/Utils/Http.hpp"
 #include "BitmapCache.hpp"
+#include <boost/log/trivial.hpp>
 #include <wx/dcgraph.h>
 #include <slic3r/GUI/I18N.hpp>
 
@@ -9,27 +11,6 @@ namespace Slic3r { namespace GUI {
 
 wxDEFINE_EVENT(EVT_PRIVACY_UPDATE_CONFIRM, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PRIVACY_UPDATE_CANCEL, wxCommandEvent);
-
-static std::string url_encode(const std::string& value) {
-	std::ostringstream escaped;
-	escaped.fill('0');
-	escaped << std::hex;
-	for (std::string::const_iterator i = value.begin(), n = value.end(); i != n; ++i) {
-		std::string::value_type c = (*i);
-
-		// Keep alphanumeric and other accepted characters intact
-		if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-			escaped << c;
-			continue;
-		}
-
-		// Any other characters are percent-encoded
-		escaped << std::uppercase;
-		escaped << '%' << std::setw(2) << int((unsigned char)c);
-		escaped << std::nouppercase;
-	}
-	return escaped.str();
-}
 
 PrivacyUpdateDialog::PrivacyUpdateDialog(wxWindow* parent, wxWindowID id, const wxString& title, enum ButtonStyle btn_style, const wxPoint& pos, const wxSize& size, long style)
     :DPIDialog(parent, id, title, pos, size, style)
@@ -159,7 +140,15 @@ void PrivacyUpdateDialog::OnNavigating(wxWebViewEvent& event)
 
 bool PrivacyUpdateDialog::ShowReleaseNote(std::string content)
 {
-	auto script = "window.showMarkdown('" + url_encode(content) + "', true);";
+	// Http::url_encode fail-opens (returns the input unchanged when curl cannot
+	// initialise); a raw quote would terminate the JS string literal. Skip the
+	// injection rather than send a broken script.
+	const std::string encoded = Http::url_encode(content);
+	if (encoded.empty() && !content.empty()) {
+		BOOST_LOG_TRIVIAL(error) << "PrivacyUpdateDialog::ShowReleaseNote: url_encode failed, skipping markdown injection";
+		return true;
+	}
+	auto script = "window.showMarkdown('" + encoded + "', true);";
     RunScript(script);
     return true;
 }

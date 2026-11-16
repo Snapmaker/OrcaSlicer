@@ -54,6 +54,7 @@
 #include <wx/statbox.h>
 #include <wx/statbmp.h>
 #include <wx/filedlg.h>
+#include <wx/dirdlg.h>
 #include <wx/dnd.h>
 #include <wx/progdlg.h>
 #include <wx/string.h>
@@ -74,6 +75,11 @@
 #include <wx/richtooltip.h>
 #include <wx/custombgwin.h>
 #include <wx/popupwin.h>
+// Last in the block on purpose: windows.h defines min/max macros that would
+// otherwise leak into every header included below; WIN32_LEAN_AND_MEAN keeps
+// it to the core API (HeapCompact is included).
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #endif
 #include <wx/clrpicker.h>
 #include <wx/spinctrl.h>
@@ -15412,6 +15418,63 @@ static void sync_nozzle_hrc_warning_notification(NotificationManager* nm, PartPl
             text);
 }
 
+// Recoverable-OOM notice, shared by the import / failed-slice / toolpath-
+// render paths: one dialog with the finalized product wording (kept verbatim)
+// and standard Yes/No buttons. Yes opens a file save dialog (directory and
+// file name in one step) and saves the
+// project there; No closes and does nothing - the choice (and the risk) stay
+// with the user. The save is best-effort; with a low-memory state it may
+// fail or be cut short by a deeper OOM (which ends the process via the
+// handler's own farewell).
+void Plater::offer_save_on_low_memory()
+{
+    // Nothing to rescue in an empty project - the dialog would only confuse.
+    if (p->model.objects.empty())
+        return;
+    // Runs from CallAfter on the wx event loop, which offers no exception
+    // guard for these events (same class of dispatch as idle/paint,
+    // wxWidgets #24704): an allocation failure inside the dialogs below must
+    // not escape, or the process dies without any notice. Best-effort only -
+    // on failure the notice is skipped and the app keeps running.
+    try {
+        WarningDialog ask_dlg(wxGetApp().mainframe, _L("Your project may be too large for the available memory. The operation has been "
+                                "automatically terminated. Try closing other applications, reducing the model "
+                                "complexity or plate count, and restart.\n\n"
+                                "We strongly recommend saving your current project. Continuing with Snapmaker Orca "
+                                "may cause the app to crash unexpectedly and lose unsaved changes. Save project now?"), wxEmptyString,
+                                wxYES_NO);
+        if (ask_dlg.ShowModal() != wxID_YES)
+            return;
+        const wxString project_file = get_project_filename(".3mf");
+        const std::string leaf = project_file.empty() ?
+            std::string("project.3mf") :
+            boost::filesystem::path(into_u8(project_file)).filename().string();
+        wxFileDialog save_dlg(this, _L("Save project"), "", from_u8(leaf),
+                            file_wildcards(FT_PROJECT), wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+        if (save_dlg.ShowModal() != wxID_OK)
+            return;
+        const boost::filesystem::path dest(save_dlg.GetPath().utf8_str().data());
+        // export_3mf reports failure by return code (no exception); Silence
+        // keeps the save a pure COPY - without it the default strategy would
+        // silently rebind the project's filename to the rescue copy, breaking
+        // the "dirty state untouched" promise above.
+        if (export_3mf(dest, SaveStrategy::Silence) == 0) {
+            MessageDialog dlg(wxGetApp().mainframe, _L("A copy of the project has been saved."), wxString::Format(_(L("%s")), SLIC3R_APP_FULL_NAME), wxOK);
+            dlg.ShowModal();
+        }
+        else {
+            WarningDialog dlg(wxGetApp().mainframe, _L("Saving the project failed. The project could not be saved."), wxEmptyString, wxOK);
+            dlg.ShowModal();
+        }
+    } catch (const std::bad_alloc&) {
+        show_error(wxGetApp().mainframe, _L("Saving failed because of low memory; the project could not be saved."));
+    } catch (const std::exception &e) {
+        show_error(wxGetApp().mainframe, _L("Save failed") + from_u8(e.what()));
+    } catch (...) {
+        // even the failure notices above may fail to allocate; swallow
+    }
+}
+
 //BBS: add project slice logic
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
@@ -15483,14 +15546,67 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     // This bool stops showing export finished notification even when process_completed_with_error is false
     bool has_error = false;
     if (evt.error()) {
+        bool out_of_memory = false;
+        try {
+            evt.rethrow_exception();
+        } catch (const std::bad_alloc&) {
+            out_of_memory = true;
+        } catch (...) {
+        }
+        // Release the OOM bulk FIRST, before anything that allocates
+        // (format_error_message rethrows and builds strings) and independent
+        // of the popup-menu tracking below: the memory must go back no
+        // matter who consumes the message later. These steps are release-only
+        // plus one KB-level report, running after gigabytes were just
+        // returned - a secondary failure here is accepted (it ends in the
+        // generic terminate) rather than wrapped again.
+        if (out_of_memory) {
+            if (auto *gcode_result = this->background_process.get_current_gcode_result())
+                gcode_result->reset();
+            if (this->printer_technology == ptFFF) {
+                if (this->background_process.m_fff_print)
+                    this->background_process.m_fff_print->clear();
+            } else {
+                if (this->background_process.m_sla_print)
+                    this->background_process.m_sla_print->clear();
+            }
+            // Schedule the rescue dialog BEFORE the report: the CallAfter is a
+            // cheap queue push while the report builds strings - if the report
+            // itself dies on this unguarded event path, the user at least
+            // keeps the scheduled rescue (review trade-off, no extra wrapping).
+            q->CallAfter([plater = q] { plater->offer_save_on_low_memory(); });
+            // The OOM report lives at the catch sites (not in the new handler):
+            // the stack has unwound and the slicing data was just released, so
+            // running the Sentry SDK is safe here.
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                    "memory allocation failed (out of memory, background slicing)",
+                                    "on_process_completed", "out_of_memory", "true");
+            // The toolpath renderer keeps its own CPU-side copy of the move
+            // data (PathLayerStack per-node tables) which the gcode-result
+            // reset above does not touch. reset() drops the whole preview
+            // side (CPU + GPU) and the next successful slice rebuilds it.
+            this->preview->get_canvas3d()->get_gcode_viewer().reset();
+#ifdef _WIN32
+            HeapCompact(GetProcessHeap(), 0);
+#endif
+        }
         auto message = evt.format_error_message();
+        // The low-memory dialog was already scheduled inside the release block
+        // above (before the report), so it also runs for an OOM that arrived
+        // while a popup menu was tracked (the menu is closed by the time the
+        // posted event runs).
         if (evt.critical_error()) {
-            if (q->m_tracking_popup_menu) {
-                // We don't want to pop-up a message box when tracking a pop-up menu.
-                // We postpone the error message instead.
+            if (q->m_tracking_popup_menu && !out_of_memory) {
+                // We don't want to pop-up a message box when tracking a pop-up
+                // menu. We postpone the error message instead. An OOM takes the
+                // scheduled low-memory dialog above - postponing here as well
+                // would pop two dialogs once the menu closes.
                 q->m_tracking_popup_menu_error_message = message.first;
             } else {
-                show_error(q, message.first, message.second.size() != 0 && message.second[0] != 0);
+                if (!out_of_memory) {
+                    show_error(q, message.first, message.second.size() != 0 && message.second[0] != 0);
+                }
+
                 notification_manager->set_slicing_progress_hidden();
             }
         } else {
@@ -16776,7 +16892,16 @@ bool Plater::priv::can_set_instance_to_object() const
 
 bool Plater::priv::can_split(bool to_objects) const
 {
-    return sidebar->obj_list()->is_splittable(to_objects);
+    // Deciding this builds a full vertex-face index over the mesh (tens of MB
+    // on large models) and runs inside the idle-driven toolbar refresh, which
+    // wx dispatches without exception protection - an OOM here must not
+    // escape or the process dies without a dialog (crashpad grabs it).
+    try {
+        return sidebar->obj_list()->is_splittable(to_objects);
+    } catch (const std::bad_alloc&) {
+        BOOST_LOG_TRIVIAL(error) << "can_split: out of memory, disabling the split action";
+        return false;
+    }
 }
 
 bool Plater::priv::can_fillcolor() const
@@ -19428,7 +19553,17 @@ std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files,
     p->m_slice_all_only_has_gcode = false;
     //BBS: wish to reset all plates stats item selected state when load a new file
     p->preview->get_canvas3d()->reset_select_plate_toolbar_selection();
-    std::vector<size_t> loaded = p->load_files(input_files, strategy, ask_multi);
+    std::vector<size_t> loaded;
+    try {
+        loaded = p->load_files(input_files, strategy, ask_multi);
+    } catch (const std::bad_alloc& ex) {
+        // Importing a too large model is recoverable: log and route to the
+        // shared low-memory dialog (log + optional save) instead of letting
+        // the bad_alloc escape to OnExceptionInMainLoop, whose generic
+        // handler terminates the process.
+        BOOST_LOG_TRIVIAL(error) << "load_files: out of memory: " << ex.what();
+        CallAfter([this] { offer_save_on_low_memory(); });
+    }
     if (!loaded.empty())
     {
         // After loading a project, initialize the filament temp mixing state

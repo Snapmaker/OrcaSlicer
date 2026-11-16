@@ -1,6 +1,8 @@
 #include "GCodeWriter.hpp"
 #include "CustomGCode.hpp"
+#include "Line.hpp"
 #include <algorithm>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <GCode/GCodeProcessor.hpp>
@@ -39,6 +41,40 @@ void GCodeWriter::apply_print_config(const PrintConfig &print_config)
     };
     m_max_jerk_z = print_config.machine_max_jerk_z.values.front();
     m_max_jerk_e = print_config.machine_max_jerk_e.values.front();
+
+    // Keep the polygon in bed coordinates, including for non-rectangular beds.
+    m_bed_printable_area = Polygon::new_scale(print_config.printable_area.values);
+    m_bed_printable_area.make_counter_clockwise();
+    m_nozzle_offsets = print_config.extruder_offset.values;
+}
+
+bool GCodeWriter::spiral_lift_fits_printable_area(const Vec2d& center, double radius) const
+{
+    if (!std::isfinite(radius) || radius <= 0.0 || !std::isfinite(center.x()) || !std::isfinite(center.y()))
+        return false;
+    if (m_bed_printable_area.points.size() < 3)
+        return true; // No configured boundary: preserve the existing behavior.
+
+    // Reject an out-of-bed center in floating point before scaling it to an
+    // integer Point (a nearly zero travel angle may produce a huge radius).
+    const BoundingBox bounds = m_bed_printable_area.bounding_box();
+    if (center.x() < unscale<double>(bounds.min.x()) || center.x() > unscale<double>(bounds.max.x()) ||
+        center.y() < unscale<double>(bounds.min.y()) || center.y() > unscale<double>(bounds.max.y()))
+        return false;
+
+    const Point c = Point::new_scale(center.x(), center.y());
+    if (!m_bed_printable_area.contains(c))
+        return false;
+
+    // XYZ and IJ are exported with three decimal places. Allow for rounding of
+    // the start, center offset and radius before deciding that a circle fits.
+    const double  r_scaled  = scale_(radius + 0.003);
+    const double  r_squared = r_scaled * r_scaled;
+    const Points& points    = m_bed_printable_area.points;
+    for (size_t i = 0; i < points.size(); ++i)
+        if (Line::distance_to_squared(c, points[i], points[(i + 1) % points.size()]) < r_squared)
+            return false;
+    return true;
 }
 
 void GCodeWriter::set_extruders(std::vector<unsigned int> extruder_ids)
@@ -556,7 +592,7 @@ std::string GCodeWriter::travel_to_xyz(const Vec3d &point, const std::string &co
         if (delta(2) > 0 && delta_no_z.norm() != 0.0f)    {
             //BBS: SpiralLift
             if (m_to_lift_type == LiftType::SpiralLift && this->is_current_position_clear()) {
-                //BBS: todo: check the arc move all in bed area, if not, then use lazy lift
+                // The arc writer checks containment before emitting the full circle.
                 double radius = delta(2) / (2 * PI * atan(this->extruder()->travel_slope()));
                 Vec2d ij_offset = radius * delta_no_z.normalized();
                 ij_offset = { -ij_offset(1), ij_offset(0) };
@@ -679,15 +715,27 @@ std::string GCodeWriter::_travel_to_z(double z, const std::string &comment)
     return w.string();
 }
 
-std::string GCodeWriter::_spiral_travel_to_z(double z, const Vec2d &ij_offset, const std::string &comment)
+std::string GCodeWriter::_spiral_travel_to_z(double z, const Vec2d& ij_offset, const std::string& comment)
 {
+    // As in upstream OrcaSlicer, retain the lift height but use a vertical move
+    // when the full spiral would leave the printable polygon. Remove the plate
+    // offset and undo GCode::point_to_gcode's nozzle compensation before testing
+    // containment in the physical bed coordinates.
+    Vec2d nozzle_offset = Vec2d::Zero();
+    if (m_extruder != nullptr && !m_nozzle_offsets.empty())
+        nozzle_offset = m_nozzle_offsets[m_extruder->id() < m_nozzle_offsets.size() ? m_extruder->id() : 0];
+    const Vec2d center(m_pos.x() - m_x_offset + nozzle_offset.x() + ij_offset.x(),
+                       m_pos.y() - m_y_offset + nozzle_offset.y() + ij_offset.y());
+    if (!this->spiral_lift_fits_printable_area(center, ij_offset.norm()))
+        return this->_travel_to_z(z, "normal lift Z");
+
     m_pos(2) = z;
 
     double speed = this->config.travel_speed_z.value;
     if (speed == 0.)
         speed = this->active_travel_speed(true);
 
-    std::string output = "G17\n";
+    std::string        output = "G17\n";
     GCodeG2G3Formatter w(true);
     w.emit_z(z);
     w.emit_ij(ij_offset);

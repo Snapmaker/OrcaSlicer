@@ -15428,6 +15428,9 @@ static void sync_nozzle_hrc_warning_notification(NotificationManager* nm, PartPl
 // handler's own farewell).
 void Plater::offer_save_on_low_memory()
 {
+    // Nothing to rescue in an empty project - the dialog would only confuse.
+    if (p->model.objects.empty())
+        return;
     // Runs from CallAfter on the wx event loop, which offers no exception
     // guard for these events (same class of dispatch as idle/paint,
     // wxWidgets #24704): an allocation failure inside the dialogs below must
@@ -15451,10 +15454,11 @@ void Plater::offer_save_on_low_memory()
         if (save_dlg.ShowModal() != wxID_OK)
             return;
         const boost::filesystem::path dest(save_dlg.GetPath().utf8_str().data());
-        // export_3mf reports failure by return code (no exception); the save
-        // writes a COPY (project filename and dirty state stay untouched, so
-        // the regular unsaved-changes prompts keep working).
-        if (export_3mf(dest) == 0) {
+        // export_3mf reports failure by return code (no exception); Silence
+        // keeps the save a pure COPY - without it the default strategy would
+        // silently rebind the project's filename to the rescue copy, breaking
+        // the "dirty state untouched" promise above.
+        if (export_3mf(dest, SaveStrategy::Silence) == 0) {
             MessageDialog dlg(wxGetApp().mainframe, _L("A copy of the project has been saved."), wxString::Format(_(L("%s")), SLIC3R_APP_FULL_NAME), wxOK);
             dlg.ShowModal();
         }
@@ -15552,7 +15556,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
         // Release the OOM bulk FIRST, before anything that allocates
         // (format_error_message rethrows and builds strings) and independent
         // of the popup-menu tracking below: the memory must go back no
-        // matter who consumes the message later.
+        // matter who consumes the message later. These steps are release-only
+        // plus one KB-level report, running after gigabytes were just
+        // returned - a secondary failure here is accepted (it ends in the
+        // generic terminate) rather than wrapped again.
         if (out_of_memory) {
             if (auto *gcode_result = this->background_process.get_current_gcode_result())
                 gcode_result->reset();
@@ -15563,15 +15570,17 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
                 if (this->background_process.m_sla_print)
                     this->background_process.m_sla_print->clear();
             }
+            // Schedule the rescue dialog BEFORE the report: the CallAfter is a
+            // cheap queue push while the report builds strings - if the report
+            // itself dies on this unguarded event path, the user at least
+            // keeps the scheduled rescue (review trade-off, no extra wrapping).
+            q->CallAfter([plater = q] { plater->offer_save_on_low_memory(); });
             // The OOM report lives at the catch sites (not in the new handler):
             // the stack has unwound and the slicing data was just released, so
             // running the Sentry SDK is safe here.
-            try {
-                Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
-                                        "memory allocation failed (out of memory, background slicing)",
-                                        "on_process_completed", "out_of_memory", "true");
-            } catch (...) {
-            }
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                    "memory allocation failed (out of memory, background slicing)",
+                                    "on_process_completed", "out_of_memory", "true");
             // The toolpath renderer keeps its own CPU-side copy of the move
             // data (PathLayerStack per-node tables) which the gcode-result
             // reset above does not touch. reset() drops the whole preview
@@ -15582,11 +15591,10 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 #endif
         }
         auto message = evt.format_error_message();
-        // The low-memory dialog is deferred via CallAfter, so it also runs for
-        // an OOM that arrived while a popup menu was tracked (the menu is
-        // closed by the time the posted event runs).
-        if (out_of_memory)
-            q->CallAfter([plater = q] { plater->offer_save_on_low_memory(); });
+        // The low-memory dialog was already scheduled inside the release block
+        // above (before the report), so it also runs for an OOM that arrived
+        // while a popup menu was tracked (the menu is closed by the time the
+        // posted event runs).
         if (evt.critical_error()) {
             if (q->m_tracking_popup_menu && !out_of_memory) {
                 // We don't want to pop-up a message box when tracking a pop-up

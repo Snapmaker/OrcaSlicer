@@ -42,9 +42,12 @@ using namespace nlohmann;
 // GUI/CLI mode flag for the OOM farewell path (defined here because the
 // GUI/CLI decision sits early in this file; used by the farewell code at
 // the bottom): unattended CLI jobs must fail fast on the console instead
-// of waiting on a modal dialog. (Portable type: this file is compiled on
-// every platform; Win32-only types must stay inside the _MSC_VER guard.)
-static std::atomic<bool> g_cli_mode{false};
+// of waiting on a modal dialog. Defaults to TRUE (CLI) so the early
+// window before the decision is written fails fast too - a modal dialog
+// there would hang an unattended job nobody can click. (Portable type:
+// this file is compiled on every platform; Win32-only types must stay
+// inside the _MSC_VER guard.)
+static std::atomic<bool> g_cli_mode{true};
 
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -6553,6 +6556,14 @@ __declspec(dllexport) int __stdcall Snapmaker_Orca_get_privacy_policy() { return
                     GetCurrentThreadId() != g_farewell_thread_id.load(std::memory_order_relaxed)) {
                     Sleep(INFINITE);
                 }
+                // Reset before throwing, keeping the nested path symmetric
+                // with the main path. Today's handler body has no allocating
+                // step before the probe, so a nested visit on this branch is
+                // only reachable from the farewell's report/flush - but the
+                // reset guards future edits that add one: a stuck-true flag
+                // would silently disable the probe, pool refill and farewell
+                // for every later OOM in this process.
+                handler_in_progress = false;
                 throw std::bad_alloc();
             }
             // Probe with a raw HeapAlloc — the only allocation primitive that

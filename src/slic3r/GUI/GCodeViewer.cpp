@@ -1548,16 +1548,20 @@ void GCodeViewer::render(int canvas_width, int canvas_height, int right_margin)
     } catch (const std::bad_alloc&) {
         if (!m_render_oom_reported) {
             m_render_oom_reported = true;
-            BOOST_LOG_TRIVIAL(error) << "GCodeViewer::render_toolpaths: out of memory, toolpath rendering skipped";
+            // The catch body is itself guarded: logging, the report and the
+            // CallAfter below all allocate, and this runs on the unguarded
+            // idle/paint dispatch - a secondary failure must not escape.
             try {
+                BOOST_LOG_TRIVIAL(error) << "GCodeViewer::render_toolpaths: out of memory, toolpath rendering skipped";
                 Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
                                         "memory allocation failed (out of memory, gcode toolpath rendering)",
                                         "GCodeViewer::render_toolpaths", "out_of_memory", "true");
+                wxTheApp->CallAfter([] {
+                    wxGetApp().plater()->offer_save_on_low_memory();
+                });
             } catch (...) {
+                // the notice could not be made; drop it, the frame is skipped anyway
             }
-            wxTheApp->CallAfter([] {
-                wxGetApp().plater()->offer_save_on_low_memory();
-            });
         }
     }
     float legend_height = 0.0f;

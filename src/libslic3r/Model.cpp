@@ -1117,12 +1117,21 @@ std::string Model::get_backup_path()
         std::time_t t = std::time(0);
         std::tm* now_time = std::localtime(&t);
         std::stringstream buf;
-        buf << "/snapmaker_orca_model/";
-        buf << std::put_time(now_time, "%a_%b_%d/%H_%M_%S#");
+        buf << std::put_time(now_time, "%a_%b_%d");
+        const std::string date_dir = buf.str();
+        buf.str("");
+        buf.clear();
+        buf << std::put_time(now_time, "%H_%M_%S#");
         buf << pid << "#";
         buf << this->id().id;
+        const std::string time_dir = buf.str();
 
-        backup_path = parent_path.string() + buf.str();
+        // GH #776: build the path with boost::filesystem::path operators so it
+        // uses the native separator. The old code concatenated strings with a
+        // hardcoded "/" onto temporary_dir() (backslashes on Windows), producing
+        // a mixed-separator path (C:\...\Temp/snapmaker_orca_model/...) that
+        // Windows/Python post-process scripts choke on.
+        backup_path = (parent_path / "snapmaker_orca_model" / date_dir / time_dir).string();
         BOOST_LOG_TRIVIAL(info) << boost::format("model %1%, id %2%, backup_path empty, set to %3%")%this%this->id().id%backup_path;
         boost::filesystem::path temp_path(backup_path);
         if (boost::filesystem::exists(temp_path))
@@ -1136,11 +1145,11 @@ std::string Model::get_backup_path()
         if (!boost::filesystem::exists(temp_path))
         {
             BOOST_LOG_TRIVIAL(info) << "create /3D/Objects in " << temp_path;
-            boost::filesystem::create_directories(backup_path + "/3D/Objects");
+            boost::filesystem::create_directories(temp_path / "3D" / "Objects");
             BOOST_LOG_TRIVIAL(info) << "create /Metadata in " << temp_path;
-            boost::filesystem::create_directories(backup_path + "/Metadata");
+            boost::filesystem::create_directories(temp_path / "Metadata");
             BOOST_LOG_TRIVIAL(info) << "create /lock.txt in " << temp_path;
-            save_string_file(backup_path + "/lock.txt",
+            save_string_file(temp_path / "lock.txt",
                 boost::lexical_cast<std::string>(get_current_pid()));
         }
     } catch (std::exception &ex) {

@@ -92,8 +92,12 @@ namespace Emboss
             //if(*data != *other.data) return false;
             for (size_t i = 0; i < infos.size(); i++) 
                 if (infos[i].ascent != other.infos[i].ascent ||
-                    infos[i].descent == other.infos[i].descent ||
-                    infos[i].linegap == other.infos[i].linegap)
+                    // GH #1009: these were "==", so identical fonts were NEVER
+                    // equal (equal descent/linegap made the condition true and
+                    // returned false). The synthetic bold/skew fallback, which
+                    // relies on detecting an identical font file, could never fire.
+                    infos[i].descent != other.infos[i].descent ||
+                    infos[i].linegap != other.infos[i].linegap)
                     return false;
             return true;
         }

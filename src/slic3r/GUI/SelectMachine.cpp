@@ -1626,29 +1626,6 @@ bool SelectMachineDialog::is_same_nozzle_diameters(float &tag_nozzle_diameter) c
     return true;
 }
 
-bool SelectMachineDialog::is_same_nozzle_type(const Extder& extruder, std::string& filament_type) const
-{
-    auto printer_nozzle_hrc = Print::get_hrc_by_nozzle_type(extruder.current_nozzle_type);
-
-    auto preset_bundle = wxGetApp().preset_bundle;
-    MaterialHash::const_iterator iter = m_materialList.begin();
-    while (iter != m_materialList.end()) {
-        Material* item = iter->second;
-        MaterialItem* m = item->item;
-        auto filament_nozzle_hrc = preset_bundle->get_required_hrc_by_filament_type(m->m_material_name.ToStdString());
-
-        if (abs(filament_nozzle_hrc) > abs(printer_nozzle_hrc)) {
-            filament_type = m->m_material_name.ToStdString();
-            BOOST_LOG_TRIVIAL(info) << "filaments hardness mismatch: filament = " << filament_type << " printer_nozzle_hrc = " << printer_nozzle_hrc;
-            return false;
-        }
-
-        iter++;
-    }
-
-    return true;
-}
-
 bool SelectMachineDialog::is_same_printer_model()
 {
     bool result = true;
@@ -1697,7 +1674,6 @@ void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
 {
 
     bool has_slice_warnings = false;
-    bool is_printing_block  = false;
 
     DeviceManager* dev = Slic3r::GUI::wxGetApp().getDeviceManager();
     if (!dev) return;
@@ -1761,15 +1737,6 @@ void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
         }
         else if (warning.msg == NOT_GENERATE_TIMELAPSE) {
             continue;
-        }
-        else if(warning.msg == NOZZLE_HRC_CHECKER){
-            wxString error_info = Plater::get_slice_warning_string(warning);
-            if (error_info.IsEmpty()) {
-                error_info = wxString::Format("%s\n", warning.msg);
-            }
-
-            confirm_text.push_back(ConfirmBeforeSendInfo(error_info));
-            has_slice_warnings = true;
         }
     }
 
@@ -1835,41 +1802,23 @@ void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
         if (!is_same_nozzle_diameters(nozzle_diameter))
         {
             has_slice_warnings = true;
-            // is_printing_block  = true;  # Removed to allow nozzle overrides (to support non-standard nozzles)
-            
+
             wxString nozzle_in_preset = wxString::Format(_L("nozzle in preset: %.1f %s"),nozzle_diameter, "");
             wxString nozzle_in_printer = wxString::Format(_L("nozzle memorized: %.1f %s"), obj_->m_extder_data.extders[0].current_nozzle_diameter, "");
 
-            confirm_text.push_back(ConfirmBeforeSendInfo(_L("Your nozzle diameter in sliced file is not consistent with memorized nozzle. If you changed your nozzle lately, please go to Device > Printer Parts to change settings.") 
-                + "\n    " + nozzle_in_preset 
+            confirm_text.push_back(ConfirmBeforeSendInfo(_L("Your nozzle diameter in sliced file is not consistent with memorized nozzle. If you changed your nozzle lately, please go to Device > Printer Parts to change settings.")
+                + "\n    " + nozzle_in_preset
                 + "\n    " + nozzle_in_printer
                 + "\n",  ConfirmBeforeSendInfo::InfoLevel::Warning));
         }
-        
-        std::string filament_type;
-        if (!is_same_nozzle_type(obj_->m_extder_data.extders[0], filament_type))
-        {
-            has_slice_warnings = true;
-            is_printing_block = true;
-
-                wxString nozzle_in_preset = wxString::Format(_L("Printing high temperature material (%s material) with %s may cause nozzle damage"), filament_type, format_steel_name(obj_->m_extder_data.extders[0].current_nozzle_type));
-            confirm_text.push_back(ConfirmBeforeSendInfo(nozzle_in_preset, ConfirmBeforeSendInfo::InfoLevel::Warning));
-        }
     }
-    
+
 
     if (has_slice_warnings) {
         wxString confirm_title = _L("Warning");
         ConfirmBeforeSendDialog confirm_dlg(this, wxID_ANY, confirm_title);
 
-        if(is_printing_block){
-            confirm_dlg.hide_button_ok();
-            confirm_dlg.edit_cancel_button_txt(_L("Close"));
-            confirm_text.push_back(ConfirmBeforeSendInfo(_L("Please fix the error above, otherwise printing cannot continue."), ConfirmBeforeSendInfo::InfoLevel::Warning));
-        }
-        else {
-            confirm_text.push_back(ConfirmBeforeSendInfo(_L("Please click the confirm button if you still want to proceed with printing.")));
-        }
+        confirm_text.push_back(ConfirmBeforeSendInfo(_L("Please click the confirm button if you still want to proceed with printing.")));
 
         confirm_dlg.Bind(EVT_SECONDARY_CHECK_CONFIRM, [this, &confirm_dlg](wxCommandEvent& e) {
             confirm_dlg.on_hide();
@@ -1919,18 +1868,6 @@ void SelectMachineDialog::on_ok_btn(wxCommandEvent &event)
             this->on_send_print();
         //}
     }
-}
-
-wxString SelectMachineDialog::format_steel_name(NozzleType type)
-{
-    if (type == NozzleType::ntHardenedSteel) {
-        return _L("Hardened Steel");
-    }
-    else if (type == NozzleType::ntStainlessSteel) {
-        return _L("Stainless Steel");
-    }
-
-    return _L("Unknown");
 }
 
 

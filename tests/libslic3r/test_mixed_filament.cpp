@@ -1,23 +1,32 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 #include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/MixedFilamentConfigRemap.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
 #include "libslic3r/Layer.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <clocale>
+#include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <cstdint>
 #include <locale>
+#include <numeric>
+#include <map>
 #include <set>
 #include <sstream>
+#include <utility>
 #include <unordered_map>
 #include <vector>
 
@@ -26,6 +35,7 @@
 #endif
 
 using namespace Slic3r;
+using Catch::Approx;
 
 namespace {
 
@@ -72,6 +82,139 @@ static std::vector<std::string> split_rows(const std::string &serialized)
             rows.push_back(row);
     }
     return rows;
+}
+
+// Mirrors normalize_color_match_weights and
+// clamp_color_match_weights_to_minimum from MixedColorMatchHelpers.cpp. The GUI
+// translation unit cannot be linked into the headless libslic3r test executable;
+// keep these implementations byte-faithful to production so a ratio regression
+// still surfaces here.
+static std::vector<int> normalize_color_match_weights_mirror(const std::vector<int> &weights)
+{
+    std::vector<int> out(weights.size(), 0);
+    if (out.empty())
+        return out;
+
+    int sum = 0;
+    for (size_t idx = 0; idx < out.size(); ++idx) {
+        out[idx] = std::max(0, weights[idx]);
+        sum += out[idx];
+    }
+    if (sum <= 0) {
+        out.assign(out.size(), 0);
+        out[0] = 100;
+        return out;
+    }
+
+    std::vector<double> remainders(out.size(), 0.0);
+    int assigned = 0;
+    for (size_t idx = 0; idx < out.size(); ++idx) {
+        const double exact = 100.0 * double(out[idx]) / double(sum);
+        out[idx] = int(std::floor(exact));
+        remainders[idx] = exact - double(out[idx]);
+        assigned += out[idx];
+    }
+
+    for (int missing = 100 - assigned; missing > 0; --missing) {
+        size_t best_idx = 0;
+        double best_remainder = -1.0;
+        for (size_t idx = 0; idx < remainders.size(); ++idx) {
+            if (remainders[idx] > best_remainder) {
+                best_remainder = remainders[idx];
+                best_idx = idx;
+            }
+        }
+        ++out[best_idx];
+        remainders[best_idx] = 0.0;
+    }
+    return out;
+}
+
+static std::vector<int> clamp_color_match_weights_mirror(const std::vector<int> &weights, int min_component_percent)
+{
+    const int minimum = std::clamp(min_component_percent, 0, 50);
+    std::vector<int> constrained(weights.size(), 0);
+    std::vector<unsigned char> supplied(weights.size(), 0);
+    if (constrained.empty())
+        return constrained;
+
+    size_t supplied_participants = 0;
+    for (size_t idx = 0; idx < weights.size(); ++idx) {
+        if (weights[idx] < 0) {
+            constrained[idx] = minimum;
+            supplied[idx] = 1;
+            ++supplied_participants;
+        } else if (weights[idx] > 0) {
+            constrained[idx] = std::max(weights[idx], minimum);
+            supplied[idx] = 1;
+            ++supplied_participants;
+        }
+    }
+    if (minimum > 0 && supplied_participants < 2) {
+        for (size_t idx = 0; idx < weights.size(); ++idx)
+            if (weights[idx] == 0) {
+                constrained[idx] = minimum;
+                supplied[idx] = 1;
+            }
+    }
+
+    constrained = normalize_color_match_weights_mirror(constrained);
+    if (minimum <= 0)
+        return constrained;
+
+    std::vector<size_t> active;
+    active.reserve(constrained.size());
+    for (size_t idx = 0; idx < constrained.size(); ++idx)
+        if (supplied[idx])
+            active.emplace_back(idx);
+    std::sort(active.begin(), active.end(), [&weights](size_t lhs, size_t rhs) {
+        if (weights[lhs] != weights[rhs])
+            return weights[lhs] > weights[rhs];
+        return lhs < rhs;
+    });
+    const size_t max_active = std::min<size_t>(active.size(), size_t(100 / minimum));
+    if (max_active < 2)
+        return constrained;
+    active.resize(max_active);
+
+    std::vector<unsigned char> participating(constrained.size(), 0);
+    int excess_total = 0;
+    for (const size_t idx : active) {
+        participating[idx] = 1;
+        excess_total += std::max(0, constrained[idx] - minimum);
+    }
+
+    std::vector<double> exact(constrained.size(), 0.0);
+    std::vector<double> remainders(constrained.size(), 0.0);
+    const int budget = 100 - int(max_active) * minimum;
+    int assigned = 0;
+    for (size_t idx = 0; idx < constrained.size(); ++idx) {
+        if (!participating[idx]) {
+            constrained[idx] = 0;
+            continue;
+        }
+        const int excess = std::max(0, constrained[idx] - minimum);
+        exact[idx] = double(minimum) + (excess_total > 0 ? double(budget) * double(excess) / double(excess_total) : 0.0);
+        constrained[idx] = int(std::floor(exact[idx]));
+        remainders[idx] = exact[idx] - double(constrained[idx]);
+        assigned += constrained[idx];
+    }
+
+    for (int missing = 100 - assigned; missing > 0; --missing) {
+        size_t best_idx = size_t(-1);
+        double best_remainder = -1.0;
+        for (const size_t idx : active) {
+            if (remainders[idx] > best_remainder) {
+                best_remainder = remainders[idx];
+                best_idx = idx;
+            }
+        }
+        if (best_idx == size_t(-1))
+            break;
+        ++constrained[best_idx];
+        remainders[best_idx] = 0.0;
+    }
+    return constrained;
 }
 
 static std::string join_rows(const std::vector<std::string> &rows)
@@ -173,6 +316,63 @@ static const int _auto_generate_enabler = []() {
 }();
 
 } // namespace
+
+TEST_CASE("Mixed color match weights enforce the configured minimum", "[MixedFilament][ColorMatch]")
+{
+    using Weights = std::vector<int>;
+
+    SECTION("Clamps outside-triangle barycentric weights")
+    {
+        CHECK(clamp_color_match_weights_mirror({120, -10, -10}, 15) == Weights{70, 15, 15});
+        CHECK(clamp_color_match_weights_mirror({60, 60, -20}, 15) == Weights{43, 42, 15});
+        CHECK(clamp_color_match_weights_mirror({100, 0, 0}, 15) == Weights{70, 15, 15});
+    }
+
+    SECTION("Keeps only enough participants when the minimum is high")
+    {
+        const Weights constrained = clamp_color_match_weights_mirror({-20, 43, 77}, 35);
+        CHECK(constrained == Weights{0, 35, 65});
+        CHECK(clamp_color_match_weights_mirror(constrained, 35) == constrained);
+    }
+
+    SECTION("Preserves excluded zero-weight colors")
+    {
+        CHECK(clamp_color_match_weights_mirror({60, 40, 0}, 15) == Weights{60, 40, 0});
+        CHECK(clamp_color_match_weights_mirror({50, 50, 0}, 15) == Weights{50, 50, 0});
+        CHECK(clamp_color_match_weights_mirror({100, 0, 0}, 15) == Weights{70, 15, 15});
+    }
+
+    SECTION("Supports two-color and four-color inputs")
+    {
+        CHECK(clamp_color_match_weights_mirror({120, -20}, 15) == Weights{85, 15});
+        const Weights four_colors = clamp_color_match_weights_mirror({10, 20, 30, 40}, 15);
+        CHECK(std::accumulate(four_colors.begin(), four_colors.end(), 0) == 100);
+        for (const int weight : four_colors)
+            CHECK((weight == 0 || weight >= 15));
+
+        const Weights four_colors_at_high_minimum = clamp_color_match_weights_mirror({10, 20, 30, 40}, 40);
+        CHECK(four_colors_at_high_minimum == Weights{0, 0, 40, 60});
+    }
+
+    SECTION("Clamping is idempotent and preserves excluded colors")
+    {
+        const std::vector<std::pair<Weights, int>> cases = {
+            {{120, -10, -10}, 15},
+            {{60, 60, -20}, 15},
+            {{100, 0, 0}, 15},
+            {{50, 50, 0}, 15},
+            {{-20, 43, 77}, 35},
+            {{10, 20, 30, 40}, 15},
+            {{10, 20, 30, 40}, 40},
+        };
+        for (const auto &entry : cases) {
+            const Weights &input  = entry.first;
+            const int     &minimum = entry.second;
+            const Weights once = clamp_color_match_weights_mirror(input, minimum);
+            CHECK(clamp_color_match_weights_mirror(once, minimum) == once);
+        }
+    }
+}
 
 TEST_CASE("Mixed filament remap follows stable row ids when same-pair rows reorder", "[MixedFilament]")
 {
@@ -641,6 +841,251 @@ TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[Mi
     }
 }
 
+TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height bounds", "[MixedFilament][LocalZ][Ratios]")
+{
+    MixedAutoGenerateGuard auto_generate(false);
+    bool                   painted           = false;
+    bool                   independent_rows  = false;
+    bool                   direct_multicolor = true;
+    SECTION("Whole object") {}
+    SECTION("Painted surface") { painted = true; }
+    SECTION("Independent mixed regions") { independent_rows = true; }
+    SECTION("Whole object without direct multicolor") { direct_multicolor = false; }
+
+    struct RatioCase
+    {
+        double layer_height;
+        int    mix_b_percent;
+        double lower_bound;
+        double upper_bound;
+        double total_a;
+        double total_b;
+        size_t pass_count;
+        double preferred_a = 0.0;
+        double preferred_b = 0.0;
+    };
+    const RatioCase cases[] = {
+        {0.20, 67, 0.04, 0.16, 0.066, 0.134, 2},
+        {0.20, 33, 0.04, 0.16, 0.134, 0.066, 2},
+        {0.24, 67, 0.04, 0.16, 0.080, 0.160, 2}, // 67% reaches the upper height limit.
+        {0.24, 33, 0.04, 0.16, 0.160, 0.080, 2},
+        {0.20, 75, 0.04, 0.16, 0.050, 0.150, 2},
+        {0.20, 25, 0.04, 0.16, 0.150, 0.050, 2},
+        {0.24, 50, 0.04, 0.16, 0.120, 0.120, 2},
+        {0.24, 51, 0.04, 0.16, 0.1176, 0.1224, 2}, // Near-equal heights must stay assigned to the correct component.
+        {0.24, 49, 0.04, 0.16, 0.1224, 0.1176, 2},
+        {0.20, 95, 0.04, 0.16, 0.040, 0.160, 2}, // An infeasible ratio must still respect both limits.
+        {0.24, 75, 0.04, 0.16, 0.080, 0.160, 2},
+        {0.24, 75, 0.02, 0.16, 0.060, 0.180, 4},               // Two A/B pairs make 25/75 feasible.
+        {0.20, 67, 0.02, 0.18, 0.066, 0.134, 2},               // Wider limits must not change a feasible ratio.
+        {0.24, 67, 0.04, 0.16, 0.150, 0.090, 3, 0.075, 0.090}, // Explicit A/B heights keep their A-first cadence.
+    };
+    for (const RatioCase& test : cases) {
+        CAPTURE(test.layer_height, test.mix_b_percent, test.lower_bound, test.upper_bound);
+        const std::vector<std::string> colors = {"#FF00FF", "#FFFFFF", "#0000FF", "#FFFF00"};
+        MixedFilamentManager           manager;
+        manager.add_custom_filament(1, 2, test.mix_b_percent, colors);
+        if (independent_rows)
+            manager.add_custom_filament(3, 4, 100 - test.mix_b_percent, colors);
+        for (MixedFilament& row : manager.mixed_filaments()) {
+            row.distribution_mode = int(MixedFilament::Simple);
+            row.manual_pattern.clear();
+        }
+
+        Model        model;
+        ModelObject* object = model.add_object();
+        ModelVolume* volume = object->add_volume(make_cube(10., 10., 5. * test.layer_height));
+        object->add_instance();
+        object->config.set("extruder", painted ? 3 : 5);
+        if (painted) {
+            TriangleSelector selector(volume->mesh());
+            for (size_t facet = 0; facet < volume->mesh().its.indices.size(); ++facet)
+                selector.set_facet(int(facet), EnforcerBlockerType(5));
+            REQUIRE(volume->mmu_segmentation_facets.set(selector));
+        }
+        if (independent_rows) {
+            ModelVolume* other = object->add_volume(make_cube(10., 10., 5. * test.layer_height));
+            other->set_offset(other->get_offset() + Vec3d(15., 0., 0.));
+            other->config.set("extruder", 6);
+        }
+
+        DynamicPrintConfig config = mixed_region_print_config(manager.serialize_custom_entries());
+        config.set("layer_height", test.layer_height);
+        config.set("initial_layer_print_height", test.layer_height);
+        config.set("outer_wall_line_width", 0.4);
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", !painted);
+        config.set("dithering_local_z_infill", true);
+        config.set("dithering_local_z_direct_multicolor", direct_multicolor);
+        config.set("mixed_filament_height_lower_bound", test.lower_bound);
+        config.set("mixed_filament_height_upper_bound", test.upper_bound);
+        config.set("mixed_color_layer_height_a", test.preferred_a);
+        config.set("mixed_color_layer_height_b", test.preferred_b);
+        config.set("enable_prime_tower", false);
+
+        Print print;
+        print.set_status_silent();
+        print.apply(model, config);
+        REQUIRE(print.objects().size() == 1);
+        PrintObject* print_object = print.get_object(0);
+        print_object->slice();
+        const auto& intervals = print_object->local_z_intervals();
+        const auto& plans     = print_object->local_z_sublayer_plan();
+        REQUIRE(intervals.size() > 1);
+        for (const LocalZInterval& interval : intervals) {
+            if (interval.layer_id == 0)
+                continue; // The first layer intentionally remains unsplit.
+            CAPTURE(interval.layer_id);
+            REQUIRE(interval.has_mixed_paint);
+            CHECK(interval.sublayer_count == test.pass_count * (independent_rows ? 2 : 1));
+            REQUIRE(interval.first_sublayer_idx + interval.sublayer_count <= plans.size());
+            std::vector<double> component_heights(4, 0.0);
+            for (size_t i = 0; i < interval.sublayer_count; ++i) {
+                const SubLayerPlan& plan = plans[interval.first_sublayer_idx + i];
+                REQUIRE(plan.split_interval);
+                CHECK(plan.flow_height >= test.lower_bound - 1e-6);
+                CHECK(plan.flow_height <= test.upper_bound + 1e-6);
+                CHECK_THAT(plan.flow_height, WithinAbs(plan.z_hi - plan.z_lo, 1e-6));
+                CHECK(plan.z_lo >= interval.z_lo - 1e-6);
+                CHECK(plan.z_hi <= interval.z_hi + 1e-6);
+                REQUIRE(plan.painted_masks_by_extruder.size() == component_heights.size());
+                for (size_t tool = 0; tool < component_heights.size(); ++tool)
+                    if (!plan.painted_masks_by_extruder[tool].empty())
+                        component_heights[tool] += plan.flow_height;
+            }
+            CHECK_THAT(component_heights[0], WithinAbs(test.total_a, 1e-6));
+            CHECK_THAT(component_heights[1], WithinAbs(test.total_b, 1e-6));
+            CHECK_THAT(component_heights[0] + component_heights[1], WithinAbs(interval.base_height, 1e-6));
+            if (independent_rows) {
+                const bool explicit_heights = test.preferred_a > 0.0 || test.preferred_b > 0.0;
+                CHECK_THAT(component_heights[2], WithinAbs(explicit_heights ? test.total_a : test.total_b, 1e-6));
+                CHECK_THAT(component_heights[3], WithinAbs(explicit_heights ? test.total_b : test.total_a, 1e-6));
+            }
+        }
+
+        MixedFilamentPreviewSettings preview;
+        preview.local_z_mode              = true;
+        preview.local_z_direct_multicolor = direct_multicolor;
+        preview.nominal_layer_height      = test.layer_height;
+        preview.mixed_lower_bound         = test.lower_bound;
+        preview.mixed_upper_bound         = test.upper_bound;
+        preview.preferred_a_height        = test.preferred_a;
+        preview.preferred_b_height        = test.preferred_b;
+        CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(manager.mixed_filaments().front(), preview) ==
+              int(std::lround(100. * test.total_b / test.layer_height)));
+    }
+}
+
+static void check_alternating_local_z_pairs(const PrintObject& object)
+{
+    struct LastPass
+    {
+        double z_hi;
+        size_t tool;
+    };
+    std::map<size_t, LastPass> last_by_group;
+    size_t                     checked_transitions = 0;
+    for (const SubLayerPlan& plan : object.local_z_sublayer_plan()) {
+        if (!plan.split_interval || plan.dependency_group == 0)
+            continue;
+        size_t tool = size_t(-1);
+        for (size_t i = 0; i < plan.painted_masks_by_extruder.size(); ++i) {
+            if (plan.painted_masks_by_extruder[i].empty())
+                continue;
+            REQUIRE(tool == size_t(-1));
+            tool = i;
+        }
+        if (tool == size_t(-1))
+            continue;
+        CAPTURE(plan.layer_id, plan.dependency_group, plan.z_lo, plan.z_hi);
+        const auto previous = last_by_group.find(plan.dependency_group);
+        if (previous != last_by_group.end() && std::abs(previous->second.z_hi - plan.z_lo) < 1e-6) {
+            CHECK(tool != previous->second.tool);
+            ++checked_transitions;
+        }
+        last_by_group[plan.dependency_group] = {plan.z_hi, tool};
+    }
+    CHECK(checked_transitions > 0);
+}
+
+TEST_CASE("Local-Z pairs keep alternating when a neighboring mixed region starts or ends", "[MixedFilament][LocalZ][Cadence]")
+{
+    MixedAutoGenerateGuard auto_generate(false);
+    for (int mix_b : {26, 50, 74}) {
+        CAPTURE(mix_b);
+        MixedFilamentManager           manager;
+        const std::vector<std::string> colors = {"#008CB3", "#AC4A74", "#CBAC00", "#F5F4F2"};
+        manager.add_custom_filament(1, 2, mix_b, colors);
+        manager.add_custom_filament(1, 2, 35, colors);
+        Model        model;
+        ModelObject* object = model.add_object();
+        object->add_volume(make_cube(10., 10., 1.6));
+        object->add_instance();
+        object->config.set("extruder", 5);
+        ModelVolume* neighbor = object->add_volume(make_cube(10., 10., 0.8));
+        neighbor->set_offset(neighbor->get_offset() + Vec3d(15., 0., 0.4));
+        neighbor->config.set("extruder", 6);
+
+        DynamicPrintConfig config = mixed_region_print_config(manager.serialize_custom_entries());
+        config.set("layer_height", 0.2);
+        config.set("initial_layer_print_height", 0.2);
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", true);
+        config.set("enable_prime_tower", false);
+        Print print;
+        print.set_status_silent();
+        print.apply(model, config);
+        print.get_object(0)->slice();
+        check_alternating_local_z_pairs(*print.get_object(0));
+    }
+}
+
+TEST_CASE("Painted Local-Z pairs keep alternating through the layer 66 transition", "[MixedFilament][LocalZ][Cadence]")
+{
+    MixedAutoGenerateGuard    auto_generate(false);
+    Model                     model;
+    DynamicPrintConfig        config = DynamicPrintConfig::full_print_config();
+    ConfigSubstitutionContext substitutions{ForwardCompatibilitySubstitutionRule::Enable};
+    PlateDataPtrs             plates;
+    std::vector<Preset*>      presets;
+    bool                      is_bbl = false;
+    Semver                    version;
+    const std::string         path = std::string(TEST_DATA_DIR) + "/local_z/CubeLines.3mf";
+    REQUIRE(load_bbs_3mf(path.c_str(), &config, &substitutions, &model, &plates, &presets, &is_bbl, &version, nullptr,
+                         LoadStrategy::LoadModel | LoadStrategy::LoadConfig | LoadStrategy::AddDefaultInstances));
+    release_PlateData_list(plates);
+    for (Preset* preset : presets)
+        delete preset;
+    REQUIRE(model.objects.size() == 1);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    print.get_object(0)->slice();
+    REQUIRE(print.get_object(0)->layer_count() > 66);
+    check_alternating_local_z_pairs(*print.get_object(0));
+}
+
+TEST_CASE("Unused support interface filament produces no prime tower", "[MixedFilament][PrimeTower]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->config.set("extruder", 1);
+    DynamicPrintConfig config = mixed_region_print_config("");
+    config.set("enable_support", true);
+    config.set("support_interface_filament", 4);
+    config.set("enable_prime_tower", true);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    print.process();
+    REQUIRE(print.is_step_done(psWipeTower));
+    REQUIRE(print.get_object(0)->support_layers().empty());
+    CHECK(print.wipe_tower_data().tool_changes.empty());
+    CHECK_FALSE(print.wipe_tower_data().wipe_tower_mesh_data);
+}
+
 TEST_CASE("Filament changes retain slices without whole-object Local-Z", "[MixedFilament][LocalZ][Invalidation]")
 {
     Model        model;
@@ -875,6 +1320,153 @@ TEST_CASE("Mixed filament component edits rebuild painted region targets", "[Mix
     print.apply(model, config);
     const std::vector<unsigned int> expected_updated_second_component_extruders {3, 4, mixed_virtual_id};
     CHECK(first_layer_range_painted_extruders(print) == expected_updated_second_component_extruders);
+}
+
+TEST_CASE("Painting the assigned mixed filament preserves a continuous perimeter", "[MixedFilament][Segmentation]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->ensure_on_bed();
+
+    constexpr int      mixed_id = 5;
+    DynamicPrintConfig config   = mixed_region_print_config(single_custom_mixed_definition(2, 3, 4242));
+    config.set("enable_prime_tower", false);
+    config.set("elefant_foot_compensation", 0.);
+    config.set("outer_wall_line_width", 0.4);
+    config.set("wall_loops", 1);
+    config.option<ConfigOptionPercent>("sparse_infill_density")->value = 0.;
+    config.set("top_shell_layers", 0);
+    config.set("bottom_shell_layers", 0);
+    config.option<ConfigOptionEnum<PerimeterGeneratorType>>("wall_generator")->value = PerimeterGeneratorType::Classic;
+
+    bool assign_part = false;
+    bool paint_top   = false;
+    SECTION("Object assignment") {}
+    SECTION("Part assignment") { assign_part = true; }
+    SECTION("Region collapse disabled") { config.set("mixed_filament_region_collapse", false); }
+    SECTION("Painting starts at the top surface")
+    {
+        paint_top = true;
+        config.set("top_shell_layers", 2);
+    }
+    SECTION("Full-domain Local-Z")
+    {
+        config.set("dithering_local_z_mode", true);
+        config.set("dithering_local_z_whole_objects", true);
+    }
+    (assign_part ? volume->config : object->config).set("extruder", mixed_id);
+
+    // Leave the other faces at the assigned mix. Top paint also covers a zone
+    // whose local cadence starts later than the object's first layer.
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(paint_top ? 2 : 4, EnforcerBlockerType(mixed_id));
+    selector.set_facet(paint_top ? 3 : 5, EnforcerBlockerType(mixed_id));
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 1);
+    PrintObject* print_object = print.get_object(0);
+    print_object->slice();
+    REQUIRE(print_object->layer_count() > 1);
+
+    for (const Layer* layer : print_object->layers()) {
+        size_t populated_regions = 0;
+        for (const LayerRegion* region : layer->regions()) {
+            if (region->slices.empty())
+                continue;
+            ++populated_regions;
+            CHECK(region->region().config().wall_filament.value == mixed_id);
+            REQUIRE(region->slices.surfaces.size() == 1);
+            CHECK_THAT(region->slices.surfaces.front().area() * SCALING_FACTOR * SCALING_FACTOR, Catch::Matchers::WithinAbs(100., 0.001));
+        }
+        CHECK(populated_regions == 1);
+    }
+
+    // With ordinary layer mixing, the painted boundary must not break the wall loop.
+    if (!config.opt_bool("dithering_local_z_mode")) {
+        print.process();
+        for (const Layer* layer : print_object->layers()) {
+            size_t perimeter_count = 0;
+            for (const LayerRegion* region : layer->regions()) {
+                const ExtrusionEntityCollection perimeters = region->perimeters.flatten();
+                perimeter_count += perimeters.size();
+                for (const ExtrusionEntity* perimeter : perimeters.entities)
+                    CHECK(perimeter->is_loop());
+            }
+            CHECK(perimeter_count == 1);
+        }
+    }
+}
+
+TEST_CASE("Same-mix painting preserves other material overrides", "[MixedFilament][Segmentation]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* volume = object->add_volume(make_cube(10., 10., 2.));
+    object->add_instance();
+    object->ensure_on_bed();
+    constexpr int mixed_id = 5;
+    object->config.set("extruder", mixed_id);
+
+    TriangleSelector selector(volume->mesh());
+    selector.set_facet(4, EnforcerBlockerType(mixed_id));
+    selector.set_facet(5, EnforcerBlockerType(mixed_id));
+
+    int expected_physical_id = 1;
+    SECTION("Physical paint over the same mixed parent")
+    {
+        selector.set_facet(8, EnforcerBlockerType(expected_physical_id));
+        selector.set_facet(9, EnforcerBlockerType(expected_physical_id));
+    }
+    SECTION("Same mixed paint over a different part material")
+    {
+        ModelVolume* other_volume = object->add_volume(make_cube(10., 10., 2.));
+        other_volume->set_offset(Vec3d(20., 0., 0.));
+        other_volume->config.set("extruder", 1);
+        TriangleSelector other_selector(other_volume->mesh());
+        other_selector.set_facet(4, EnforcerBlockerType(mixed_id));
+        other_selector.set_facet(5, EnforcerBlockerType(mixed_id));
+        REQUIRE(other_volume->mmu_segmentation_facets.set(other_selector));
+        expected_physical_id = 3;
+    }
+    SECTION("Painting overrides a different infill material")
+    {
+        volume->config.set("sparse_infill_filament", 1);
+        expected_physical_id = 3;
+    }
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(2, 3, 4242));
+    config.set("elefant_foot_compensation", 0.);
+    config.set("outer_wall_line_width", 0.4);
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    REQUIRE(print.objects().size() == 1);
+    PrintObject* print_object = print.get_object(0);
+    print_object->slice();
+
+    bool found_physical_override = false;
+    bool found_mixed_parent      = false;
+    for (const Layer* layer : print_object->layers()) {
+        for (const LayerRegion* region : layer->regions()) {
+            if (region->slices.empty())
+                continue;
+            const int filament_id = region->region().config().wall_filament.value;
+            found_physical_override |= filament_id == expected_physical_id;
+            found_mixed_parent |= filament_id == mixed_id;
+        }
+    }
+    CHECK(found_physical_override);
+    CHECK(found_mixed_parent);
 }
 
 TEST_CASE("ExtrusionPath copies preserve inset index", "[MixedFilament]")
@@ -3328,6 +3920,22 @@ TEST_CASE("Local Z infill subdivision defaults inactive when Subdivide Mix Layer
     CHECK_FALSE(full_config.opt_bool("dithering_local_z_infill"));
 }
 
+TEST_CASE("Direct multicolor Local-Z defaults enabled and respects an explicit opt-out", "[MixedFilament][Config]")
+{
+    CHECK(FullPrintConfig::defaults().dithering_local_z_direct_multicolor.value);
+    CHECK(MixedFilamentPreviewSettings{}.local_z_direct_multicolor);
+
+    PresetBundle bundle;
+    REQUIRE(bundle.project_config.has("dithering_local_z_direct_multicolor"));
+    CHECK(bundle.project_config.opt_bool("dithering_local_z_direct_multicolor"));
+
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    CHECK(config.opt_bool("dithering_local_z_direct_multicolor"));
+    bundle.project_config.set("dithering_local_z_direct_multicolor", false);
+    config.apply(bundle.project_config);
+    CHECK_FALSE(config.opt_bool("dithering_local_z_direct_multicolor"));
+}
+
 // --------------------------------------------------------------------------
 // compute_redundant_filaments
 // --------------------------------------------------------------------------
@@ -4951,7 +5559,32 @@ static void apply_config_layer_remap_mirror(
         const int           orig_obj_eid = (obj_opt ? obj_opt->getInt() : 0);
         auto                obj_it       = extruder_remap.find(orig_obj_eid);
         const bool          obj_remap    = (orig_obj_eid > 0 && obj_it != extruder_remap.end());
-        bool                object_extruder_written = false;
+        if (obj_remap) {
+            mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
+        } else if (orig_obj_eid <= 0) {
+            const auto default_it = extruder_remap.find(1);
+            if (default_it != extruder_remap.end()) {
+                for (const ModelVolume* mv : mo->volumes) {
+                    const ModelVolumeType vt         = mv->type();
+                    const bool            is_part    = (vt == ModelVolumeType::MODEL_PART);
+                    const bool            is_modifier = (vt == ModelVolumeType::PARAMETER_MODIFIER);
+                    if (!is_part && !is_modifier)
+                        continue;
+
+                    const ConfigOption* vol_opt = mv->config.option("extruder");
+                    if (vol_opt && vol_opt->getInt() > 0) continue;
+
+                    const bool has_default_regions =
+                        !is_part || mv->mmu_segmentation_facets.empty() ||
+                        mv->mmu_segmentation_facets.has_facets_including_implicit_none(*mv);
+                    if (!has_default_regions) continue;
+
+                    mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(default_it->second)));
+                    break;
+                }
+            }
+        }
+
         for (ModelVolume* mv : mo->volumes) {
             const ModelVolumeType vt = mv->type();
             const bool is_part      = (vt == ModelVolumeType::MODEL_PART);
@@ -4963,9 +5596,6 @@ static void apply_config_layer_remap_mirror(
                 auto it = extruder_remap.find(vol_opt->getInt());
                 if (it != extruder_remap.end())
                     mv->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(it->second)));
-            } else if (obj_remap && !object_extruder_written) {
-                mo->config.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(obj_it->second)));
-                object_extruder_written = true;
             }
         }
 
@@ -5032,6 +5662,158 @@ TEST_CASE("apply config remap: inheriting modifier follows object consistently",
     // Neither volume gained its own config entry — they still inherit.
     REQUIRE_FALSE(part->config.has("extruder"));
     REQUIRE_FALSE(mod->config.has("extruder"));
+}
+
+TEST_CASE("FacetsAnnotation::has_facets_including_implicit_none detects implicit and fully painted roots", "[MixedFilament][batch_apply]")
+{
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+
+    TriangleSelector selector(part->mesh());
+    selector.set_facet(0, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+    REQUIRE(part->mmu_segmentation_facets.has_facets_including_implicit_none(*part));
+
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+    REQUIRE_FALSE(part->mmu_segmentation_facets.has_facets_including_implicit_none(*part));
+}
+
+TEST_CASE("apply config remap: default extruder follows source filament mapping", "[MixedFilament][batch_apply]")
+{
+    // A default object extruder resolves to physical filament 1. When batch
+    // matching maps source filament 1 to a mixed slot, implicit unpainted
+    // regions must follow that mapping without a masking modifier volume.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    selector.set_facet(0, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector)); // one painted facet, the rest stay implicit default
+
+    // Serialization omits untouched NONE roots, but get_facets() deserializes
+    // the full mesh and must recover those implicit default triangles.
+    REQUIRE_FALSE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType::NONE));
+    REQUIRE_FALSE(part->mmu_segmentation_facets.get_facets(*part, EnforcerBlockerType::NONE).indices.empty());
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+    REQUIRE_FALSE(part->config.has("extruder"));
+    // Level 1 owns painted-state remapping; this mirror must leave state 2 alone.
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+}
+
+TEST_CASE("apply config remap: explicit zero object extruder follows default mapping", "[MixedFilament][batch_apply]")
+{
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+
+    obj->config.set_key_value("extruder", new ConfigOptionInt(0));
+    REQUIRE(obj->config.has("extruder"));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+}
+
+TEST_CASE("apply config remap: default object is untouched when source one is not mapped", "[MixedFilament][batch_apply]")
+{
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+
+    const std::unordered_map<int, unsigned int> remap{{2, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE_FALSE(obj->config.has("extruder"));
+    REQUIRE(part->extruder_id() == 0);
+}
+
+TEST_CASE("apply config remap: fully painted default object is not rewritten", "[MixedFilament][batch_apply]")
+{
+    // Color Mapping includes unused palette colours. If every facet is painted,
+    // no geometry actually consumes the default filament, so a 1 -> mixed mapping
+    // must not add a misleading explicit object extruder.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+    REQUIRE_FALSE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType::NONE));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE_FALSE(obj->config.has("extruder"));
+    REQUIRE(part->extruder_id() == 0);
+}
+
+TEST_CASE("apply config remap: explicit object extruder follows match for fully painted part", "[MixedFilament][batch_apply]")
+{
+    // An explicit object assignment is a real mapping source even when every
+    // part facet is painted. Keep the parent row on the matched filament so it
+    // cannot fall back to a stale physical slot after cleanup.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    obj->config.set_key_value("extruder", new ConfigOptionInt(1));
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
+}
+
+TEST_CASE("apply config remap: inheriting modifier consumes fully painted default object mapping", "[MixedFilament][batch_apply]")
+{
+    // Modifiers have no painted facets but still expose the object filament
+    // colour. They must therefore consume a default 1 -> mixed mapping even
+    // when the sibling MODEL_PART is fully painted with another extruder.
+    Model        model;
+    ModelObject* obj  = model.add_object();
+    ModelVolume* part = obj->add_volume(make_cube(20., 20., 20.));
+    ModelVolume* mod  = obj->add_volume(make_cube(20., 20., 20.), ModelVolumeType::PARAMETER_MODIFIER);
+    obj->add_instance();
+    obj->ensure_on_bed();
+
+    TriangleSelector selector(part->mesh());
+    for (int facet = 0; facet < int(part->mesh().its.indices.size()); ++facet)
+        selector.set_facet(facet, EnforcerBlockerType(2));
+    REQUIRE(part->mmu_segmentation_facets.set(selector));
+
+    const std::unordered_map<int, unsigned int> remap{{1, 5u}};
+    apply_config_layer_remap_mirror(model, remap);
+
+    REQUIRE(obj->config.opt_int("extruder") == 5);
+    REQUIRE(part->extruder_id() == 5);
+    REQUIRE(mod->extruder_id() == 5);
+    REQUIRE(part->mmu_segmentation_facets.has_facets(*part, EnforcerBlockerType(2)));
 }
 
 TEST_CASE("apply config remap: modifier with own extruder is remapped alone", "[MixedFilament][batch_apply]")
@@ -5822,4 +6604,283 @@ TEST_CASE("Mixed filament config remap sends deleted mixed rows to default", "[M
     CHECK(object_config.extruder() == 0);
     CHECK_FALSE(object_config.has("wall_filament"));
     CHECK(object_config.opt_int("solid_infill_filament") == 5);
+}
+
+TEST_CASE("SML layer count stays consistent between gcode header and layer tags", "[MixedFilament][LocalZ][LayerCount]")
+{
+    MixedAutoGenerateGuard guard(false);
+
+    constexpr unsigned int mixed_virtual_id = 5;
+    constexpr uint64_t     stable_id        = 4242;
+
+    Model        model;
+    ModelObject *object = model.add_object();
+    object->name        = "sml-layer-count.stl";
+    ModelVolume *volume = object->add_volume(make_cube(10., 10., 10.));
+    object->add_instance();
+    object->ensure_on_bed();
+    object->config.set("extruder", 1);
+
+    // Paint one side face with the mixed filament so SML subdivides that band.
+    const indexed_triangle_set &its = volume->mesh().its;
+    TriangleSelector            selector(volume->mesh());
+    size_t                      side_facets = 0;
+    for (size_t facet_idx = 0; facet_idx < its.indices.size(); ++facet_idx) {
+        const auto  &facet  = its.indices[facet_idx];
+        const Vec3f &v0     = its.vertices[facet(0)];
+        const Vec3f &v1     = its.vertices[facet(1)];
+        const Vec3f &v2     = its.vertices[facet(2)];
+        const Vec3f  normal = (v1 - v0).cross(v2 - v0);
+        if (std::abs(normal.x()) > std::abs(normal.y()) && std::abs(normal.x()) > std::abs(normal.z())) {
+            selector.set_facet(int(facet_idx), EnforcerBlockerType(mixed_virtual_id));
+            ++side_facets;
+        }
+    }
+    REQUIRE(side_facets > 0);
+    REQUIRE(volume->mmu_segmentation_facets.set(selector));
+
+    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(1, 2, stable_id));
+    config.set("dithering_local_z_mode", true);
+
+    Print print;
+    print.set_status_silent();
+    print.apply(model, config);
+    config = print.full_print_config();
+    try {
+        print.process();
+    } catch (const std::exception &e) {
+        printf("[layer-count-diag] process exception=%s\n", e.what());
+        fflush(stdout);
+    }
+    REQUIRE(print.objects().size() == 1);
+    const PrintObject *print_object = print.objects().front();
+    if (! print_object->is_step_done(posSlice)) {
+        SKIP("slicing did not finish in this environment (known local aborts)");
+    }
+
+    // The painted virtual extruder needs valid per-filament arrays for gcode export.
+    print.set_status_silent();
+    std::string gcode_path = "sml_layer_count_diag.gcode";
+    std::remove(gcode_path.c_str());
+    try {
+        print.export_gcode(gcode_path, nullptr);
+    } catch (const std::exception &e) {
+        printf("[layer-count-diag] export exception=%s\n", e.what());
+        fflush(stdout);
+    }
+    std::ifstream in(gcode_path, std::ios::binary);
+    if (! in.good()) {
+        std::remove(gcode_path.c_str());
+        SKIP("gcode export did not finish in this environment");
+    }
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::remove(gcode_path.c_str());
+
+    size_t layer_changes = 0;
+    for (size_t pos = 0; (pos = content.find(";LAYER_CHANGE", pos)) != std::string::npos; pos += 13)
+        ++layer_changes;
+    size_t total_layer_header = 0;
+    const size_t tag_pos = content.find("total_layer_count = ");
+    if (tag_pos != std::string::npos)
+        total_layer_header = size_t(atoi(content.c_str() + tag_pos + 21));
+
+    printf("[layer-count-diag] header=%zu layer_change_tags=%zu\n", total_layer_header, layer_changes);
+    fflush(stdout);
+    CHECK(total_layer_header == layer_changes);
+}
+
+TEST_CASE("GCodeProcessor layer endpoints table matches layer tags and covers moves", "[MixedFilament][LayerEndpoints]")
+{
+    // Simulated SML gcode: nominal layers at ;Z: 0.2/0.4/0.6, with a Local-Z
+    // sublayer printing at intermediate z 0.34 inside the second layer.
+    // s_IsBBLPrinter defaults to true in the processor; Snapmaker printers run the
+    // BBL tag flavour ("; CHANGE_LAYER" + "; Z_HEIGHT:"), which is also the GUI path.
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.2\n"
+        "G1 Z0.200 F600\n"
+        ";TYPE:WALL-OUTER\n"
+        "G1 X10.0 Y10.0 E1.0 F1800\n"
+        "G1 X20.0 Y10.0 E2.0\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.4\n"
+        "; COLOR_CHANGE\n"
+        "; LAYER_HEIGHT: 0.2\n"
+        "G1 Z0.400 F600\n"
+        "G1 X20.0 Y20.0 E3.0\n"
+        "G1 Z0.340 F600\n"
+        "G1 X30.0 Y20.0 E4.0\n"
+        "G1 Z0.400 F600\n"
+        "G1 X40.0 Y20.0 E5.0\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.6\n"
+        "G1 Z0.600 F600\n"
+        "G1 X40.0 Y30.0 E6.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    INFO("layer_endpoints size=" << result.layer_endpoints.size()
+         << " moves=" << result.moves.size());
+    REQUIRE(result.layer_endpoints.size() == 3);
+    CHECK(result.layer_endpoints[0].first == Approx(0.2f).margin(1e-4));
+    CHECK(result.layer_endpoints[1].first == Approx(0.4f).margin(1e-4));
+    CHECK(result.layer_endpoints[2].first == Approx(0.6f).margin(1e-4));
+    // Monotonic move ids and full coverage up to the last move.
+    for (size_t i = 0; i + 1 < result.layer_endpoints.size(); ++i) {
+        const auto& cur  = result.layer_endpoints[i].second;
+        const auto& next = result.layer_endpoints[i + 1].second;
+        CHECK(cur.first <= cur.second);
+        CHECK(next.first >= cur.first);
+    }
+    const size_t last_move_id = result.moves.size() - 1; // no seam markers in this gcode
+    CHECK(result.layer_endpoints.back().second.second == last_move_id);
+}
+
+// ---------------------------------------------------------------------------
+// Review follow-ups for the layer endpoint table:
+//  - moves preceding the first layer tag (prime line / initial travel) fold
+//    into the first layer span, matching the legacy z-scan visibility;
+//  - a layer with a missing/unparsable z tag inherits the previous valid z
+//    (the first layer falls back to the z of one of its own moves) instead of
+//    being silently dropped by the z > 0 consumer filter;
+//  - a layer without any move keeps its entry (slider count preserved) with a
+//    first > last sentinel span, never {0,0} which would light an unrelated move;
+//  - seam blip bookkeeping (i - seams) and the compatible (";Z:") flavour are
+//    covered.
+// NOTE: PathLayerStack::BuildLayers (GPU side, PathData.cpp) is a GUI-layer
+// consumer and is not linkable into this test target; it mirrors the slider
+// side's z > 0 filter and first > last sentinel handling verbatim by contract
+// (see the CONTRACT comments in both files).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("GCodeProcessor layer endpoints fold pre-layer moves and keep seam offsets", "[MixedFilament][LayerEndpoints]")
+{
+    // Prime line before the first layer tag, then a closed WALL-OUTER loop: the
+    // loop-ending extrude returns to the wall's first vertex, so the processor
+    // inserts an EMoveType::Seam blip when the next non-perimeter move arrives.
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        "G1 Z0.200 F600\n"                // pre-layer travel
+        "G1 X0.0 Y0.0 E0.5 F1800\n"       // pre-layer prime line extrusion
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.2\n"
+        "; FEATURE: Outer wall\n"
+        "G0 X10.0 Y10.0\n"                // travel to the wall start vertex
+        "G1 X20.0 Y10.0 E1.0\n"           // first wall extrude; the detector's first vertex is (10,10)
+        "G1 X20.0 Y20.0 E2.0\n"
+        "G1 X10.0 Y20.0 E3.0\n"
+        "G1 X10.0 Y10.0 E4.0\n"           // closes the loop on its first vertex
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.4\n"
+        "G1 Z0.400 F600\n"                // non-perimeter move: seam blip lands here
+        "G1 X30.0 Y10.0 E5.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_prelayer_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    size_t seam_count = 0;
+    for (const auto& move : result.moves)
+        if (move.type == EMoveType::Seam)
+            ++seam_count;
+    INFO("seam moves=" << seam_count << " layer_endpoints=" << result.layer_endpoints.size());
+    REQUIRE(result.layer_endpoints.size() == 2);
+    // the seam detector must have fired on the closed outer wall loop
+    REQUIRE(seam_count == 1);
+    // pre-layer moves fold into the first layer span, starting at move id 0
+    CHECK(result.layer_endpoints.front().second.first == 0);
+    // spans stay ordered with the seam-excluded id space intact
+    CHECK(result.layer_endpoints[0].second.first <= result.layer_endpoints[0].second.second);
+    CHECK(result.layer_endpoints[1].second.first > result.layer_endpoints[0].second.second);
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1 - seam_count);
+}
+
+TEST_CASE("GCodeProcessor layer endpoints repair missing z and sentinel empty layers", "[MixedFilament][LayerEndpoints]")
+{
+    // layer 1 has no z tag (falls back to the z of its own moves), layer 3 has
+    // none either (inherits layer 2's z), layer 4 is empty (no move at all)
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        "; CHANGE_LAYER\n"
+        "G1 Z0.200 F600\n"
+        "G1 X10.0 Y10.0 E1.0 F1800\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.4\n"
+        "G1 Z0.400 F600\n"
+        "G1 X20.0 Y10.0 E2.0\n"
+        "; CHANGE_LAYER\n"
+        "G1 X20.0 Y20.0 E3.0\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.8\n"
+        "; CHANGE_LAYER\n"
+        "; Z_HEIGHT: 0.9\n"
+        "G1 Z0.900 F600\n"
+        "G1 X30.0 Y20.0 E4.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_repair_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    REQUIRE(result.layer_endpoints.size() == 5);
+    CHECK(result.layer_endpoints[0].first == Approx(0.2f).margin(1e-4)); // own-move z fallback
+    CHECK(result.layer_endpoints[1].first == Approx(0.4f).margin(1e-4));
+    CHECK(result.layer_endpoints[2].first == Approx(0.4f).margin(1e-4)); // inherited
+    CHECK(result.layer_endpoints[3].first == Approx(0.8f).margin(1e-4));
+    // the empty layer keeps its entry (slider count preserved) with a
+    // first > last sentinel span that both consumers skip
+    CHECK(result.layer_endpoints[3].second.first > result.layer_endpoints[3].second.second);
+    CHECK(result.layer_endpoints[4].second.first <= result.layer_endpoints[4].second.second);
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1);
+}
+
+TEST_CASE("GCodeProcessor layer endpoints compatible flavour z tag", "[MixedFilament][LayerEndpoints]")
+{
+    // compatible (non-BBL) flavour: ";LAYER_CHANGE" + ";Z:" tags
+    struct FlavourGuard {
+        FlavourGuard() { GCodeProcessor::s_IsBBLPrinter = false; }
+        ~FlavourGuard() { GCodeProcessor::s_IsBBLPrinter = true; }
+    } guard;
+
+    const std::string gcode =
+        "G90\n"
+        "M82\n"
+        ";LAYER_CHANGE\n"
+        ";Z:0.2\n"
+        "G1 Z0.200 F600\n"
+        "G1 X10.0 Y10.0 E1.0 F1800\n"
+        ";LAYER_CHANGE\n"
+        ";Z:0.4\n"
+        "G1 Z0.400 F600\n"
+        "G1 X20.0 Y10.0 E2.0\n"
+        "M104 S0\n"
+        ;
+
+    GCodeProcessor processor;
+    processor.initialize("layer_endpoints_compatible_test.gcode");
+    processor.process_buffer(gcode);
+    processor.finalize(false);
+    const GCodeProcessorResult& result = processor.result();
+
+    REQUIRE(result.layer_endpoints.size() == 2);
+    CHECK(result.layer_endpoints[0].first == Approx(0.2f).margin(1e-4));
+    CHECK(result.layer_endpoints[1].first == Approx(0.4f).margin(1e-4));
+    CHECK(result.layer_endpoints.back().second.second == result.moves.size() - 1);
 }

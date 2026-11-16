@@ -28,7 +28,7 @@
 #include "slic3r/GUI/WebPreprintDialog.hpp"
 #include "slic3r/GUI/SSWCP.hpp"
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 #ifdef _WIN32
     #include <winsock2.h>
     #include <ws2tcpip.h>

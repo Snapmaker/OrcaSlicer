@@ -1814,10 +1814,16 @@ void TreeSupport::generate_toolpaths()
                         std::shared_ptr<Fill> filler_support =
                             std::shared_ptr<Fill>(Fill::new_from_type(base_fill_pattern));
                         filler_support->set_bounding_box(bbox_object);
-                        filler_support->spacing = support_base_on_bed
-                            ? flow.spacing()
-                            : (object_config.support_base_pattern_spacing.value * support_density);
-                        filler_support->angle = Geometry::deg2rad(object_config.support_angle.value);
+                        // A zero (or negative) configured base pattern spacing collapses the
+                        // filler pattern steps to zero and used to hang (FillConcentric) or
+                        // crash (FillHoneycomb / FillRectilinear) on non-bed layers. Fall back
+                        // to the flow spacing, mirroring the bed-layer handling above and the
+                        // upstream fix for Tree Slim (OrcaSlicer #11084).
+                        const coordf_t base_pattern_spacing = object_config.support_base_pattern_spacing.value;
+                        filler_support->spacing             = (support_base_on_bed || base_pattern_spacing <= 0.) ?
+                                                                  flow.spacing() :
+                                                                  base_pattern_spacing * support_density;
+                        filler_support->angle               = Geometry::deg2rad(object_config.support_angle.value);
 
                         Polygons loops = to_polygons(poly);
                         if (layer_id == 0) {

@@ -193,6 +193,8 @@ public:
     /// <param name="mouse_event">Keep information about mouse click</param>
     /// <returns>Return True when use the information and don't want to propagate it otherwise False.</returns>
     virtual bool on_mouse(const wxMouseEvent &mouse_event) { return false; }
+    /** Ends any active interaction when the canvas unexpectedly loses mouse capture. */
+    virtual void OnMouseCaptureLost() {}
     unsigned int get_sprite_id() const { return m_sprite_id; }
 
     int get_hover_id() const { return m_hover_id; }

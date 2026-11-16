@@ -40,6 +40,7 @@ struct DeviceFakeHttp final : public HttpTransport
     }
 
     HttpResponse post_json(const std::string& url, const std::string& body) override { return {404, {}, "not found"}; }
+    HttpResponse put_json(const std::string& url, const std::string& body) override { return {404, {}, "not found"}; }
 };
 
 struct DeviceFakeWebSocket final : public WebSocketTransport

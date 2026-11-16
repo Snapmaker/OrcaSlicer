@@ -534,6 +534,29 @@ EOF
 # AppImage stages this inside gitlab_build_linux.sh. Flatpak compiles from the
 # source tree inside flatpak-builder and does not run that script, so stage the
 # same CLI here or /app/share/Snapmaker_Orca will not contain it.
+#
+# -F flatpak never configures CMake on the host. build_all.yml checks out
+# submodules before flatpak-builder; do the same so the sandbox can run
+# SyncSnapmakerProfiles.cmake against objects already stored in .git.
+init_snapmaker_profiles() {
+    if [[ ! -f "$REPO_DIR/.gitmodules" ]] || ! grep -q 'submodules/Profiles' "$REPO_DIR/.gitmodules"; then
+        echo -e "${YELLOW}No Snapmaker profiles submodule in this checkout; skipping${NC}"
+        return 0
+    fi
+    if [[ ! -d "$REPO_DIR/.git" && ! -f "$REPO_DIR/.git" ]]; then
+        echo -e "${RED}Profiles submodule requires a git checkout: $REPO_DIR${NC}"
+        exit 1
+    fi
+    echo -e "${YELLOW}Fetching Snapmaker profiles submodule...${NC}"
+    git -C "$REPO_DIR" submodule sync -- submodules/Profiles
+    git -C "$REPO_DIR" submodule update --init --checkout --recursive -- submodules/Profiles
+    if [[ ! -f "$REPO_DIR/submodules/Profiles/Snapmaker.json" ]]; then
+        echo -e "${RED}Profiles submodule is missing Snapmaker.json${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}Snapmaker profiles submodule ready${NC}"
+}
+
 stage_snapmaker_control() {
     local platform cli
     case "$ARCH" in
@@ -569,6 +592,7 @@ stage_snapmaker_control() {
 
 pack_flatpak() {
     echo -e "${BLUE}===== Flatpak =====${NC}"
+    init_snapmaker_profiles
     stage_snapmaker_control
 
     local MANIFEST_REL="scripts/flatpak/io.github.Snapmaker.Snapmaker_Orca.gitlab.yml"

@@ -4774,6 +4774,12 @@ void ObjectList::update_selections()
                 int obj_idx = gl_vol->object_idx();
                 int vol_idx = gl_vol->volume_idx();
                 assert(obj_idx >= 0 && vol_idx >= 0);
+                if (obj_idx >= static_cast<int>(m_objects->size()) ||
+                    vol_idx >= static_cast<int>(object(obj_idx)->volumes.size()))
+                {
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": stale volume index, obj " << obj_idx << ", vol " << vol_idx;
+                    continue;
+                }
                 if (object(obj_idx)->volumes[vol_idx]->is_cut_connector())
                     sels.Add(m_objects_model->GetInfoItemByType(m_objects_model->GetItemById(obj_idx), InfoItemType::CutConnectors));
                 else {
@@ -4870,7 +4876,9 @@ void ObjectList::update_selections_on_canvas()
     if (sel_cnt == 0) {
         selection.remove_all();
         if (canvas_type != GLCanvas3D::ECanvasType::CanvasPreview)
-            wxGetApp().plater()->get_current_canvas3D()->update_gizmos_on_off_state();
+            wxGetApp().plater()->get_current_canvas3D()->UpdateGizmosForSelectionChange();
+        else
+            wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
         return;
     }
 
@@ -4976,8 +4984,9 @@ void ObjectList::update_selections_on_canvas()
     }
 
     if (canvas_type != GLCanvas3D::ECanvasType::CanvasPreview)
-        wxGetApp().plater()->get_current_canvas3D()->update_gizmos_on_off_state();
-    wxGetApp().plater()->canvas3D()->render();
+        wxGetApp().plater()->get_current_canvas3D()->UpdateGizmosForSelectionChange();
+    else
+        wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
 }
 
 void ObjectList::select_item(const wxDataViewItem& item)
@@ -5838,14 +5847,31 @@ void GUI::ObjectList::smooth_mesh()
                 continue;
             }
             ModelObject *obj = model.objects[obj_idx];
-            if (!obj || obj->volumes.empty()) {
+            if (!obj) {
+                continue;
+            }
+            // Object-level subdivision only touches the model parts. The auxiliary
+            // volumes (negative volumes, modifiers, support blockers/enforcers) must
+            // keep their exact geometry: subdividing them would shrink holes and
+            // round off blocker shapes, silently moving the boolean and support
+            // results. The face-count warning counts the same parts, not the whole
+            // object.
+            std::vector<ModelVolume *> model_volumes;
+            size_t                     model_face_count = 0;
+            for (ModelVolume *mv : obj->volumes) {
+                if (mv->type() == ModelVolumeType::MODEL_PART) {
+                    model_volumes.push_back(mv);
+                    model_face_count += mv->mesh().facets_count();
+                }
+            }
+            if (model_volumes.empty()) {
                 continue;
             }
             // Declining a confirmation aborts the whole job before anything is dispatched.
-            if (show_warning_dlg(obj->facets_count() * 4, obj->name, false)) {
+            if (show_warning_dlg(model_face_count * 4, obj->name, false)) {
                 return;
             }
-            for (ModelVolume *mv : obj->volumes) {
+            for (ModelVolume *mv : model_volumes) {
                 inputs->push_back({obj->id(), mv, mv->mesh_ptr(), mv->mesh()});
             }
         }
@@ -6282,6 +6308,7 @@ void ObjectList::reload_all_plates(bool notify_partplate)
 
 void ObjectList::on_plate_selected(int plate_index)
 {
+    wxGetApp().plater()->get_view3D_canvas3D()->set_as_dirty();
     wxDataViewItem item = m_objects_model->GetItemByPlateId(plate_index);
     wxDataViewItem sel = GetSelection();
 
@@ -6290,6 +6317,9 @@ void ObjectList::on_plate_selected(int plate_index)
 
     UnselectAll();
     Select(item);
+
+    // Refresh settings explicitly when selection is changed programmatically.
+    part_selection_changed();
 }
 
 //BBS: notify partplate the instance added/updated

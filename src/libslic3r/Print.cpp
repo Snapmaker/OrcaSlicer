@@ -507,18 +507,20 @@ static float effective_wipe_tower_volume(const PrintConfig& config, size_t extru
 {
     return std::max<float>(
         (float)config.prime_volume,
-        (float)config.filament_minimal_purge_on_wipe_tower.get_at(extruder_id));
+        (float)get_value_at(config, config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament,
+                            static_cast<unsigned int>(extruder_id)));
 }
 
 // Return the effective wipe tower volume as the maximum across all filaments.
 // Used for tower depth estimation where we need to account for the worst case.
 static float effective_max_wipe_tower_volume(const PrintConfig& config)
 {
+    const std::vector<double>& minimal_purges = config.filament_minimal_purge_on_wipe_tower.values;
+    if (minimal_purges.empty())
+        return (float)config.prime_volume;
     return std::max<float>(
         (float)config.prime_volume,
-        (float)*std::max_element(
-            config.filament_minimal_purge_on_wipe_tower.values.begin(),
-            config.filament_minimal_purge_on_wipe_tower.values.end()));
+        (float)*std::max_element(minimal_purges.begin(), minimal_purges.end()));
 }
 
 } // namespace
@@ -563,7 +565,10 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "enable_overhang_bridge_fan",
         "overhang_fan_speed",
         "overhang_fan_threshold",
+        "overhang_threshold_participating_cooling",
         "slow_down_for_layer_cooling",
+        "cooling_slowdown_logic",
+        "cooling_perimeter_transition_distance",
         "default_acceleration",
         "deretraction_speed",
         "close_fan_the_first_x_layers",
@@ -601,6 +606,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "top_surface_acceleration",
         "bridge_acceleration",
         "travel_acceleration",
+        "travel_short_distance_acceleration",
         "sparse_infill_acceleration",
         "internal_solid_infill_acceleration",
         // BBS
@@ -745,6 +751,9 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "mixed_filament_surface_indentation"
             || opt_key == "mixed_filament_region_collapse"
             || opt_key == "mixed_filament_definitions"
+            // Developer switch consumed inside slices_to_regions(): toggling must
+            // force a complete reslice, or the cached region slices hide the change.
+            || opt_key == "enable_overlap_area_carving"
             // Spiral Vase forces different kind of slicing than the normal model:
             // In Spiral Vase mode, holes are closed and only the largest area contour is kept at each layer.
             // Therefore toggling the Spiral Vase on / off requires complete reslicing.

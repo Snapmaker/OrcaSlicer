@@ -1065,7 +1065,7 @@ private:
     PrintRegionPtrs                         m_print_regions;
     
     //SoftFever
-    bool m_isBBLPrinter;
+    bool m_isBBLPrinter = false;
 
     // Ordered collections of extrusion paths to build skirt loops and brim.
     ExtrusionEntityCollection               m_skirt;
@@ -1109,6 +1109,9 @@ public:
     // ORCA: parameter below is now back to being a user option (min_skirt_length)
     //static float min_skirt_length;
 };
+
+// BBS: map print object with its first layer's first extruder
+std::map<ObjectID, unsigned int> getObjectExtruderMap(const Print& print);
 
 
 } /* slic3r_Print_hpp_ */

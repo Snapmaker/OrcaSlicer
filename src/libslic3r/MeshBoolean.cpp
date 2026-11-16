@@ -148,6 +148,16 @@ template<class _Mesh> void triangle_mesh_to_cgal(const TriangleMesh& M, _Mesh& o
     CGALProc::orient_polygon_soup(points, indices);
     CGALProc::polygon_soup_to_polygon_mesh(points, indices, out);
 
+    // polygon_soup_to_polygon_mesh() adds every point of the soup as a vertex, so
+    // points no polygon references anymore become isolated vertices. The volume
+    // orientation calls below dereference the halfedge of EVERY vertex, and a vertex
+    // without an incident face holds the null halfedge index (size_t(-1)), which
+    // crashes volume_connected_components() with an out-of-bounds read.
+    if (CGALProc::remove_isolated_vertices(out) > 0)
+    {
+        out.collect_garbage();
+    }
+
     // Number the faces because 'orient_to_bound_a_volume' needs a face <--> index map
     unsigned index = 0;
     for (auto face : out.faces()) face = CGAL::SM_Face_index(index++);
@@ -176,6 +186,13 @@ void triangle_mesh_to_cgal(const std::vector<stl_vertex> &                 V,
     using VI = typename _Mesh::Vertex_index;
     for (auto &f : F)
         out.add_face(VI(f(0)), VI(f(1)), VI(f(2)));
+
+    // V is added vertex by vertex, including vertices that no face of F references
+    // (e.g. a vertex of an OBJ file no face uses). Such isolated vertices crash
+    // does_bound_a_volume()/booleans - see the soup overload above.
+    if (CGALProc::remove_isolated_vertices(out) > 0) {
+        out.collect_garbage();
+    }
 }
 
 inline Vec3f to_vec3f(const _EpicMesh::Point& v)

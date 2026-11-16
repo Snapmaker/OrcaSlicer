@@ -502,6 +502,12 @@ public:
     // (e.g., to show a UI dialog and wait for user response).
     typedef std::function<bool()>  memory_guard_callback_type;
     void                       set_memory_guard_callback(memory_guard_callback_type cb) { m_memory_guard_callback = std::move(cb); }
+    // Master switch of the runtime memory guard: when false, check_memory_guard() is a no-op
+    // (behavior as before the guard existed). Plater enables it per slicing run unless the
+    // user opted out ("Don't ask again next time" / Preferences).
+    void                       set_memory_guard_enabled(bool enable) {
+        m_memory_guard_enabled.store(enable, std::memory_order_relaxed);
+    }
     // Has the calculation been canceled?
 	enum CancelStatus {
 		// No cancelation, background processing should run.
@@ -573,6 +579,8 @@ protected:
     // false, sets CANCELED_INTERNAL and throws CanceledException.
     // An atomic flag prevents concurrent dialog invocations from TBB workers.
     void                   check_memory_guard() {
+        if (!m_memory_guard_enabled.load(std::memory_order_relaxed))
+            return;
         auto now = std::chrono::steady_clock::now();
         // Throttle to one sample per 500ms per Print instance.
         if (now - m_last_mem_check < std::chrono::milliseconds(500))
@@ -639,6 +647,11 @@ private:
     // Callback invoked by the runtime memory guard when available physical
     // memory drops below threshold. Default: no-op (always continue).
     memory_guard_callback_type              m_memory_guard_callback = []() { return true; };
+
+    // Master switch of the runtime memory guard. Defaults to false: a Print
+    // instance without an explicit set_memory_guard_enabled(true) runs with
+    // no guard at all (pre-guard behavior).
+    std::atomic<bool>                       m_memory_guard_enabled{false};
 
     // Set to true when the user acknowledges the memory warning once.
     // Prevents repeated dialogs within the same slicing session.

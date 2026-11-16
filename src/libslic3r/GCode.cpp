@@ -8045,11 +8045,39 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         _mm3_per_mm *= m_config.bottom_solid_infill_flow_ratio;
     else if (path.role() == erInternalBridgeInfill)
         _mm3_per_mm *= m_config.internal_bridge_flow;
+    else if (path.role() == erBrim)
+        _mm3_per_mm *= m_config.brim_flow_ratio;
     else if (path.role() == erSupportTransition)
         // Apply independent flow ratio for support transition layers
         _mm3_per_mm *= m_config.support_transition_flow_ratio.get_abs_value(1.0f);
     else if (sloped)
         _mm3_per_mm *= m_config.scarf_joint_flow_ratio;
+
+    if (m_config.set_other_flow_ratios) {
+        if (path.role() == erExternalPerimeter) {
+            _mm3_per_mm *= m_config.outer_wall_flow_ratio;
+        } else if (path.role() == erPerimeter) {
+            _mm3_per_mm *= m_config.inner_wall_flow_ratio;
+        } else if (path.role() == erOverhangPerimeter) {
+            _mm3_per_mm *= m_config.overhang_flow_ratio;
+        } else if (path.role() == erInternalInfill) {
+            _mm3_per_mm *= m_config.sparse_infill_flow_ratio;
+        } else if (path.role() == erSolidInfill) {
+            _mm3_per_mm *= m_config.internal_solid_infill_flow_ratio;
+        } else if (path.role() == erGapFill) {
+            _mm3_per_mm *= m_config.gap_fill_flow_ratio;
+        } else if (path.role() == erSupportMaterial) { // Should this condition also cover erSupportTransition?
+            _mm3_per_mm *= m_config.support_flow_ratio;
+        } else if (path.role() == erSupportMaterialInterface) {
+            _mm3_per_mm *= m_config.support_interface_flow_ratio;
+        }
+
+        // Additionally, adjust the value if we are on the first layer (except for brims and skirts)
+        if (this->on_first_layer() && (path.role() != erBrim && path.role() != erSkirt)) {
+            _mm3_per_mm *= m_config.first_layer_flow_ratio;
+        }
+    }
+
     // Effective extrusion length per distance unit = (filament_flow_ratio/cross_section) * mm3_per_mm / print flow ratio
     // m_writer.extruder()->e_per_mm3() below is (filament flow ratio / cross-sectional area)
     double e_per_mm = m_writer.extruder()->e_per_mm3() * _mm3_per_mm;
@@ -8083,7 +8111,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         } else if (path.role() == erTopSolidInfill) {
             speed = this->process_flow_value(m_config.top_surface_speed);
         } else if (path.role() == erIroning) {
-            speed = this->process_flow_value(m_config.ironing_speed);
+            speed = m_config.ironing_speed;
         } else if (path.role() == erBottomSurface) {
             speed = this->process_flow_value(m_config.initial_layer_infill_speed);
         } else if (path.role() == erGapFill) {

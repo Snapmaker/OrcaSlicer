@@ -36,11 +36,12 @@ bool contains_external_bridge(const ExtrusionEntity& entity)
 
 } // namespace
 
-TEST_CASE("Tree support preserves external bridge infill with zero top Z distance", "[SupportMaterial][TreeSupport][Bridge]")
+TEST_CASE("Automatic support preserves external bridge infill with zero top Z distance",
+          "[SupportMaterial][TreeSupport][NormalSupport][Bridge]")
 {
     DynamicPrintConfig config = Test::default_print_config();
     // A zero bridge-length limit requests support under bridges; it must not
-    // change their extrusion role to ordinary bottom infill for tree supports.
+    // change their extrusion role to ordinary bottom infill for automatic supports.
     config.set_key_value("max_bridge_length", new ConfigOptionFloat(0.));
     config.set_key_value("enable_support", new ConfigOptionBool(true));
     config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(stTreeAuto));
@@ -48,7 +49,6 @@ TEST_CASE("Tree support preserves external bridge infill with zero top Z distanc
     config.set_key_value("support_interface_top_layers", new ConfigOptionInt(2));
     config.set_key_value("support_critical_regions_only", new ConfigOptionBool(false));
 
-    bool expect_bridge  = true;
     bool expect_support = true;
     SECTION("Automatic tree support with a zero top Z distance") {}
     SECTION("Automatic tree support with a nonzero top Z distance")
@@ -70,11 +70,31 @@ TEST_CASE("Tree support preserves external bridge infill with zero top Z distanc
         config.set_key_value("enable_support", new ConfigOptionBool(false));
         expect_support = false;
     }
-    SECTION("Normal automatic support with a zero gap retains supported bottom infill")
+    SECTION("Normal automatic support with a zero gap preserves external bridges")
     {
         config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(stNormalAuto));
         config.set_key_value("bridge_no_support", new ConfigOptionBool(false));
-        expect_bridge = false;
+    }
+    SECTION("Normal automatic support with a nonzero top Z distance")
+    {
+        config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(stNormalAuto));
+        config.set_key_value("support_top_z_distance", new ConfigOptionFloat(0.2));
+    }
+    SECTION("Normal automatic support without interface layers")
+    {
+        config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(stNormalAuto));
+        config.set_key_value("support_interface_top_layers", new ConfigOptionInt(0));
+    }
+    SECTION("Normal automatic support with solid interface spacing")
+    {
+        config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(stNormalAuto));
+        config.set_key_value("support_interface_spacing", new ConfigOptionFloat(0.));
+    }
+    SECTION("Normal automatic support skipping bridges")
+    {
+        config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(stNormalAuto));
+        config.set_key_value("bridge_no_support", new ConfigOptionBool(true));
+        expect_support = false;
     }
 
     Print print;
@@ -86,6 +106,8 @@ TEST_CASE("Tree support preserves external bridge infill with zero top Z distanc
     REQUIRE_FALSE(print.objects().front()->layers().empty());
     if (expect_support)
         CHECK_FALSE(print.objects().front()->support_layers().empty());
+    if (config.opt_bool("bridge_no_support"))
+        CHECK(print.objects().front()->support_layers().empty());
     // The bed-contacting first layer must remain ordinary bottom infill.
     for (const LayerRegion* region : print.objects().front()->layers().front()->regions())
         CHECK_FALSE(contains_external_bridge(region->fills));
@@ -96,7 +118,7 @@ TEST_CASE("Tree support preserves external bridge infill with zero top Z distanc
             for (const LayerRegion* region : layer->regions())
                 found_bridge |= contains_external_bridge(region->fills);
 
-    CHECK(found_bridge == expect_bridge);
+    CHECK(found_bridge);
 
     // Preview obtains its feature types from the exported G-code role tags. reserved_tag() picks its
     // dialect from a mutable static that do_export() rewrites to the print's BBL flag, so sync it
@@ -105,5 +127,5 @@ TEST_CASE("Tree support preserves external bridge infill with zero top Z distanc
     const std::string bridge_tag = ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) +
                                    ExtrusionEntity::role_to_string(erBridgeInfill) + "\n";
     const std::string gcode = Test::gcode(print);
-    CHECK((gcode.find(bridge_tag) != std::string::npos) == expect_bridge);
+    CHECK(gcode.find(bridge_tag) != std::string::npos);
 }

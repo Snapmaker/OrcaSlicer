@@ -17,6 +17,9 @@
 #include "slic3r/GUI/SSWCP.hpp"
 #include "slic3r/GUI/DownloadManager.hpp"
 #include "slic3r/Utils/PresetUpdater.hpp"
+#ifdef __APPLE__
+#include "slic3r/Utils/MacUninstallWatcher.hpp"
+#endif
 #include "slic3r/Config/Version.hpp"
 #include "libslic3r/MixedFilament.hpp"
 
@@ -1316,6 +1319,13 @@ void GUI_App::shutdown(bool isRecreate)
 {
     BOOST_LOG_TRIVIAL(info) << "GUI_App::shutdown enter";
 
+#ifdef __APPLE__
+    if (!isRecreate)
+    {
+        m_uninstall_watcher_registration.stop();
+    }
+#endif
+
     if (!m_is_recreating_gui)
         m_is_closing = true;
     stop_gateway_service();
@@ -2072,6 +2082,9 @@ void GUI_App::init_networking_callbacks()
 
 GUI_App::~GUI_App()
 {
+#ifdef __APPLE__
+    m_uninstall_watcher_registration.stop();
+#endif
     GUI_App::m_app_alive.store(false);
     // Close the check-then-act window of the m_app_alive guards in the
     // version-check Http callbacks: drain every callback that already passed
@@ -2418,6 +2431,9 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+#ifdef __APPLE__
+    m_uninstall_watcher_registration.stop();
+#endif
     WidgetInspector::disable();
 
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
@@ -2640,6 +2656,10 @@ bool GUI_App::on_init_inner()
     if (!start_gateway_service())
         BOOST_LOG_TRIVIAL(warning) << "failed to start connection gateway during application startup";
     profiler.mark("gateway_service.start");
+#ifdef __APPLE__
+    m_uninstall_watcher_registration.start();
+    profiler.mark("macos uninstall watcher");
+#endif
 #ifdef _MSW_DARK_MODE
 
 #ifndef __WINDOWS__

@@ -23,6 +23,9 @@
 #include "../Utils/PrintHost.hpp"
 #include "slic3r/GUI/SSWCP.hpp"
 #include "slic3r/GUI/PrinterWebView.hpp"
+#ifdef __APPLE__
+#include "slic3r/Utils/MacUninstallWatcher.hpp"
+#endif
 #include <wx/app.h>
 #include <wx/colour.h>
 #include <wx/font.h>
@@ -932,6 +935,9 @@ private:
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
     std::string             m_open_method;
+#ifdef __APPLE__
+    MacUninstallWatcherRegistration m_uninstall_watcher_registration;
+#endif
     Gateway::AccountSnapshot   m_gateway_account;
     std::atomic<std::uint64_t> m_gateway_account_refresh_generation{0};
     std::vector<std::thread>   m_gateway_account_refresh_workers;

@@ -590,6 +590,11 @@ private:
     void discover_horizontal_shells();
     void combine_infill();
     void _generate_support_material();
+    // Port of BambuStudio warn_uncovered_overhangs(): compare the tree-support layer
+    // areas against the overhangs they were meant to cover and warn when regions stay
+    // unsupported (most visibly under "Support on build plate only").
+    void warn_uncovered_overhangs();
+    ExPolygons collected_support_areas(const SupportLayer *support_layer) const;
     std::pair<FillAdaptive::OctreePtr, FillAdaptive::OctreePtr> prepare_adaptive_infill_data(
         const std::vector<std::pair<const Surface*, float>>& surfaces_w_bottom_z) const;
     FillLightning::GeneratorPtr prepare_lightning_infill_data();

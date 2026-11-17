@@ -283,8 +283,11 @@ private:
             Microsoft::WRL::Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
                 [weak_self](HRESULT errorCode, LPCWSTR scriptId) -> HRESULT {
                     (void) scriptId;
-                    if (WebViewEdge *self = weak_self.get())
+                    if (WebViewEdge *self = weak_self.get()) {
+                        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview-bridge] [register_callback] handler="
+                                                << self->m_scriptMessageHandlerName.ToUTF8().data() << " hr=" << errorCode;
                         self->MarkBridgeScriptReady(SUCCEEDED(errorCode));
+                    }
                     return S_OK;
                 }).Get());
         if (FAILED(hr)) {

@@ -1255,6 +1255,18 @@ struct Sidebar::priv
     std::shared_ptr<NozzleSyncState> nozzle_sync_state = std::make_shared<NozzleSyncState>();
 
     wxPanel *scrolled;
+    // Inert target for the focus parked by clicks on blank space inside the sidebar's boxes (see
+    // park_focus_on_click). A plain window without wxTAB_TRAVERSAL, so it neither forwards the
+    // focus into a child control nor paints a focused state of its own.
+    wxWindow* focus_sink = nullptr;
+    // Blank-space clicks on a sidebar panel must not let the default handling focus that panel:
+    // a wxTAB_TRAVERSAL panel forwards the focus to the child that had it last (or to the first
+    // focusable one), which relights a combo box. Consume the click and park the focus on
+    // focus_sink instead. No Skip(): eating the event is what keeps the default handling out.
+    void park_focus_on_click(wxWindow* w)
+    {
+        w->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) { focus_sink->SetFocus(); });
+    }
     PlaterPresetComboBox *combo_print;
     std::vector<PlaterPresetComboBox*> combos_filament;
     int editing_filament = -1;
@@ -2170,8 +2182,16 @@ Sidebar::Sidebar(Plater *parent)
     Choice::register_dynamic_list("solid_infill_filament", &dynamic_filament_list_1_based);
     Choice::register_dynamic_list("wipe_tower_filament", &dynamic_filament_list);
 
+    // Inert focus target for the blank-space-click binds below; created before the content panel so
+    // it stays below everything and never receives a click itself.
+    p->focus_sink = new wxWindow(this, wxID_ANY, wxDefaultPosition, wxSize(1, 1));
+    // Never a keyboard-navigation stop: the sink must be reachable only by the programmatic
+    // SetFocus from park_focus_on_click, never by Tab/Shift+Tab walking the sidebar.
+    p->focus_sink->DisableFocusFromKeyboard();
+
     p->scrolled = new wxPanel(this);
     p->scrolled->SetBackgroundColour(*wxWHITE);
+    p->park_focus_on_click(p->scrolled);
 
 
     SetFont(wxGetApp().normal_font());
@@ -2206,6 +2226,10 @@ Sidebar::Sidebar(Plater *parent)
         p->m_panel_printer_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
         p->m_panel_printer_title->SetBackgroundColor(title_bg);
         p->m_panel_printer_title->SetBackgroundColor2(0xF1F1F1);
+        // StaticBox is a plain wxWindow (no container forwarding), so a blank click here would
+        // leave the focus invisibly on the title; park it on the sink so the control being edited
+        // is defocused to the documented inert target.
+        p->park_focus_on_click(p->m_panel_printer_title);
 
         p->m_printer_icon = new ScalableButton(p->m_panel_printer_title, wxID_ANY, "printer");
         p->m_text_printer_settings = new Label(p->m_panel_printer_title, _L("Printer"), LB_PROPAGATE_MOUSE_EVENT);
@@ -2288,6 +2312,7 @@ Sidebar::Sidebar(Plater *parent)
         /*************************** 2. add printer content ************************/
         p->m_panel_printer_content = new wxPanel(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
         p->m_panel_printer_content->SetBackgroundColour(wxColour(255, 255, 255));
+        p->park_focus_on_click(p->m_panel_printer_content);
 
         StateColor panel_bd_col(std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Pressed),
                                 std::pair<wxColour, int>(wxColour(0x00AE42), StateColor::Hovered),
@@ -2446,6 +2471,7 @@ Sidebar::Sidebar(Plater *parent)
         StaticBox* nozzle_container = new StaticBox(p->m_panel_printer_content, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                                                     wxTAB_TRAVERSAL | wxBORDER_NONE);
         nozzle_container->SetCornerRadius(8);
+        p->park_focus_on_click(nozzle_container);
         // nozzle_container->SetBorderColor(panel_bd_col);
 
         // 创建notebook
@@ -2469,6 +2495,9 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_filament_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
     p->m_panel_filament_title->SetBackgroundColor(title_bg);
     p->m_panel_filament_title->SetBackgroundColor2(0xF1F1F1);
+    // Blank-space clicks on the title bar park the focus on the sink; the LEFT_UP handler below
+    // keeps collapsing/expanding the section.
+    p->park_focus_on_click(p->m_panel_filament_title);
     p->m_panel_filament_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e)
     {
         if (e.GetPosition().x > (p->m_flushing_volume_btn->IsShown()
@@ -3025,6 +3054,7 @@ Sidebar::Sidebar(Plater *parent)
     // add filament content
     p->m_panel_filament_content = new wxPanel( p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );
     p->m_panel_filament_content->SetBackgroundColour( wxColour( 255, 255, 255 ) );
+    p->park_focus_on_click(p->m_panel_filament_content);
 
     //wxBoxSizer* bSizer_filament_content;
     //bSizer_filament_content = new wxBoxSizer( wxHORIZONTAL );
@@ -3039,6 +3069,9 @@ Sidebar::Sidebar(Plater *parent)
     p->m_scrolled_filaments->SetBackgroundColour(*wxWHITE);
     p->m_panel_scrolled_filament_content = new wxPanel(p->m_scrolled_filaments, wxID_ANY);
     p->m_panel_scrolled_filament_content->SetBackgroundColour(*wxWHITE);
+    // Blank-space clicks between/around the filament rows must not land on one of the row combos.
+    p->park_focus_on_click(p->m_scrolled_filaments);
+    p->park_focus_on_click(p->m_panel_scrolled_filament_content);
     p->m_panel_scrolled_filament_content->SetSizer(p->sizer_filaments);
     auto* scrolled_fila_sizer = new wxBoxSizer(wxVERTICAL);
     scrolled_fila_sizer->Add(p->m_panel_scrolled_filament_content, 0, wxEXPAND);
@@ -3092,6 +3125,7 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_physical_filaments_title->SetBackgroundColor2(0xF1F1F1);
     p->m_panel_physical_filaments_title->SetMinSize(wxSize(-1, FromDIP(30)));
     p->m_panel_physical_filaments_title->SetMaxSize(wxSize(-1, FromDIP(30)));
+    p->park_focus_on_click(p->m_panel_physical_filaments_title);
     p->m_filament_icon = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "filament");
     auto* physical_label = new Label(p->m_panel_physical_filaments_title, _L("Filaments"), LB_PROPAGATE_MOUSE_EVENT);
     auto* h_physical_title = new wxBoxSizer(wxHORIZONTAL);
@@ -3172,6 +3206,7 @@ Sidebar::Sidebar(Plater *parent)
     p->m_panel_mixed_filaments_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
     p->m_panel_mixed_filaments_title->SetBackgroundColor(title_bg);
     p->m_panel_mixed_filaments_title->SetBackgroundColor2(0xF1F1F1);
+    p->park_focus_on_click(p->m_panel_mixed_filaments_title);
 
     // Create icon
     p->m_mixed_filaments_icon = new ScalableButton(p->m_panel_mixed_filaments_title, wxID_ANY, "filament");
@@ -3298,6 +3333,7 @@ Sidebar::Sidebar(Plater *parent)
 
     // Create content panel (collapsible)
     p->m_panel_mixed_filaments_content = new wxPanel(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
+    p->park_focus_on_click(p->m_panel_mixed_filaments_content);
     {
         const bool is_dark = wxGetApp().dark_mode();
         p->m_panel_mixed_filaments_content->SetBackgroundColour(is_dark ? wxColour(45, 45, 49) : wxColour(255, 255, 255));
@@ -6497,6 +6533,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
     p->m_panel_color_mix_title->SetBackgroundColor2(0xF1F1F1);
     p->m_panel_color_mix_title->SetMinSize(wxSize(-1, FromDIP(30)));
     p->m_panel_color_mix_title->SetMaxSize(wxSize(-1, FromDIP(30)));
+    p->park_focus_on_click(p->m_panel_color_mix_title);
 
     p->m_color_mix_icon = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "color_palette");
     auto* label = new Label(p->m_panel_color_mix_title, _L("Color Mixing"), LB_PROPAGATE_MOUSE_EVENT);
@@ -6528,6 +6565,9 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
     // Content panel — match physical filament content panel (sizer set dynamically in update)
     p->m_panel_color_mix_content = new wxPanel(p->m_scrolled_color_mix, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
     p->m_panel_color_mix_content->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
+    // Blank-space clicks between/around the mixed filament rows must not land on a combo box.
+    p->park_focus_on_click(p->m_scrolled_color_mix);
+    p->park_focus_on_click(p->m_panel_color_mix_content);
 
     // Add content panel to scrolled window
     auto* scrolled_sizer = new wxBoxSizer(wxVERTICAL);
@@ -9575,6 +9615,9 @@ void Sidebar::update_nozzle_settings(bool switch_machine)
     for (size_t i = 0; i < new_nozzle_count; i++) {
         wxPanel* nozzle_panel = new wxPanel(p->m_nozzle_notebook, wxID_ANY, wxDefaultPosition, wxDefaultSize,
                                             wxTAB_TRAVERSAL | wxBORDER_NONE);
+        // Blank-space clicks on the page must not be forwarded to the combo box that had the focus
+        // last. Bound here because the pages are recreated on every rebuild.
+        p->park_focus_on_click(nozzle_panel);
         // nozzle_panel->SetBackgroundColour(wxColour(255, 255, 255));
 
         wxBoxSizer* tab_sizer = new wxBoxSizer(wxHORIZONTAL);

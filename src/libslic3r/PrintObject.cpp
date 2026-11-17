@@ -636,9 +636,12 @@ void PrintObject::detect_overhangs_for_lift()
 
 void PrintObject::generate_support_material()
 {
-    // Support preview also needs the real bridge envelopes, including flow-scaled thin bridges.
-    if (!is_step_done(posSupportMaterial) && has_support() && m_config.support_type == stNormalAuto && m_config.support_top_z_distance == 0.)
+    // Support preview needs perimeter fill regions before generating real bridge envelopes.
+    if (!is_step_done(posSupportMaterial) && has_support() && m_config.support_type == stNormalAuto &&
+        m_config.support_top_z_distance == 0.) {
+        this->make_perimeters();
         this->infill();
+    }
     if (this->set_started(posSupportMaterial)) {
         this->clear_support_layers();
 

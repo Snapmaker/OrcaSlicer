@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <array>
 #include <set>
 
 #include "libslic3r/ClipperUtils.hpp"
@@ -292,20 +293,60 @@ TEST_CASE("Zero-gap bridge flow and angle changes rebuild their support", "[Supp
     check_bridge_envelopes(*print.objects().front(), 0.48);
 }
 
-TEST_CASE("Zero-gap thick support preview prepares the bridge paths", "[SupportMaterial][Bridge][BridgeEnvelope]")
+TEST_CASE("Zero-gap support preview preserves subsequent infill and G-code", "[SupportMaterial][Bridge][BridgeEnvelope][SupportPreview]")
 {
+    const bool   thick       = GENERATE(false, true);
+    const int    raft_layers = GENERATE(0, 3);
+    const bool   extra_layer = GENERATE(false, true);
+    const double bridge_flow = GENERATE(1., 1.44);
+    CAPTURE(thick, raft_layers, extra_layer, bridge_flow);
     DynamicPrintConfig config = Test::default_print_config();
     config.set_key_value("enable_support", new ConfigOptionBool(true));
     config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(stNormalAuto));
     config.set_key_value("support_top_z_distance", new ConfigOptionFloat(0.));
-    config.set_key_value("thick_bridges", new ConfigOptionBool(true));
+    config.set_key_value("thick_bridges", new ConfigOptionBool(thick));
+    config.set_key_value("raft_layers", new ConfigOptionInt(raft_layers));
+    config.set_key_value("bridge_flow", new ConfigOptionFloat(bridge_flow));
+    config.set_key_value("enable_extra_bridge_layer",
+                         new ConfigOptionEnum<EnableExtraBridgeLayer>(extra_layer ? eblExternalBridgeOnly : eblDisabled));
+    auto fill_counts = [](const PrintObject& object) {
+        std::array<size_t, 2> counts{};
+        for (const Layer* layer : object.layers())
+            for (const LayerRegion* region : layer->regions()) {
+                std::vector<const ExtrusionPath*> paths;
+                collect_fill_paths(region->fills, paths);
+                counts[0] += paths.size();
+                for (const ExtrusionPath* path : paths)
+                    counts[1] += path->role() == erBridgeInfill;
+            }
+        return counts;
+    };
+    Print direct;
+    Model direct_model;
+    Test::init_print({short_bridge_mesh()}, direct, direct_model, config);
+    direct.process();
+    const auto expected = fill_counts(*direct.objects().front());
+    REQUIRE(expected[0] > 0);
+    REQUIRE(expected[1] > 0);
+
     Print print;
     Model model;
     Test::init_print({short_bridge_mesh()}, print, model, config);
-    print.get_object(0)->generate_support_preview();
-    CHECK(print.objects().front()->is_step_done(posInfill));
-    CHECK(print.objects().front()->is_step_done(posSupportMaterial));
+    // Reusing the preview must not leave empty infill marked as complete.
+    for (int preview = 0; preview < 2; ++preview) {
+        print.get_object(0)->generate_support_preview();
+        CHECK(print.objects().front()->is_step_done(posPerimeters));
+        CHECK_FALSE(print.objects().front()->support_layers().empty());
+        CHECK(fill_counts(*print.objects().front()) == expected);
+    }
+    print.process();
     CHECK_FALSE(print.objects().front()->support_layers().empty());
+    CHECK(fill_counts(*print.objects().front()) == expected);
+    const std::string gcode      = Test::gcode(print);
+    const std::string bridge_tag = ";" + GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) +
+                                   ExtrusionEntity::role_to_string(erBridgeInfill) + "\n";
+    CHECK(gcode.find(bridge_tag) != std::string::npos);
+    check_bridge_envelopes(*print.objects().front());
 }
 
 TEST_CASE("Zero-gap bridge envelopes also trim a nearby raft", "[SupportMaterial][Bridge][BridgeEnvelope]")

@@ -1261,7 +1261,7 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
                 print_info.object_index = find_object_index(print.model(), print_object->model_object());
                 if (print_object->max_z() > scaled<double>(rod_height)) {
                     if (print_object->has_support_material()) {
-                        // Support bounds are unavailable here; retain the existing footprint protection.
+                        // Full expanded footprints protect unknown support, but also enlarge the legacy Y clearance.
                         print_info.has_above_rod   = true;
                         print_info.above_rod_min_y = print_info.bounding_box.min.y();
                         print_info.above_rod_max_y = print_info.bounding_box.max.y();

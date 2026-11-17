@@ -343,7 +343,20 @@ function build_universal() {
         -output "$UNIVERSAL_APP/$BINARY_PATH"
         
     echo "Universal binary created at $UNIVERSAL_APP"
-    
+
+    # The bundle copy above is the arm64 app, so Snapmaker Orca Monitor is arm64-only until this merge.
+    WATCHER_ARM64="${PROJECT_DIR}/build/arm64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/Snapmaker Orca Monitor"
+    WATCHER_X86="${PROJECT_DIR}/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/Snapmaker Orca Monitor"
+    WATCHER_UNIVERSAL="${UNIVERSAL_APP}/Contents/MacOS/Snapmaker Orca Monitor"
+    if [ ! -f "${WATCHER_ARM64}" ] || [ ! -f "${WATCHER_X86}" ]; then
+        echo "Error: Snapmaker Orca Monitor is missing for arm64 or x86_64. Refusing a universal app with a single-architecture helper." >&2
+        exit 1
+    fi
+    echo "Creating universal Snapmaker Orca Monitor..."
+    lipo -create "${WATCHER_X86}" "${WATCHER_ARM64}" -output "${WATCHER_UNIVERSAL}"
+    lipo -info "${WATCHER_UNIVERSAL}"
+    codesign --force --sign - "${WATCHER_UNIVERSAL}" 2>/dev/null || true
+
     # Create universal crashpad_handler if both architectures have it
     CRASHPAD_ARM64="${PROJECT_DIR}/build/arm64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/crashpad_handler"
     CRASHPAD_X86="${PROJECT_DIR}/build/x86_64/Snapmaker_Orca/Snapmaker Orca.app/Contents/MacOS/crashpad_handler"
@@ -410,6 +423,12 @@ function build_universal() {
         dsymutil "$UNIVERSAL_APP/$BINARY_PATH" -o "${DSYM_DIR}/Snapmaker_Orca.dSYM" 2>/dev/null || echo "Warning: Failed to generate dSYM for universal Snapmaker_Orca"
     fi
     
+    # Generate dSYM for universal Snapmaker Orca Monitor if it exists
+    if [ -f "$UNIVERSAL_APP/Contents/MacOS/Snapmaker Orca Monitor" ]; then
+        echo "Generating dSYM for universal Snapmaker Orca Monitor..."
+        dsymutil "$UNIVERSAL_APP/Contents/MacOS/Snapmaker Orca Monitor" -o "${DSYM_DIR}/Snapmaker Orca Monitor.dSYM" 2>/dev/null || true
+    fi
+
     # Generate dSYM for universal crashpad_handler if it exists
     if [ -f "$UNIVERSAL_APP/Contents/MacOS/crashpad_handler" ]; then
         echo "Generating dSYM for universal crashpad_handler..."

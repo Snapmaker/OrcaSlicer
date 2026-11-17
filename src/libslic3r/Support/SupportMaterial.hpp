@@ -37,6 +37,17 @@ public:
 	void 		generate(PrintObject &object);
 
 private:
+    struct ZeroGapBridge
+    {
+        size_t   object_layer;
+        coordf_t print_z;
+        coordf_t bottom_z;
+        Polygons polygons;
+    };
+    std::vector<ZeroGapBridge> m_zero_gap_bridges;
+    void                       collect_zero_gap_bridges(const PrintObject& object);
+    void                       trim_zero_gap_bridges(SupportGeneratorLayersPtr& layers) const;
+
 	std::vector<Polygons> buildplate_covered(const PrintObject &object) const;
 
 	// Generate top contact layers supporting overhangs.

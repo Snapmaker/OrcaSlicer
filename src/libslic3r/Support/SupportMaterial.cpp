@@ -371,9 +371,74 @@ static constexpr const std::initializer_list<SupporLayerType> support_types_inte
     SupporLayerType::RaftInterface, SupporLayerType::BottomContact, SupporLayerType::BottomInterface, SupporLayerType::TopContact, SupporLayerType::TopInterface
 };
 
+template<class Visitor> static void visit_support_bridge_paths(const ExtrusionEntity& entity, const Visitor& visit)
+{
+    if (entity.is_collection()) {
+        for (const ExtrusionEntity* child : static_cast<const ExtrusionEntityCollection&>(entity).entities)
+            visit_support_bridge_paths(*child, visit);
+    } else if (const auto* path = dynamic_cast<const ExtrusionPath*>(&entity)) {
+        visit(*path);
+    } else if (const auto* loop = dynamic_cast<const ExtrusionLoop*>(&entity)) {
+        for (const ExtrusionPath& path : loop->paths)
+            visit(path);
+    } else if (const auto* multi = dynamic_cast<const ExtrusionMultiPath*>(&entity)) {
+        for (const ExtrusionPath& path : multi->paths)
+            visit(path);
+    }
+}
+
+void PrintObjectSupportMaterial::collect_zero_gap_bridges(const PrintObject& object)
+{
+    m_zero_gap_bridges.clear();
+    if (!has_support() || !m_slicing_params.soluble_interface || m_object_config->support_type != stNormalAuto)
+        return;
+    const float clearance = scale_(
+        std::max(m_support_params.gap_xy,
+                 0.5 * std::max(m_support_params.support_material_flow.width(), m_support_params.support_material_interface_flow.width())));
+    for (size_t i = 1; i < object.layers().size(); ++i) {
+        const Layer&                 layer = *object.layers()[i];
+        std::map<coordf_t, Polygons> areas;
+        auto                         collect = [&](const ExtrusionPath& path) {
+            if ((path.role() == erBridgeInfill || path.role() == erOverhangPerimeter) && path.height > layer.height + EPSILON)
+                polygons_append(areas[layer.print_z - path.height], path.polygons_covered_by_width());
+        };
+        for (const LayerRegion* region : layer.regions()) {
+            visit_support_bridge_paths(region->fills, collect);
+            visit_support_bridge_paths(region->perimeters, collect);
+        }
+        // Lowest envelopes claim shared XY areas first when contacts are split.
+        for (auto& [bottom_z, polygons] : areas)
+            m_zero_gap_bridges.push_back(
+                {i, layer.print_z, bottom_z, offset(union_(polygons), clearance, SUPPORT_SURFACES_OFFSET_PARAMETERS)});
+    }
+}
+
+void PrintObjectSupportMaterial::trim_zero_gap_bridges(SupportGeneratorLayersPtr& layers) const
+{
+    if (m_zero_gap_bridges.empty())
+        return;
+    sort_remove_duplicates(layers);
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, layers.size()), [&](const tbb::blocked_range<size_t>& range) {
+        for (size_t i = range.begin(); i < range.end(); ++i) {
+            SupportGeneratorLayer& layer = *layers[i];
+            Polygons               trimming;
+            for (const ZeroGapBridge& bridge : m_zero_gap_bridges)
+                if (layer.print_z > bridge.bottom_z + EPSILON && layer.bottom_print_z() < bridge.print_z - EPSILON)
+                    polygons_append(trimming, bridge.polygons);
+            if (!trimming.empty()) {
+                layer.polygons = diff(layer.polygons, trimming);
+                for (auto* source : {&layer.contact_polygons, &layer.overhang_polygons, &layer.enforcer_polygons})
+                    if (*source)
+                        **source = diff(**source, trimming);
+            }
+        }
+    });
+}
+
 void PrintObjectSupportMaterial::generate(PrintObject &object)
 {
     BOOST_LOG_TRIVIAL(info) << "Support generator - Start";
+    collect_zero_gap_bridges(object);
 
     coordf_t max_object_layer_height = 0.;
     for (size_t i = 0; i < object.layer_count(); ++ i)
@@ -509,6 +574,13 @@ void PrintObjectSupportMaterial::generate(PrintObject &object)
 
     if (object.print()->canceled())
         return;
+
+    // Include raft and propagated interfaces, after all contact growth is complete.
+    SupportGeneratorLayersPtr all_layers;
+    for (const auto* layers :
+         {&raft_layers, &bottom_contacts, &top_contacts, &intermediate_layers, &interface_layers, &base_interface_layers})
+        append(all_layers, *layers);
+    trim_zero_gap_bridges(all_layers);
 
 #ifdef SLIC3R_DEBUG
     for (const SupportGeneratorLayer *l : interface_layers)
@@ -2364,6 +2436,40 @@ SupportGeneratorLayersPtr PrintObjectSupportMaterial::top_contact_layers(
                 // however generating a sparse support will be useful for the object stability.
                 // if (! new_layer->polygons.empty())
                 contact_out[layer_id * 2] = new_layer;
+                for (const ZeroGapBridge& bridge : m_zero_gap_bridges) {
+                    if (bridge.object_layer != layer_id)
+                        continue;
+                    const Layer* contact = layer.lower_layer;
+                    while (contact && contact->print_z > bridge.bottom_z + EPSILON)
+                        contact = contact->lower_layer;
+                    if (!contact)
+                        continue; // The final envelope trim also covers unprintable contacts near the bed/raft.
+                    // Keep zero-gap contacts on the object grid, rounding down to avoid penetration.
+                    const coordf_t print_z = contact->print_z;
+                    if (print_z < m_slicing_params.raft_contact_top_z + m_support_params.support_layer_height_min - EPSILON ||
+                        print_z < m_slicing_params.first_print_layer_height - EPSILON)
+                        continue;
+                    Polygons area = intersection(new_layer->polygons, bridge.polygons);
+                    if (area.empty())
+                        continue;
+                    auto& lowered                  = layer_storage.allocate(SupporLayerType::TopContact);
+                    lowered.idx_object_layer_above = layer_id;
+                    lowered.print_z                = print_z;
+                    lowered.height                 = contact->height;
+                    lowered.bottom_z               = print_z - lowered.height;
+                    lowered.polygons               = std::move(area);
+                    auto split                     = [&](std::unique_ptr<Polygons>& source, std::unique_ptr<Polygons>& target) {
+                        if (source) {
+                            target  = std::make_unique<Polygons>(intersection(*source, bridge.polygons));
+                            *source = diff(*source, bridge.polygons);
+                        }
+                    };
+                    split(new_layer->contact_polygons, lowered.contact_polygons);
+                    split(new_layer->overhang_polygons, lowered.overhang_polygons);
+                    split(new_layer->enforcer_polygons, lowered.enforcer_polygons);
+                    new_layer->polygons = diff(new_layer->polygons, bridge.polygons);
+                    contact_out.push_back(&lowered);
+                }
                 if (bridging_layer != nullptr) {
                     bridging_layer->polygons = new_layer->polygons;
                     bridging_layer->contact_polygons = std::make_unique<Polygons>(*new_layer->contact_polygons);

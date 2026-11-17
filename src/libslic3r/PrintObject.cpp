@@ -636,6 +636,9 @@ void PrintObject::detect_overhangs_for_lift()
 
 void PrintObject::generate_support_material()
 {
+    // Support preview also needs the real bridge envelopes, including flow-scaled thin bridges.
+    if (!is_step_done(posSupportMaterial) && has_support() && m_config.support_type == stNormalAuto && m_config.support_top_z_distance == 0.)
+        this->infill();
     if (this->set_started(posSupportMaterial)) {
         this->clear_support_layers();
 
@@ -1197,9 +1200,8 @@ bool PrintObject::invalidate_state_by_config_options(
                 m_print->config().dithering_local_z_whole_objects.value)
                 steps.emplace_back(posSlice);
         } else if (opt_key == "bridge_flow" || opt_key == "internal_bridge_flow") {
-            if (m_config.support_top_z_distance > 0.) {
-            	// Only invalidate due to bridging if bridging is enabled.
-            	// If later "support_top_z_distance" is modified, the complete PrintObject is invalidated anyway.
+            if (m_config.support_top_z_distance > 0. || (has_support() && m_config.support_type == stNormalAuto)) {
+                // Zero-gap normal support also depends on bridge flow and height.
             	steps.emplace_back(posPerimeters);
             	steps.emplace_back(posInfill);
 	            steps.emplace_back(posSupportMaterial);
@@ -1299,6 +1301,11 @@ bool PrintObject::invalidate_state_by_config_options(
 bool PrintObject::invalidate_step(PrintObjectStep step)
 {
 	bool invalidated = Inherited::invalidate_step(step);
+
+    // Zero-gap contacts depend on the actual bridge paths, not just nominal slices.
+    if ((step == posPerimeters || step == posPrepareInfill || step == posInfill) && m_config.support_type == stNormalAuto &&
+        m_config.support_top_z_distance == 0.)
+        invalidated |= this->invalidate_step(posSupportMaterial);
 
     // propagate to dependent steps
     if (step == posPerimeters) {

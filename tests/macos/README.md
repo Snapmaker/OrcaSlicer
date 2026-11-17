@@ -3,6 +3,11 @@
 These standalone targets have no slicer or GUI dependencies. All filesystem operations use a fresh temporary HOME.
 It never invokes launchctl or touches real user data.
 
+These targets are also included by the root `BUILD_TESTS=ON` configuration and its `tests` build target.
+The GitLab `watcher_lifecycle_tests` job builds and runs the standalone suite on every merge request;
+test failures fail that job. Its Linux runner covers portable lifecycle policy and real POSIX subprocesses,
+while macOS-specific native locking still requires a macOS run.
+
 ```sh
 cmake -S tests/macos -B build/watcher-lifecycle-tests
 cmake --build build/watcher-lifecycle-tests
@@ -30,6 +35,18 @@ changes, rejection of invalid identities and markers, and rejection of retries s
 On macOS it additionally checks creation of missing lock directories, exclusive ownership through data cleanup,
 acquisition after release, and the distinction between contention timeouts and permanent path failures.
 Other platforms print a message that native locking checks were skipped.
+
+The command target runs the production deadline policy against a deterministic clock on every platform.
+On Unix it additionally runs the production POSIX command runner against real child processes: nonzero exit,
+spawn failure, captured and quiet hangs, ignored SIGTERM, continuous output, inherited pipe writers,
+and an interactive command exceeding the normal timeout. On Windows these native subprocess cases are skipped.
+
+Noninteractive watcher commands have a three-second deadline, followed by at most 200 ms for SIGTERM
+and 200 ms for SIGKILL collection. Captured output is nonblocking and capped at 64 KiB. The uninstall
+dialog is explicitly exempt from the deadline. A disable or preferences-command timeout aborts that cleanup
+attempt before other data deletion; retry rechecks the installation identity and restores normal SIGTERM handling.
+If SIGKILL cannot yet stop a kernel-stalled child, cleanup retains its lock and waits for collection rather than
+allowing that child to overlap a new registration. This exceptional OS stall has no guaranteed recovery deadline.
 
 Native application validation is still required:
 

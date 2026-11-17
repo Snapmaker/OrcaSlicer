@@ -1,4 +1,4 @@
-#include "macos/UninstallWatcherLifecycle.hpp"
+﻿#include "macos/UninstallWatcherLifecycle.hpp"
 
 #include <atomic>
 #include <iostream>
@@ -112,9 +112,9 @@ bool test_unchanged_agent()
 /** @brief Checks repeated lock errors reuse the same cleanup attempt until installation state changes. */
 bool test_confirmed_cleanup_retries()
 {
-    const std::vector<CleanupResult> results{
-        CleanupResult::LockBusy, CleanupResult::LockUnavailable,
-        CleanupResult::LockBusy, CleanupResult::InstallationChanged};
+    const std::vector<CleanupResult> results{CleanupResult::LockBusy, CleanupResult::LockUnavailable,
+                                             CleanupResult::CommandFailed, CleanupResult::LockBusy,
+                                             CleanupResult::InstallationChanged};
     std::size_t attempts = 0;
     std::vector<CleanupResult> waits;
     SnapmakerUninstall::finish_confirmed_cleanup(
@@ -125,7 +125,7 @@ bool test_confirmed_cleanup_retries()
         },
         [&waits](CleanupResult result) { waits.push_back(result); });
     return check(attempts == results.size() && waits == std::vector<CleanupResult>(results.begin(), results.end() - 1),
-                 "one confirmed cleanup retries contention and path failures, then stops on installation change");
+                 "one confirmed cleanup retries lock and command failures, then stops on installation change");
 }
 
 /** @brief Checks a restored installation cancels the pending cleanup without another retry. */

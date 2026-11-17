@@ -414,6 +414,10 @@ if [ -f "$APP_MACOS_DIR/crashpad_handler" ]; then
     echo "  - Signing: crashpad_handler"
     codesign_item "$APP_MACOS_DIR/crashpad_handler"
 fi
+if [ -f "$APP_MACOS_DIR/Snapmaker Orca Monitor" ]; then
+    echo "  - Signing: Snapmaker Orca Monitor"
+    codesign_item "$APP_MACOS_DIR/Snapmaker Orca Monitor"
+fi
 
 # 2.4 Sign the whole app bundle (apply entitlements)
 echo "2.4 Signing the app bundle (applying entitlements)..."

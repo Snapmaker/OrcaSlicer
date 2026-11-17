@@ -248,10 +248,14 @@ wxBoxSizer *PreferencesDialog::create_item_language_combobox(
     });
 
     combobox->Bind(wxEVT_COMBOBOX, [this, param, vlist, combobox](wxCommandEvent &e) {
-        if (combobox->GetSelection() == m_current_language_selected)
+        const int selected_language_index = combobox->GetSelection();
+        if (selected_language_index < 0 || selected_language_index >= static_cast<int>(vlist.size()))
+            return;
+        if (selected_language_index == m_current_language_selected)
             return;
 
-        if (e.GetString().mb_str() != app_config->get(param)) {
+        const std::string selected_language = vlist[selected_language_index]->CanonicalName.ToUTF8().data();
+        if (selected_language != app_config->get(param)) {
             {
                 //check if the project has changed
                 if (wxGetApp().plater()->is_project_dirty()) {
@@ -288,10 +292,20 @@ wxBoxSizer *PreferencesDialog::create_item_language_combobox(
                 app_config->set(param, vlist[m_current_language_selected]->CanonicalName.ToUTF8().data());
 
                 wxGetApp().load_language(vlist[m_current_language_selected]->CanonicalName, false);
-                Close();
-                // Reparent(nullptr);
-                GetParent()->RemoveChild(this);
-                wxGetApp().recreate_GUI(_L("Changing application language"));
+                // The custom dropdown is still unwinding its selection event when this
+                // handler runs. Ending the modal dialog now can destroy the dialog and
+                // dropdown before their event handlers finish.
+                CallAfter([this]() {
+                    EndModal(wxID_OK);
+
+                    // recreate_GUI() destroys the old main frame and its child windows.
+                    // PreferencesDialog is a stack object in GUI_App::open_preferences(),
+                    // so detach it before that deferred destruction to avoid a double delete.
+                    if (GetParent())
+                        GetParent()->RemoveChild(this);
+
+                    wxGetApp().recreate_GUI(_L("Changing application language"));
+                });
             }
         }
 

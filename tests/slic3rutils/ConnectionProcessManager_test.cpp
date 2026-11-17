@@ -16,6 +16,57 @@ TEST_CASE("ConnectionProcessManager builds the Orca launch arguments", "[gateway
     REQUIRE(arguments == std::vector<std::string>{"--locale=zh-CN", "--orca"});
 }
 
+TEST_CASE("ConnectionProcessManager maps shipped Orca languages to gateway locales", "[gateway][process][locale]")
+{
+    SECTION("Chinese variants retain their script")
+    {
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh_CN", "CN") == "zh-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh_CN", "US") == "zh-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh_TW", "CN") == "zh-Hant-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh_TW", "US") == "zh-Hant-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh_HK", "CN") == "zh-Hant-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh_MO", "US") == "zh-Hant-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh_SG", "CN") == "zh-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh-Hant-TW", "US") == "zh-Hant-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh-Hans-SG", "CN") == "zh-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("zh_XX", "US") == "zh-US");
+    }
+
+    SECTION("Languages in the locale contract use their language subtag")
+    {
+        REQUIRE(ConnectionProcessManager::gateway_locale("en_US", "CN") == "en-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("ru_RU", "US") == "ru-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("de_DE", "CN") == "de-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("fr_FR", "US") == "fr-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("tr_TR", "CN") == "tr-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("es_ES", "US") == "es-US");
+    }
+
+    SECTION("Additional shipped Orca languages remain selectable")
+    {
+        REQUIRE(ConnectionProcessManager::gateway_locale("ca_ES", "CN") == "ca-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("cs_CZ", "US") == "cs-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("hu_HU", "CN") == "hu-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("it_IT", "US") == "it-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("ja_JP", "CN") == "ja-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("ko_KR", "US") == "ko-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("lt_LT", "CN") == "lt-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("nl_NL", "US") == "nl-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("pl_PL", "CN") == "pl-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("pt_BR", "US") == "pt-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("sv_SE", "CN") == "sv-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("uk_UA", "US") == "uk-US");
+    }
+
+    SECTION("Input is normalized and unavailable contract languages fall back to English")
+    {
+        REQUIRE(ConnectionProcessManager::gateway_locale("ZH_tw", "CN") == "zh-Hant-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("pt-BR", "Others") == "pt-US");
+        REQUIRE(ConnectionProcessManager::gateway_locale("he_IL", "CN") == "en-CN");
+        REQUIRE(ConnectionProcessManager::gateway_locale("", "US") == "en-US");
+    }
+}
+
 TEST_CASE("ConnectionProcessManager selects the platform-specific CLI executable", "[gateway][process]")
 {
 #if defined(_WIN32)

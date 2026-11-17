@@ -79,6 +79,7 @@ public:
 
     static ProcessDiscoveryError        parse_port_frame(const std::string& output, std::uint16_t& port);
     static std::vector<std::string>     build_arguments(const std::string& locale);
+    static std::string                  gateway_locale(const std::string& orca_language, const std::string& region);
     static std::optional<std::uint64_t> owner_pid_from_lock(const boost::filesystem::path& lock_path, std::uint16_t port);
     // macOS truncates the kernel process name (p_comm) to MAXCOMLEN bytes, so only the common prefix is comparable.
     static bool truncated_process_name_matches(std::string_view process_name, std::string_view expected_name);

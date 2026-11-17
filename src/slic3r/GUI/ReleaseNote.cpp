@@ -20,6 +20,7 @@
 #include <wx/regex.h>
 #include <wx/progdlg.h>
 #include <wx/clipbrd.h>
+#include <wx/filesys.h>
 #include <wx/dcgraph.h>
 #include <miniz.h>
 #include <algorithm>
@@ -313,12 +314,10 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
 	if (!fs::exists(ph)) {
 		ph = fs::path(resources_dir()) / "tooltip/releasenote.html";
 	}
-	// Make absolute to get proper "C:/..." prefix for file:// URL
-	ph = fs::absolute(ph);
-	auto url = ph.string();
-	std::replace(url.begin(), url.end(), '\\', '/');
-	url = "file:///" + url;
-    m_vebview_release_note->LoadURL(from_u8(url));
+    // Encode spaces and reserved characters and generate the platform's file URL prefix.
+    ph = fs::absolute(ph);
+    const wxString url = wxFileSystem::FileNameToURL(wxFileName(from_u8(ph.string())));
+    m_vebview_release_note->LoadURL(url);
 
     m_simplebook_release_note->AddPage(m_scrollwindows_release_note, wxEmptyString, false);
     m_simplebook_release_note->AddPage(m_vebview_release_note, wxEmptyString, false);

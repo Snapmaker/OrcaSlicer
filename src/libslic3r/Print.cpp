@@ -1256,8 +1256,16 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
                 struct print_instance_info print_info {&instance, convex_hull.bounding_box(), convex_hull};
                 print_info.height = instance.print_object->height();
                 print_info.object_index = find_object_index(print.model(), print_object->model_object());
-                print_info.has_above_rod = above_rod_y_range(instance, print_info.above_rod_min_y,
-                                                            print_info.above_rod_max_y);
+                if (print_object->max_z() > scaled<double>(rod_height)) {
+                    if (print_object->has_support_material()) {
+                        // Support bounds are unavailable here; retain the existing footprint protection.
+                        print_info.has_above_rod   = true;
+                        print_info.above_rod_min_y = print_info.bounding_box.min.y();
+                        print_info.above_rod_max_y = print_info.bounding_box.max.y();
+                    } else {
+                        print_info.has_above_rod = above_rod_y_range(instance, print_info.above_rod_min_y, print_info.above_rod_max_y);
+                    }
+                }
                 print_instance_with_bounding_box.push_back(std::move(print_info));
                 convex_hulls_other.emplace_back(std::move(convex_hull));
             }
@@ -1277,22 +1285,14 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
     double hc2              = scale_(print.config().extruder_clearance_height_to_rod); // height to rod
     double printable_height = scale_(print.config().printable_height);
 
-    // ORCA: The previous approach here either trusted the raw object-list order verbatim
-    // (which made "X is too tall, and collisions will be caused" a matter of luck depending on
-    // which order objects happen to be declared in the file) or used a score-propagation
-    // heuristic that wasn't guaranteed to converge and has been disabled since it was written.
-    //
-    // Only the *last*-printed instance gets the full printable_height allowance below; every
-    // earlier instance is capped at extruder_clearance_height_to_lid (hc1), or the stricter
-    // extruder_clearance_height_to_rod (hc2) if some instance printed after it overlaps it in Y.
-    // That means: at most one instance may need the "last slot" (height > hc1), and among the
-    // rest we need an order where an instance that reaches above hc2 is scheduled after every
-    // instance whose footprint overlaps that above-the-rod part in Y. That's a topological sort over
-    // a "must print before" constraint graph, not a fixed rule about list position.
-    //
-    // If a valid order exists we use it; if it doesn't (a genuine, unavoidable collision), we
-    // fall back to the previous object-list order so the vertical-clearance check right below
-    // this block still fires the same descriptive error it always has.
+    // Both ordering and validation use the same conservative material interval.
+    // The footprint already includes the arrangement tolerance; shrinking material can erase thin fins.
+    auto overlaps_in_y = [](const print_instance_info& tall, const print_instance_info& other) {
+        return tall.has_above_rod && tall.above_rod_min_y < other.bounding_box.max.y() && tall.above_rod_max_y > other.bounding_box.min.y();
+    };
+
+    // Edge b -> a requires b before a. Reserve the last slot for the sole over-lid object.
+    // Cycles or multiple over-lid objects fall back to list order and the existing error path.
     {
         const size_t n = print_instance_with_bounding_box.size();
 
@@ -1306,21 +1306,6 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
 
         auto by_object_index = [&](size_t l, size_t r) {
             return print_instance_with_bounding_box[l].object_index < print_instance_with_bounding_box[r].object_index;
-        };
-
-        // Mirrors the vertical-clearance check below: only the part of the potentially-too-tall
-        // instance that reaches above the rod can be hit, so that Y extent (shrunk by the same
-        // 0.1 mm tolerance the footprint test uses) is tested against the other instance's
-        // inflated footprint, i.e. everywhere the nozzle can be while that instance prints.
-        auto overlaps_in_y = [&](size_t tall_idx, size_t other_idx) {
-            const auto &A = print_instance_with_bounding_box[tall_idx];
-            if (!A.has_above_rod)
-                return false;
-            auto &bbB = print_instance_with_bounding_box[other_idx].bounding_box;
-            const coord_t tol = scaled<coord_t>(0.1);
-            auto  inter_min = std::max(A.above_rod_min_y + tol, bbB.min.y());
-            auto  inter_max = std::min(A.above_rod_max_y - tol, bbB.max.y());
-            return inter_max - inter_min > 0;
         };
 
         std::vector<size_t> must_be_last;
@@ -1345,7 +1330,8 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
                     continue;
                 for (size_t b = 0; b < n; ++b) {
                     if (b == a) continue;
-                    if (!overlaps_in_y(a, b)) continue;
+                    if (!overlaps_in_y(print_instance_with_bounding_box[a], print_instance_with_bounding_box[b]))
+                        continue;
                     if (b == last_idx) {
                         // 'a' can't tolerate the last-placed instance printing after it while
                         // overlapping it, and the last instance can't be moved earlier by
@@ -1446,11 +1432,7 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
             auto inst = print_instance_with_bounding_box[k].print_instance;
             // 只需要考虑喷嘴到滑杆的偏移量，这个比整个工具头的碰撞半径要小得多
             // Only the offset from the nozzle to the slide bar needs to be considered, which is much smaller than the collision radius of the entire tool head.
-            // ORCA: and only the part of this instance that reaches above the rod can be hit by it while
-            // a later instance prints, so that is the Y extent to test (see above_rod_y_range).
             const auto &info_k = print_instance_with_bounding_box[k];
-            const coord_t iy1 = info_k.above_rod_min_y + scaled<coord_t>(0.1);
-            const coord_t iy2 = info_k.above_rod_max_y - scaled<coord_t>(0.1);
             (const_cast<ModelInstance*>(inst->model_instance))->arrange_order = k+1;
             double height = (k == (print_instance_count - 1))?printable_height:hc1;
             /*if (has_interlaced_objects) {
@@ -1466,13 +1448,7 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
 
             for (int i = k+1; info_k.has_above_rod && i < print_instance_count; i++)
             {
-                auto& p = print_instance_with_bounding_box[i].print_instance;
-                auto bbox2 = print_instance_with_bounding_box[i].bounding_box;
-                auto py1 = bbox2.min.y();
-                auto py2 = bbox2.max.y();
-                auto inter_min = std::max(iy1, py1); // min y of intersection
-                auto inter_max = std::min(iy2, py2); // max y of intersection. length=max_y-min_y>0 means intersection exists
-                if (inter_max - inter_min > 0) {
+                if (overlaps_in_y(info_k, print_instance_with_bounding_box[i])) {
                     height = hc2;
                     break;
                 }

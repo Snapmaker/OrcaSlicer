@@ -1,276 +1,202 @@
-// Coverage for Print::sequential_print_clearance_valid(), which had none.
-//
-// Written against the two sequential print fixes: finding a valid print order instead of trusting
-// the object list order, and counting only the geometry that reaches above
-// extruder_clearance_height_to_rod when deciding what the rod can hit.
-//
-// Every plate is built from the stock 20mm test cube, scaled and merged, so no new assets are
-// needed. Note that Test::init_print() auto-arranges, so each case places the instances itself
-// afterwards and re-applies the model: these tests are entirely about relative Y positions.
-
+// Synthetic plates exercise ordering and rod clearance without external assets.
 #include <catch2/catch_test_macros.hpp>
 
-#include "libslic3r/libslic3r.h"
-#include "libslic3r/Print.hpp"
+#include "libslic3r/GCode.hpp"
+#include "libslic3r/Layer.hpp"
 #include "libslic3r/Model.hpp"
+#include "libslic3r/Print.hpp"
 #include "libslic3r/TriangleMesh.hpp"
-
 #include "test_data.hpp"
 
 using namespace Slic3r;
 using namespace Slic3r::Test;
 
 namespace {
-
-// Snapmaker U1 clearances: the tightest of the stock profiles, which is what makes these cases
-// interesting. Nothing here is printer specific.
-constexpr double HEIGHT_TO_ROD = 27.5;
+constexpr double HEIGHT_TO_ROD = 27.5; // Snapmaker U1 profile.
 
 DynamicPrintConfig sequential_config()
 {
-    // init_print() merges what it is given onto default_print_config(); build the same full config
-    // here so the re-apply in place() below hands Print a complete one rather than a fragment.
-    DynamicPrintConfig config = Slic3r::Test::default_print_config();
-    config.set_key_value("print_sequence",
-                         new ConfigOptionEnum<PrintSequence>(PrintSequence::ByObject));
+    auto config = default_print_config();
+    config.set_key_value("print_sequence", new ConfigOptionEnum<PrintSequence>(PrintSequence::ByObject));
     config.set_key_value("extruder_clearance_height_to_rod", new ConfigOptionFloat(HEIGHT_TO_ROD));
     config.set_key_value("extruder_clearance_height_to_lid", new ConfigOptionFloat(140));
-    config.set_key_value("extruder_clearance_radius",        new ConfigOptionFloat(72.5));
-    config.set_key_value("skirt_loops",                      new ConfigOptionInt(0));
+    config.set_key_value("extruder_clearance_radius", new ConfigOptionFloat(72.5));
+    config.set_key_value("skirt_loops", new ConfigOptionInt(0));
     return config;
 }
 
-// A box of the given size, minimum corner at the origin.
-TriangleMesh box(double sx, double sy, double sz)
+TriangleMesh box(double x, double y, double z)
 {
-    TriangleMesh m = Slic3r::Test::mesh(TestMesh::cube_20x20x20);   // spans 0..20 on each axis
-    m.scale(Vec3f(static_cast<float>(sx / 20.0), static_cast<float>(sy / 20.0), static_cast<float>(sz / 20.0)));
-    return m;
+    auto mesh = Test::mesh(TestMesh::cube_20x20x20);
+    mesh.scale(Vec3f(x / 20., y / 20., z / 20.));
+    return mesh;
 }
 
-// A low slab carrying one tall fin, either at its back edge (+Y) or its front edge (-Y). One mesh,
-// so it becomes a single object: the check reasons per object, not per volume.
-TriangleMesh slab_with_fin(bool fin_at_back)
+TriangleMesh slab_with_fin(bool back, double width = 2.)
 {
-    const double slab_x = 40, slab_y = 30, slab_z = 2;
-    const double fin_x = 8, fin_y = 2, fin_z = 32;
-
-    TriangleMesh slab = box(slab_x, slab_y, slab_z);
-    TriangleMesh fin  = box(fin_x, fin_y, fin_z);
-    fin.translate(static_cast<float>(slab_x / 2 - fin_x / 2),
-                  static_cast<float>(fin_at_back ? slab_y - fin_y : 0.0), 0.0f);
+    auto slab = box(40, 30, 2);
+    auto fin  = box(8, width, 32);
+    fin.translate(16.f, back ? float(30 - width) : 0.f, 0.f);
     slab.merge(fin);
     return slab;
 }
 
-// Place each instance at the given centre and re-apply, undoing init_print's auto-arrange.
-void place(Print &print, Model &model, const DynamicPrintConfig &config, const std::vector<Vec2d> &centres)
+void place(Print& print, Model& model, const DynamicPrintConfig& config, const std::vector<Vec2d>& centres)
 {
     REQUIRE(model.objects.size() == centres.size());
     for (size_t i = 0; i < centres.size(); ++i) {
-        ModelInstance *inst = model.objects[i]->instances.front();
-        Vec3d off = inst->get_offset();
-        inst->set_offset(Vec3d(centres[i].x(), centres[i].y(), off.z()));
+        auto* inst = model.objects[i]->instances.front();
+        inst->set_offset(Vec3d(centres[i].x(), centres[i].y(), inst->get_offset().z()));
     }
     print.apply(model, config);
 }
 
-// Specifically the height error. The same function also reports "too close to others" for the
-// toolhead radius, which is a different rule and must not be confused with this one.
-bool reports_too_tall(const Print &print)
+bool too_tall(const Print& print) { return Print::sequential_print_clearance_valid(print).string.find("too tall") != std::string::npos; }
+
+void require_order(const Print& print, size_t first, size_t second)
 {
-    return Print::sequential_print_clearance_valid(print).string.find("too tall") != std::string::npos;
+    auto order = sort_object_instances_by_model_order(print);
+    REQUIRE(order.size() == 2);
+    REQUIRE(order[0]->print_object->model_object() == print.model().objects[first]);
+    REQUIRE(order[1]->print_object->model_object() == print.model().objects[second]);
+    REQUIRE(order[0]->model_instance->arrange_order == 1);
+    REQUIRE(order[1]->model_instance->arrange_order == 2);
 }
-
-// A slab carrying a fin of the given Y width above the rod, at its back (+Y) or front (-Y) edge.
-TriangleMesh slab_with_fin_width(bool fin_at_back, double fin_y)
-{
-    const double slab_x = 40, slab_y = 30, slab_z = 2;
-    const double fin_x = 8, fin_z = 32;
-
-    TriangleMesh slab = box(slab_x, slab_y, slab_z);
-    TriangleMesh fin  = box(fin_x, fin_y, fin_z);
-    fin.translate(static_cast<float>(slab_x / 2 - fin_x / 2),
-                  static_cast<float>(fin_at_back ? slab_y - fin_y : 0.0), 0.0f);
-    slab.merge(fin);
-    return slab;
-}
-
 } // namespace
 
-SCENARIO("Sequential print clearance: a valid order is searched for, not assumed", "[SequentialClearance]")
+TEST_CASE("Sequential clearance searches for a safe order", "[SequentialClearance]")
 {
-    GIVEN("a tall object listed first and a short one listed second, overlapping in Y")
-    {
-        // The tall object can only be printed last. When the check validated the object list order
-        // verbatim, listing the tall one first produced a false "too tall" error even though
-        // printing it second is perfectly valid.
+    Print print;
+    Model model;
+    auto  config = sequential_config();
+    config.set_key_value("gcode_label_objects", new ConfigOptionBool(true));
+    init_print({box(40, 40, 35), box(40, 40, 10)}, print, model, config);
+    model.objects[0]->name = "clearance_tall";
+    model.objects[1]->name = "clearance_short";
+    place(print, model, config, {Vec2d(60, 130), Vec2d(190, 130)});
+    REQUIRE(Print::sequential_print_clearance_valid(print).string.empty());
+    require_order(print, 1, 0);
+    const auto code       = Test::gcode(print);
+    const auto tall_start = code.find("; printing object clearance_tall");
+    const auto short_end  = code.rfind("; stop printing object clearance_short");
+    REQUIRE(tall_start != std::string::npos);
+    REQUIRE(short_end != std::string::npos);
+    REQUIRE(short_end < tall_start);
+}
+
+TEST_CASE("Sequential clearance rejects unavoidable rod and lid collisions", "[SequentialClearance]")
+{
+    for (double height : {35., 150.}) {
+        CAPTURE(height);
         Print print;
         Model model;
-        DynamicPrintConfig config = sequential_config();
-        init_print({ box(40, 40, 35), box(40, 40, 10) }, print, model, config);
-        place(print, model, config, { Vec2d(60, 130), Vec2d(190, 130) });
+        auto  config = sequential_config();
+        init_print({box(40, 40, height), box(40, 40, height)}, print, model, config);
+        place(print, model, config, {Vec2d(60, 130), Vec2d(190, 140)});
+        REQUIRE(too_tall(print));
+        require_order(print, 0, 1); // Unsolvable constraints retain the list order.
+    }
+}
 
-        THEN("a valid order is found and no error is reported")
-        {
-            REQUIRE_FALSE(reports_too_tall(print));
+TEST_CASE("Sequential clearance preserves narrow material above the rod", "[SequentialClearance]")
+{
+    for (double width : {0.15, 0.2, 0.21, 2.}) {
+        for (bool facing : {true, false}) {
+            CAPTURE(width, facing);
+            Print print;
+            Model model;
+            auto  config = sequential_config();
+            init_print({slab_with_fin(!facing, width), slab_with_fin(facing, width)}, print, model, config);
+            place(print, model, config, {Vec2d(60, 100), Vec2d(190, 60)});
+            CHECK(too_tall(print) == facing);
         }
     }
 }
 
-SCENARIO("Sequential print clearance: genuine collisions still error", "[SequentialClearance]")
+TEST_CASE("Sequential clearance keeps the order of short objects", "[SequentialClearance]")
 {
-    GIVEN("two objects taller than height_to_rod sharing a Y band")
-    {
-        // Both exceed the rod height and each sits in the other's sweep band, so whichever prints
-        // first is in the way of the second. No order can fix that, and the check must still refuse.
-        Print print;
-        Model model;
-        DynamicPrintConfig config = sequential_config();
-        init_print({ box(40, 40, 35), box(40, 40, 35) }, print, model, config);
-        place(print, model, config, { Vec2d(60, 130), Vec2d(190, 140) });
+    Print print;
+    Model model;
+    auto  config = sequential_config();
+    init_print({box(40, 40, 10), box(40, 40, 12)}, print, model, config);
+    place(print, model, config, {Vec2d(60, 125), Vec2d(180, 135)});
+    REQUIRE(Print::sequential_print_clearance_valid(print).string.empty());
+    require_order(print, 0, 1);
+}
 
-        THEN("the error is still reported")
-        {
-            REQUIRE(reports_too_tall(print));
+TEST_CASE("Sequential clearance keeps conservative support constraints", "[SequentialClearance]")
+{
+    for (auto support : {stNormalAuto, stTreeAuto}) {
+        for (bool neighbour_needs_last : {false, true}) {
+            CAPTURE(support, neighbour_needs_last);
+            Print print;
+            Model model;
+            auto  config = sequential_config();
+            config.set_key_value("enable_support", new ConfigOptionBool(true));
+            config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(support));
+            config.set_key_value("bridge_no_support", new ConfigOptionBool(false));
+            config.set_key_value("max_bridge_length", new ConfigOptionFloat(0));
+            config.set_key_value("support_expansion", new ConfigOptionFloat(5));
+            auto shape = box(40, 30, 2);
+            auto stem  = box(8, 2, 60);
+            stem.translate(16.f, 28.f, 0.f);
+            shape.merge(stem);
+            auto cap = box(20, 8, 2);
+            cap.translate(10.f, 22.f, 58.f);
+            shape.merge(cap);
+            init_print({shape, box(40, 40, neighbour_needs_last ? 150 : 10)}, print, model, config);
+            place(print, model, config, {Vec2d(60, 100), Vec2d(190, 44.85)});
+            CHECK(too_tall(print) == neighbour_needs_last);
+            require_order(print, neighbour_needs_last ? 0 : 1, neighbour_needs_last ? 1 : 0);
+            if (support == stNormalAuto && !neighbour_needs_last) {
+                print.process();
+                double      min_y = 1e9;
+                const auto* obj   = print.objects().front();
+                for (auto* layer : obj->support_layers()) {
+                    if (layer->print_z <= HEIGHT_TO_ROD)
+                        continue;
+                    for (const auto& line : layer->support_fills.as_polylines())
+                        for (const auto& point : line.points)
+                            min_y = std::min(min_y, unscaled<double>(point.y() + obj->instances().front().shift.y()));
+                }
+                REQUIRE(min_y < 121.); // Model starts at Y=122; generated support enters the neighbour's sweep.
+                REQUIRE_FALSE(too_tall(print));
+                require_order(print, 1, 0);
+            }
         }
     }
 }
 
-SCENARIO("Sequential print clearance: only material above the rod is counted", "[SequentialClearance]")
+TEST_CASE("Sequential clearance retains the known sunk-object false positive", "[SequentialClearance]")
 {
-    GIVEN("two slabs whose above-rod fins face away from each other")
-    {
-        // The footprints are close enough in Y to overlap under the toolhead radius, but the parts
-        // that actually reach above the rod are far apart, so the rod passes over nothing.
-        Print print;
-        Model model;
-        DynamicPrintConfig config = sequential_config();
-        init_print({ slab_with_fin(true), slab_with_fin(false) }, print, model, config);
-        place(print, model, config, { Vec2d(60, 100), Vec2d(190, 60) });
-
-        THEN("no error is reported")
-        {
-            REQUIRE_FALSE(reports_too_tall(print));
-        }
-    }
-
-    GIVEN("the same two slabs with their fins facing each other")
-    {
-        // Mirror image: both above-rod fins now sit inside the other object's sweep band, which is
-        // a real collision. This is the case that proves the rule did not simply disable the check.
-        Print print;
-        Model model;
-        DynamicPrintConfig config = sequential_config();
-        init_print({ slab_with_fin(false), slab_with_fin(true) }, print, model, config);
-        place(print, model, config, { Vec2d(60, 100), Vec2d(190, 60) });
-
-        THEN("the error is still reported")
-        {
-            REQUIRE(reports_too_tall(print));
-        }
-    }
+    // Remaining limitation: local height claims the last slot even when sunk below the rod.
+    Print print;
+    Model model;
+    auto  config = sequential_config();
+    init_print({box(40, 40, 150), box(40, 40, 150)}, print, model, config);
+    model.objects[0]->instances.front()->set_offset(Vec3d(190, 130, 0));
+    model.objects[1]->instances.front()->set_offset(Vec3d(60, 130, -130));
+    print.apply(model, config);
+    REQUIRE(too_tall(print));
 }
 
-SCENARIO("Sequential print clearance: short objects are never constrained", "[SequentialClearance]")
+TEST_CASE("Sequential clearance rejects thin fins that produce toolpaths", "[SequentialClearance]")
 {
-    GIVEN("several objects all below height_to_rod, packed close together in Y")
-    {
-        // Nothing reaches the rod, so no ordering constraint exists whatever the layout. Guards
-        // against a regression that starts flagging plates which have always been fine.
-        Print print;
-        Model model;
-        DynamicPrintConfig config = sequential_config();
-        // Kept far enough apart in X to satisfy the separate toolhead radius rule, which is not
-        // what this scenario is about.
-        init_print({ box(40, 40, 10), box(40, 40, 12) }, print, model, config);
-        place(print, model, config, { Vec2d(60, 125), Vec2d(180, 135) });
-
-        THEN("no error is reported")
-        {
-            REQUIRE_FALSE(reports_too_tall(print));
-        }
-    }
-}
-
-SCENARIO("Sequential print clearance: only one object may claim the last slot", "[SequentialClearance]")
-{
-    GIVEN("two objects taller than height_to_lid sharing a Y band")
-    {
-        // TC-04: each object needs the single "last" slot (height > hc1). One of them must
-        // print earlier and is then capped below its own height, so no order works and the
-        // check must still refuse to slice.
-        Print print;
-        Model model;
-        DynamicPrintConfig config = sequential_config();
-        init_print({ box(40, 40, 150), box(40, 40, 150) }, print, model, config);
-        place(print, model, config, { Vec2d(60, 130), Vec2d(190, 130) });
-
-        THEN("the error is still reported")
-        {
-            REQUIRE(reports_too_tall(print));
-        }
-    }
-}
-
-SCENARIO("Sequential print clearance: baseline - narrow above-rod material is missed", "[SequentialClearance]")
-{
-    GIVEN("two slabs whose 0.15 mm fins face each other")
-    {
-        // BL-02 baseline (known limitation, do not file): the +-0.1 mm tolerance hollows out
-        // any above-rod interval narrower than 0.2 mm, so a genuinely colliding thin fin
-        // passes the check today.
-        Print print;
-        Model model;
-        DynamicPrintConfig config = sequential_config();
-        init_print({ slab_with_fin_width(false, 0.15), slab_with_fin_width(true, 0.15) }, print, model, config);
-        place(print, model, config, { Vec2d(60, 100), Vec2d(190, 60) });
-
-        THEN("no error is reported (known miss)")
-        {
-            REQUIRE_FALSE(reports_too_tall(print));
-        }
-    }
-
-    GIVEN("the same slabs with fins exactly 0.2 mm wide")
-    {
-        // BL-04 baseline: at exactly the tolerance width the interval shrinks to zero and
-        // the strict > 0 overlap test treats it as no collision, so the boundary case is
-        // not detected today either.
-        Print print;
-        Model model;
-        DynamicPrintConfig config = sequential_config();
-        init_print({ slab_with_fin_width(false, 0.2), slab_with_fin_width(true, 0.2) }, print, model, config);
-        place(print, model, config, { Vec2d(60, 100), Vec2d(190, 60) });
-
-        THEN("no error is reported (boundary case)")
-        {
-            REQUIRE_FALSE(reports_too_tall(print));
-        }
-    }
-}
-
-SCENARIO("Sequential print clearance: baseline - sunk over-lid object forces a false error", "[SequentialClearance]")
-{
-    GIVEN("a 150 mm object next to one sunk so far that its world top stays under the rod")
-    {
-        // BL-03 baseline (known limitation, do not file): must_be_last uses each object's
-        // LOCAL height, so the sunk 150 mm object (world top z = 20 < 27.5 rod) still claims
-        // the single "last" slot beside the other 150 mm object. The ordering becomes
-        // unsolvable, the list order is kept, and the tall first-printed object is then
-        // capped by the sunk object's FULL footprint even though the rod can never reach it
-        // - a false "too tall" error today.
-        Print print;
-        Model model;
-        DynamicPrintConfig config = sequential_config();
-        init_print({ box(40, 40, 150), box(40, 40, 150) }, print, model, config);
-        model.objects[0]->instances.front()->set_offset(Vec3d(190, 130, 0));
-        model.objects[1]->instances.front()->set_offset(Vec3d(60, 130, -130));
-        print.apply(model, config);
-
-        THEN("the tall object is reported too tall (known false positive)")
-        {
-            REQUIRE(reports_too_tall(print));
-        }
-    }
+    Print print;
+    Model model;
+    auto  config = sequential_config();
+    config.set_key_value("wall_generator", new ConfigOptionEnum<PerimeterGeneratorType>(PerimeterGeneratorType::Arachne));
+    config.set_key_value("min_feature_size", new ConfigOptionPercent(0));
+    config.set_key_value("min_bead_width", new ConfigOptionPercent(25));
+    init_print({slab_with_fin(false, 0.15), slab_with_fin(true, 0.15)}, print, model, config);
+    place(print, model, config, {Vec2d(60, 100), Vec2d(190, 60)});
+    REQUIRE(too_tall(print));
+    print.process(); // Inspect material despite validation intentionally rejecting this plate.
+    size_t above_rod = 0;
+    for (auto* object : print.objects())
+        for (auto* layer : object->layers())
+            if (layer->print_z > HEIGHT_TO_ROD)
+                for (auto* region : layer->regions())
+                    above_rod += !region->perimeters.empty();
+    REQUIRE(above_rod > 0);
 }

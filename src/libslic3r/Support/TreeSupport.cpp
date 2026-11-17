@@ -2321,6 +2321,41 @@ void TreeSupport::draw_circles()
         return;
     BOOST_LOG_TRIVIAL(info) << "draw_circles for object: " << m_object->model_object()->name;
 
+    // Issue 7141560751: pre-pass that decides which nodes actually print. A branch
+    // hugging a wall keeps its ledger chain intact while its disc is fully clipped
+    // by the collision halo for one or more layers, so the layer above used to
+    // print a floating disc over the empty gap. Mirror the draw-time clip here and
+    // propagate "something below actually prints" bottom-up: a node draws only if
+    // its own disc survives the clip AND (it sits on the bed/raft, lands on the
+    // model, fades, or its child prints). This matches the drop_nodes intent of
+    // leaving no mid-air branches, at node level, without touching area lists.
+    for (size_t li = 0; li < contact_nodes.size(); ++li) {
+        for (SupportNode *n : contact_nodes[li]) {
+            bool clip_empty = false;
+            if (n->type == ePolygon) {
+                clip_empty = n->overhang.contour.points.empty();
+            } else {
+                const size_t obj_layer_nr = m_ts_data->layer_heights[li].obj_layer_nr;
+                ExPolygons    collision    = offset_ex(m_ts_data->m_layer_outlines[obj_layer_nr],
+                                                       scale_((obj_layer_nr == 0) ? config.support_object_first_layer_gap : m_ts_data->m_xy_distance));
+                if (top_z_distance > EPSILON) {
+                    float accum_height = 0;
+                    for (size_t layer_id = obj_layer_nr + 1;
+                         layer_id < m_ts_data->m_layer_outlines.size() && (accum_height += m_object->get_layer(layer_id)->height) && accum_height <= top_z_distance;
+                         layer_id++) {
+                        collision = union_ex(collision, offset_ex(m_ts_data->m_layer_outlines[layer_id], scale_(top_z_distance)));
+                    }
+                }
+                Polygon circle(branch_circle);
+                const double scale = n->radius / branch_radius;
+                for (int i = 0; i < circle.points.size(); i++)
+                    circle.points[i] = circle.points[i] * scale + n->position;
+                clip_empty = avoid_object_remove_extra_small_parts(ExPolygon(circle), collision).empty();
+            }
+            n->drawn = !clip_empty && (li == 0 || n->landed || n->fading || (n->child != nullptr && n->child->drawn));
+        }
+    }
+
     tbb::parallel_for(tbb::blocked_range<size_t>(0, m_ts_data->layer_heights.size()),
         [&](const tbb::blocked_range<size_t>& range)
         {
@@ -2387,6 +2422,11 @@ void TreeSupport::draw_circles()
                 {
                     if (print->canceled())
                         break;
+
+                    // Issue 7141560751: pre-pass decided this node must not print
+                    // (disc fully clipped, or nothing prints beneath it).
+                    if (!p_node->drawn)
+                        continue;
 
                     const SupportNode& node = *p_node;
                     ExPolygons area;
@@ -2968,6 +3008,7 @@ void TreeSupport::drop_nodes()
             if (!node.to_buildplate) {
                 auto overlap_with_circle = shrink_ex(get_collision(0, obj_layer_nr), scale_(node.radius));
                 if (!overlap_with_circle.empty() && is_inside_ex(overlap_with_circle, node.position)) {
+                    p_node->landed = true; // rest on the model: keep drawing this node
                     continue;
                 }
                 Polygon circle = make_circle(scale_(node.radius), 0.00789 * scale_(node.radius));
@@ -2975,6 +3016,7 @@ void TreeSupport::drop_nodes()
                 ExPolygons area = avoid_object_remove_extra_small_parts(ExPolygon(circle), get_collision(0, obj_layer_nr));
                 if (!area.empty()) {
                     p_node->overhang = area[0];
+                    p_node->landed   = true; // converted to an overhang resting on the model surface
                     if (area[0].area() < SQ(scale_(1.)) || (!node.parent->to_buildplate && !overlaps({node.overhang}, {node.parent->overhang}))) {
                         p_node->valid        = false;
                         p_node->is_processed = true;
@@ -3240,7 +3282,16 @@ void TreeSupport::drop_nodes()
                     // if the link between parent and current is cut by contours, mark current as bottom contact node
                     if (p_node->parent && intersection_ln({p_node->position, p_node->parent->position}, layer_contours).empty()==false)
                     {
-                        p_node->valid = false;
+                        // Issue 7141560751: resting on the model is only legitimate when the
+                        // branch is allowed to. Under build-plate-only the branch has not
+                        // reached the plate, its line must be pruned or it draws as a floating
+                        // fragment (single disc, chain end, observed at the antenna tip).
+                        if (support_on_buildplate_only) {
+                            unsupported_branch_leaves.push_front({ layer_nr, p_node });
+                        } else {
+                            p_node->valid = false;
+                            p_node->landed = true; // still drawn: the branch rests on the model here
+                        }
                         return;
                     }
                 }
@@ -3376,7 +3427,11 @@ void TreeSupport::drop_nodes()
                     }
                 }
                 auto              next_collision = get_collision(0, obj_layer_nr_next);
-                const bool   to_buildplate  = !is_inside_ex(m_ts_data->m_layer_outlines[obj_layer_nr_next], next_layer_vertex);
+                // Port of OrcaSlicer #17060 (a4a5100879): judge buildplate reachability against
+                // the collision halo, not the raw outline. A plain branch whose centre sits
+                // inside the XY clearance keeps surviving pruning under build-plate-only while
+                // its disc clips to nothing on adjacent layers, printing as floating fragments.
+                const bool   to_buildplate  = !is_inside_ex(next_collision, next_layer_vertex);
                 SupportNode *     next_node     = m_ts_data->create_node(next_layer_vertex, node.distance_to_top + 1, obj_layer_nr_next, node.support_roof_layers_below - 1, to_buildplate, p_node,
                     print_z_next, height_next);
                 // don't increase radius if next node will collide partially with the object (STUDIO-7883)

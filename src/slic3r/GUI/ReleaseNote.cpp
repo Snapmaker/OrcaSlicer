@@ -483,17 +483,27 @@ void UpdateVersionDialog::OnError(wxWebViewEvent& event)
     case wxWEBVIEW_NAV_ERR_OTHER: e = "wxWEBVIEW_NAV_ERR_OTHER"; break;
     }
     BOOST_LOG_TRIVIAL(error) << __FUNCTION__<< boost::format(":UpdateVersionDialog error loading page %1% %2% %3% %4%") % event.GetURL() % event.GetTarget() %e %event.GetString();
+    // User cancellations are transient and must not force the fallback page.
+    // Any other navigation failure (shell page missing, backend dead) can skip
+    // the rest of the 15s watchdog wait: show_plain_text_fallback() is one-shot
+    // and a late numeric title still recovers the rich page, so an over-eager
+    // call here self-heals.
+    if (event.GetInt() != wxWEBVIEW_NAV_ERR_USER_CANCELLED) {
+        show_plain_text_fallback();
+    }
     event.Skip();
 }
 
 /** @brief True when the navigation target is this dialog's own shell page (releasenote.html). */
 bool UpdateVersionDialog::is_shell_page_url(const wxString& nav_url) const
 {
-    // Require the shell page's scheme first: the constructor builds the shell
-    // URL as "file:///" + absolute path, so any other scheme (http/https/data/...)
-    // is rejected even with the same file name. Then compare on the file NAME:
-    // the backend reports the URI percent-encoded and canonicalized, while
-    // full-path string equality proved brittle.
+    // Require the file scheme first: the constructor builds the shell URL via
+    // wxFileName::FileNameToURL, which maps regular install paths to
+    // "file:///..." and UNC data-dir paths ("\\server\share\...") to the host
+    // form "file://server/...". Both are accepted; any other scheme
+    // (http/https/data/...) is rejected even with the same file name. Then
+    // compare on the file NAME: the backend reports the URI percent-encoded
+    // and canonicalized, while full-path string equality proved brittle.
     wxString path = nav_url;
     const size_t hash = path.Find('#');
     if (hash != wxNOT_FOUND)
@@ -506,7 +516,7 @@ bool UpdateVersionDialog::is_shell_page_url(const wxString& nav_url) const
         if (ch >= 'A' && ch <= 'Z')
             path[i] = static_cast<wxChar>(ch - 'A' + 'a');
     }
-    if (!path.StartsWith("file:///"))
+    if (!path.StartsWith("file://"))
         return false;
     return path.EndsWith("releasenote.html");
 }

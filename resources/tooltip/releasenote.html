@@ -3,6 +3,12 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <!-- default-src * keeps every existing load (styles, scripts, remote images)
+             working on file:// pages; we only kill the html:true injection vectors:
+             inline event handler attributes (script-src-attr), plugin/iframe
+             embedding and <base> hijacking. Engines without CSP3 support ignore
+             these directives and keep the current behavior. -->
+        <meta http-equiv="Content-Security-Policy" content="default-src * data: blob:; script-src-attr 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'" />
         <link rel="stylesheet" href="./releasenote.css" />
         <script src="./main.js"></script>
     </head>

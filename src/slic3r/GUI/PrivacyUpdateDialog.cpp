@@ -38,6 +38,12 @@ PrivacyUpdateDialog::PrivacyUpdateDialog(wxWindow* parent, wxWindowID id, const 
     m_vebview_release_note->SetSize(wxSize(FromDIP(540), FromDIP(340)));
     m_vebview_release_note->SetMinSize(wxSize(FromDIP(540), FromDIP(340)));
 
+    // NOTE (dormant dialog): this dialog is never instantiated yet. Before
+    // re-enabling it, mirror UpdateVersionDialog: build the shell URL with
+    // wxFileSystem::FileNameToURL (the manual "file:///" concatenation below
+    // breaks on macOS and on paths with spaces) and port the NAVIGATING gate
+    // from UpdateVersionDialog::is_shell_page_url before binding
+    // wxEVT_WEBVIEW_NAVIGATING again.
     fs::path ph(resources_dir());
     ph /= "tooltip/privacyupdate.html";
     m_host_url = ph.string();
@@ -64,6 +70,10 @@ PrivacyUpdateDialog::PrivacyUpdateDialog(wxWindow* parent, wxWindowID id, const 
          e.Skip();
     });
 
+    // Dormant: do NOT re-enable OnNavigating as-is: it lacks the about:blank
+    // allowance and the file-scheme + file-name gate implemented by
+    // UpdateVersionDialog::is_shell_page_url(); re-binding it as-is would veto
+    // the first navigation and strand the shell page.
     //m_vebview_release_note->Bind(wxEVT_WEBVIEW_NAVIGATING , &PrivacyUpdateDialog::OnNavigating, this);
 
     m_button_ok = new Button(this, _L("Accept"));

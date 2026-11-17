@@ -308,6 +308,7 @@ include(OpenVDB/OpenVDB.cmake)
 
 include(GMP/GMP.cmake)
 include(MPFR/MPFR.cmake)
+include(CGAL/CGAL.cmake)
 
 include(NLopt/NLopt.cmake)
 include(libnoise/libnoise.cmake)
@@ -367,9 +368,6 @@ if((REV_PARSE_RESULT EQUAL 0) AND (REV_PARSE_OUTPUT STREQUAL "true"))
     file(RELATIVE_PATH BINARY_DIR_REL  ${CMAKE_SOURCE_DIR}/.. ${CMAKE_BINARY_DIR})
 endif ()
 
-# CGAL must be included after the IN_GIT_REPO detection above so that its
-# PATCH_COMMAND receives the --directory prefix (same as OCCT/OpenCV).
-include(CGAL/CGAL.cmake)
 include(OCCT/OCCT.cmake)
 include(OpenCV/OpenCV.cmake)
 

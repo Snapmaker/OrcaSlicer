@@ -21,34 +21,43 @@
 #   CGAL_PATCH1   absolute path of 0001-clang19.patch
 #   CGAL_PATCH2   absolute path of 0002-robust-intersection-functors.patch
 
-set(_git git --git-dir=${CGAL_SRC_DIR}/.git-disabled-marker -C ${CGAL_SRC_DIR})
+set(_git git
+    "--git-dir=${CGAL_SRC_DIR}/.git-disabled-marker"
+    -C "${CGAL_SRC_DIR}")
 set(_args --ignore-space-change --whitespace=fix)
-set(_patches ${CGAL_PATCH1} ${CGAL_PATCH2})
 
-execute_process(
-    COMMAND ${_git} apply --check ${_args} ${_patches}
-    RESULT_VARIABLE _fwd
-    OUTPUT_VARIABLE _out
-    ERROR_VARIABLE _err)
+foreach(_patch IN ITEMS "${CGAL_PATCH1}" "${CGAL_PATCH2}")
+    execute_process(
+        COMMAND ${_git} apply --check ${_args} "${_patch}"
+        RESULT_VARIABLE _fwd
+        OUTPUT_VARIABLE _fwd_out
+        ERROR_VARIABLE _fwd_err)
 
-if(_fwd EQUAL 0)
-    execute_process(
-        COMMAND ${_git} apply --verbose ${_args} ${_patches}
-        RESULT_VARIABLE _res
-        OUTPUT_VARIABLE _out
-        ERROR_VARIABLE _err)
-    if(NOT _res EQUAL 0)
-        message(FATAL_ERROR "git apply failed:\n${_out}\n${_err}")
-    endif()
-else()
-    execute_process(
-        COMMAND ${_git} apply --check --reverse ${_args} ${_patches}
-        RESULT_VARIABLE _rev
-        OUTPUT_VARIABLE _out
-        ERROR_VARIABLE _err)
-    if(_rev EQUAL 0)
-        message(STATUS "CGAL patches already applied - skipping")
+    if("${_fwd}" STREQUAL "0")
+        execute_process(
+            COMMAND ${_git} apply --verbose ${_args} "${_patch}"
+            RESULT_VARIABLE _res
+            OUTPUT_VARIABLE _out
+            ERROR_VARIABLE _err)
+
+        if(NOT "${_res}" STREQUAL "0")
+            message(FATAL_ERROR
+                "Failed to apply ${_patch}:\n${_out}\n${_err}")
+        endif()
     else()
-        message(FATAL_ERROR "git apply --check failed (forward and reverse), the CGAL tree is neither clean nor fully patched:\n${_out}\n${_err}")
+        execute_process(
+            COMMAND ${_git} apply --check --reverse ${_args} "${_patch}"
+            RESULT_VARIABLE _rev
+            OUTPUT_VARIABLE _rev_out
+            ERROR_VARIABLE _rev_err)
+
+        if("${_rev}" STREQUAL "0")
+            message(STATUS "Already applied, skipping: ${_patch}")
+        else()
+            message(FATAL_ERROR
+                "Patch does not match source: ${_patch}\n"
+                "Forward check:\n${_fwd_out}\n${_fwd_err}\n"
+                "Reverse check:\n${_rev_out}\n${_rev_err}")
+        endif()
     endif()
-endif()
+endforeach()

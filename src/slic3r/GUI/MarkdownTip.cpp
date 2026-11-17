@@ -113,14 +113,11 @@ bool MarkdownTip::ShowTip(wxPoint pos, std::string const &tip, std::string const
             BOOST_LOG_TRIVIAL(info) << "MarkdownTip::ShowTip: hide soon on empty content.";
             return false;
         }
-        // Http::url_encode fail-opens (returns the input unchanged when curl cannot
-        // initialise); a raw quote would terminate the JS string literal. Skip the
-        // injection rather than send a broken script.
+        // Http::url_encode escapes quotes and other URL-unsafe characters so the
+        // content cannot terminate the JS string literal. Its fail-open path (curl
+        // cannot initialise, returns the input unchanged) is a pathological case
+        // and does not skip the injection.
         const std::string encoded = Http::url_encode(content);
-        if (encoded.empty() && !content.empty()) {
-            BOOST_LOG_TRIVIAL(error) << "MarkdownTip::ShowTip: url_encode failed, skipping markdown injection.";
-            return false;
-        }
         auto script = "window.showMarkdown('" + encoded + "', true);";
         if (!_pendingScript.empty()) {
             _pendingScript = script;

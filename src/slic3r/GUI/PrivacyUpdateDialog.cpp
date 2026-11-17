@@ -140,14 +140,11 @@ void PrivacyUpdateDialog::OnNavigating(wxWebViewEvent& event)
 
 bool PrivacyUpdateDialog::ShowReleaseNote(std::string content)
 {
-	// Http::url_encode fail-opens (returns the input unchanged when curl cannot
-	// initialise); a raw quote would terminate the JS string literal. Skip the
-	// injection rather than send a broken script.
+	// Http::url_encode escapes quotes and other URL-unsafe characters so the
+	// content cannot terminate the JS string literal. Its fail-open path (curl
+	// cannot initialise, returns the input unchanged) is a pathological case
+	// and does not skip the injection.
 	const std::string encoded = Http::url_encode(content);
-	if (encoded.empty() && !content.empty()) {
-		BOOST_LOG_TRIVIAL(error) << "PrivacyUpdateDialog::ShowReleaseNote: url_encode failed, skipping markdown injection";
-		return true;
-	}
 	auto script = "window.showMarkdown('" + encoded + "', true);";
     RunScript(script);
     return true;

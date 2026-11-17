@@ -490,9 +490,11 @@ void UpdateVersionDialog::OnError(wxWebViewEvent& event)
 /** @brief True when the navigation target is this dialog's own shell page (releasenote.html). */
 bool UpdateVersionDialog::is_shell_page_url(const wxString& nav_url) const
 {
-    // Compare on the file NAME: the backend reports the URI percent-encoded and
-    // canonicalized, while full-path string equality proved brittle. The name is
-    // unique within tooltip/, so arbitrary file:// targets are still rejected.
+    // Require the shell page's scheme first: the constructor builds the shell
+    // URL as "file:///" + absolute path, so any other scheme (http/https/data/...)
+    // is rejected even with the same file name. Then compare on the file NAME:
+    // the backend reports the URI percent-encoded and canonicalized, while
+    // full-path string equality proved brittle.
     wxString path = nav_url;
     const size_t hash = path.Find('#');
     if (hash != wxNOT_FOUND)
@@ -505,6 +507,8 @@ bool UpdateVersionDialog::is_shell_page_url(const wxString& nav_url) const
         if (ch >= 'A' && ch <= 'Z')
             path[i] = static_cast<wxChar>(ch - 'A' + 'a');
     }
+    if (!path.StartsWith("file:///"))
+        return false;
     return path.EndsWith("releasenote.html");
 }
 
@@ -512,14 +516,11 @@ bool UpdateVersionDialog::ShowReleaseNote(std::string content)
 {
 	// keepImages=true: inline images of the release note are rendered inside the dialog.
 	// fixFeishuMerges runs from the showMarkdown wrapper installed by releasenote.html.
-	// Http::url_encode fail-opens (returns the input unchanged when curl cannot
-	// initialise); a raw quote would terminate the JS string literal. Skip the
-	// injection rather than send a broken script.
+	// Http::url_encode escapes quotes and other URL-unsafe characters so the
+	// content cannot terminate the JS string literal. Its fail-open path (curl
+	// cannot initialise, returns the input unchanged) is a pathological case
+	// and does not skip the injection.
 	const std::string encoded = Http::url_encode(content);
-	if (encoded.empty() && !content.empty()) {
-		BOOST_LOG_TRIVIAL(error) << "ShowReleaseNote: url_encode failed, skipping markdown injection";
-		return true;
-	}
 	RunScript("window.showMarkdown('" + encoded + "', true);");
     return true;
 }
@@ -562,6 +563,9 @@ void UpdateVersionDialog::show_plain_text_fallback()
     m_scrollwindows_release_note->SetSizer(sizer_text_release_note);
     m_scrollwindows_release_note->Layout();
     m_scrollwindows_release_note->Fit();
+    // The fallback subtree was built after the constructor's dark-UI walk, so it
+    // must be walked once here; the walker is idempotent over the webview subtree.
+    wxGetApp().UpdateDlgDarkUI(this);
     m_simplebook_release_note->SetSelection(0);
 }
 

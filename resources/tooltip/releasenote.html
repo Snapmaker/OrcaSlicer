@@ -102,7 +102,7 @@
             document.querySelectorAll('#contents sheet').forEach(function (el) {
                 var notice = document.createElement('blockquote');
                 notice.className = 'unsupported-block';
-                notice.textContent = '⚠️ Embedded Feishu sheet cannot be rendered here; please use a native table in the release note.';
+                notice.textContent = '⚠️ 嵌入的飞书在线表格无法在此渲染，请在发布说明中改用原生表格。 / Embedded Feishu sheet cannot be rendered here; please use a native table in the release note.';
                 el.replaceWith(notice);
             });
         };

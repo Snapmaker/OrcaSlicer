@@ -8485,6 +8485,11 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
     
     BOOST_LOG_TRIVIAL(info) << "Mixed filament merge completed. Total filaments after: " << total_after;
     
+    // The merge remap may have changed feature-filament options in the edited
+    // process preset; refresh the Params tab like the plain delete path does.
+    if (Tab *print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT))
+        print_tab->update();
+
     // Update UI
     update_color_mix_panel();
     if (!skip_update) {
@@ -8751,12 +8756,35 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
         auto guard_config_ref = [&kept_mixed, num_physical](const ModelConfig &cfg) {
             if (cfg.has("extruder") && cfg.extruder() > static_cast<int>(num_physical))
                 kept_mixed.push_back(static_cast<unsigned int>(cfg.extruder()));
+            // Feature-filament overrides accept mixed virtual ids just like
+            // "extruder"; a row referenced by any of them must survive cleanup.
+            for (const std::string &key : mixed_filament_feature_keys()) {
+                if (!cfg.has(key))
+                    continue;
+                const int id = cfg.opt_int(key);
+                if (id > static_cast<int>(num_physical))
+                    kept_mixed.push_back(static_cast<unsigned int>(id));
+            }
         };
         guard_config_ref(mo->config);
         for (const ModelVolume *mv : mo->volumes)
             guard_config_ref(mv->config);
         for (const auto &lr : mo->layer_config_ranges)
             guard_config_ref(lr.second);
+    }
+
+    // Preset-level feature-filament references pin a mixed row the same way:
+    // batch cleanup must not silently reset a support/interface selection that
+    // is still in use.
+    {
+        const DynamicPrintConfig &print_config = pb->prints.get_edited_preset().config;
+        for (const std::string &key : mixed_filament_feature_keys()) {
+            if (!print_config.has(key))
+                continue;
+            const int id = print_config.opt_int(key);
+            if (id > static_cast<int>(num_physical))
+                kept_mixed.push_back(static_cast<unsigned int>(id));
+        }
     }
 
     RedundantFilamentSet red = compute_redundant_filaments(
@@ -9002,43 +9030,34 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
                 if (mv->type() == ModelVolumeType::MODEL_PART)
                     mv->remap_extruder_ids(t3_total, state_map);
 
-        // Config "extruder" references (object/volume/layer) must follow the same
-        // remap as painting — remap_extruder_ids above touches triangle data only,
-        // so a config entry on a mixed row would stay on its stale pre-deletion id
-        // (the config side of the merged-slot regression). In the table, physical
-        // ids are identity, a deleted row maps to 0 (default), a survivor keeps
-        // its shifted id, and out-of-range/absent keys are left untouched. EPOCH
+        // Config references (object/volume/layer "extruder" plus the
+        // feature-filament overrides) must follow the same remap as painting —
+        // remap_extruder_ids above touches triangle data only, so a config
+        // entry on a mixed row would stay on its stale pre-deletion id (the
+        // config side of the merged-slot regression). The shared helper keeps
+        // "extruder" present-and-zero for a deleted row and erases feature
+        // keys whose row is gone so the global default takes effect. EPOCH
         // NOTE: config values are naive-decremented per physical deletion while
-        // the table is cascade-aware (T2) — consistent only with no cascade removal
-        // (the batch-match flow's case); if a cascade ever fires, skip via
-        // cascade_mixed_count == 0 or normalise first.
-        auto remap_config_extruder = [&mixed_deletion_remap](ModelConfig &cfg) {
-            if (!cfg.has("extruder")) return;
-            const int old = cfg.extruder();
-            if (old <= 0) return;
-            const size_t idx = static_cast<size_t>(old);
-            if (idx >= mixed_deletion_remap.size()) return;
-            const unsigned int mapped = mixed_deletion_remap[idx];
-            if (mapped == 0) {
-                // Deleted row: revert to default.  Set the key to 0 rather than
-                // erasing it — a missing "extruder" would make cfg.extruder()
-                // (opt_int, nullptr on absent key) a dangling dereference for
-                // any unprotected reader (GUI_ObjectList's delete path writes 0
-                // to layer ranges too).  Objects/volumes with extruder 0 resolve
-                // to "default" via ModelVolume::extruder_id()'s inherit-from-
-                // object fallback, so inheriting children stay "default".
-                cfg.set("extruder", 0);
-            } else if (mapped != static_cast<unsigned int>(old)) {
-                cfg.set_key_value("extruder", new ConfigOptionInt(static_cast<int>(mapped)));
-            }
-        };
+        // the table is cascade-aware (T2) — consistent only with no cascade
+        // removal (the batch-match flow's case); if a cascade ever fires, skip
+        // via cascade_mixed_count == 0 or normalise first.
         for (ModelObject* mo : wxGetApp().model().objects) {
-            remap_config_extruder(mo->config);
+            remap_model_config_filament_ids(mo->config, mixed_deletion_remap, t3_total);
             for (ModelVolume* mv : mo->volumes)
-                remap_config_extruder(mv->config);
+                remap_model_config_filament_ids(mv->config, mixed_deletion_remap, t3_total);
             for (auto &lr : mo->layer_config_ranges)
-                remap_config_extruder(lr.second);
+                remap_model_config_filament_ids(lr.second, mixed_deletion_remap, t3_total);
         }
+
+        // The edited process preset follows the same table; complete configs
+        // keep every key and reset deleted references to their defaults.
+        remap_complete_config_feature_filament_ids(
+            pb->prints.get_edited_preset().config, mixed_deletion_remap, t3_total);
+
+        // Keep the Plater mirror config in the same epoch. Single deletions
+        // resync it through TabPrint::update() -> on_config_change, but this
+        // batch path never triggers that propagation.
+        wxGetApp().plater()->remap_feature_filament_ids(mixed_deletion_remap, t3_total);
     }
 
     // Final authoritative serialization of the post-cleanup state (it must
@@ -9055,6 +9074,13 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     update_color_mix_panel();
     obj_list()->update_objects_list_filament_column(pb->filament_presets.size());
     obj_list()->refresh_layer_range_filament_items();
+
+    // The per-deletion loop skipped the Params tab refresh; reload edited
+    // process preset values once here so open fields cannot show stale ids.
+    if (Tab *print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+        print_tab->update_dirty();
+        print_tab->reload_config();
+    }
 }
 
 void Sidebar::add_custom_filament(wxColour new_col) {
@@ -22471,21 +22497,29 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
     // update UI
     sidebar().on_filaments_delete(filament_id);
 
-    // An explicit remap also covers mixed-row deletion/cascade cases that cannot
-    // be expressed by the naive decrement path below.
-    if (should_remap_states) {
-        remap_dynamic_config_feature_filament_ids(*p->config, id_remap, num_filaments);
-    } else {
-        for (const std::string &key : mixed_filament_feature_keys()) {
-            if (!p->config->has(key))
-                continue;
-
-            if (p->config->opt_int(key) == static_cast<int>(filament_id + 1)) {
-                p->config->erase(key);
-            } else {
-                const int old_id = p->config->opt_int(key);
-                const int new_id = old_id > static_cast<int>(filament_id) ? old_id - 1 : old_id;
-                p->config->set(key, new_id);
+    // Feature-filament options must track the surviving filament entity instead
+    // of stale indices. Apply one remap to both the Plater mirror config and
+    // the edited process preset: the Params UI, full_config() and project
+    // serialization read the preset, not the mirror. An explicit remap also
+    // covers mixed-row deletion/cascade cases that a plain decrement cannot.
+    std::vector<unsigned int> config_id_remap = id_remap;
+    if (config_id_remap.empty()) {
+        const unsigned int replace_1based = replace_filament_id >= 0
+            ? unsigned(replace_filament_id + 1)
+            : 0u;
+        config_id_remap = build_delete_filament_id_remap(
+            num_filaments + 1, unsigned(filament_id + 1), replace_1based);
+    }
+    remap_dynamic_config_feature_filament_ids(*p->config, config_id_remap, num_filaments);
+    if (preset_bundle != nullptr) {
+        DynamicPrintConfig &print_config = preset_bundle->prints.get_edited_preset().config;
+        // A preset config must stay complete: the Params UI reads its scalar
+        // options unconditionally, so reset deleted references to defaults.
+        remap_complete_config_feature_filament_ids(print_config, config_id_remap, num_filaments);
+        if (p->m_batch_physical_deletion == 0) {
+            if (Tab *print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+                print_tab->update_dirty();
+                print_tab->reload_config();
             }
         }
     }
@@ -22526,6 +22560,13 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
                 item.extruder--;
         }
     }
+}
+
+void Plater::remap_feature_filament_ids(const std::vector<unsigned int> &id_remap, size_t total_filaments)
+{
+    if (id_remap.empty())
+        return;
+    remap_dynamic_config_feature_filament_ids(*p->config, id_remap, total_filaments);
 }
 
 

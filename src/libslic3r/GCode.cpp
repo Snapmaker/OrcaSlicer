@@ -3904,8 +3904,11 @@ std::string GCode::placeholder_parser_process(const std::string&   name,
 
 // Parse the custom G-code, try to find mcode_set_temp_dont_wait and mcode_set_temp_and_wait or optionally G10 with temperature inside the
 // custom G-code. Returns true if one of the temp commands are found, and try to parse the target temperature value into temp_out.
-static bool custom_gcode_sets_temperature(
-    const std::string& gcode, const int mcode_set_temp_dont_wait, const int mcode_set_temp_and_wait, const bool include_g10, int& temp_out)
+static bool custom_gcode_sets_temperature(const std::string& gcode,
+                                          const int          mcode_set_temp_dont_wait,
+                                          const int          mcode_set_temp_and_wait,
+                                          const bool         include_g10,
+                                          double&            temp_out)
 {
     temp_out = -1;
     if (gcode.empty())
@@ -3939,16 +3942,15 @@ static bool custom_gcode_sets_temperature(
                     // Skip whitespaces.
                     for (; *ptr == ' ' || *ptr == '\t'; ++ptr)
                         ;
-                    if (*ptr == 'S') {
+                    if (*ptr == 'S' || (*ptr == 'R' && mgcode == 190)) {
                         // Skip whitespaces.
                         for (++ptr; *ptr == ' ' || *ptr == '\t'; ++ptr)
                             ;
-                        // Parse an int.
-                        endptr           = nullptr;
-                        long temp_parsed = strtol(ptr, &endptr, 10);
+                        endptr                   = nullptr;
+                        const double temp_parsed = strtod(ptr, &endptr);
                         if (endptr > ptr) {
                             ptr      = endptr;
-                            temp_out = temp_parsed;
+                            temp_out = std::isfinite(temp_parsed) && temp_parsed >= 0 ? temp_parsed : -1;
                             // Let the caller know that the custom G-code sets the temperature
                             // Only do this after successfully parsing temperature since G10
                             // can be used for other reasons
@@ -4095,25 +4097,15 @@ int GCode::get_bed_temperature_max(const Print& print, const bool is_first_layer
     return max_bed_temp;
 }
 
-// Write 1st layer bed temperatures into the G-code.
-// Only do that if the start G-code does not already contain any M-code controlling an extruder temperature.
-// M140 - Set Extruder Temperature
-// M190 - Set Extruder Temperature and Wait
+// Let custom M140/M190 commands control first-layer bed temperature when present.
 void GCode::_print_first_layer_bed_temperature(
     GCodeOutputStream& file, Print& print, const std::string& gcode, bool wait)
 {
-    // Use the highest temperature of the actual first-layer tools.
-    int bed_temp = get_bed_temperature_max(print, true);
-
-    // Is the bed temperature set by the provided custom G-code?
-    int  temp_by_gcode     = -1;
-    bool temp_set_by_gcode = custom_gcode_sets_temperature(gcode, 140, 190, false, temp_by_gcode);
-
-    // Always call m_writer.set_bed_temperature() so it will set the internal "current" state of the bed temp as if
-    // the custom start G-code emited these.
-    std::string set_temp_gcode = m_writer.set_bed_temperature(bed_temp, wait);
-    if (!temp_set_by_gcode)
-        file.write(set_temp_gcode);
+    double temp_by_gcode = -1;
+    if (custom_gcode_sets_temperature(gcode, 140, 190, false, temp_by_gcode))
+        m_writer.record_custom_bed_temperature(temp_by_gcode);
+    else
+        file.write(m_writer.set_bed_temperature(get_bed_temperature_max(print, true), wait));
 }
 
 // Write 1st layer extruder temperatures into the G-code.
@@ -4125,13 +4117,13 @@ void GCode::_print_first_layer_extruder_temperatures(
     GCodeOutputStream& file, Print& print, const std::string& gcode, unsigned int first_printing_extruder_id, bool wait)
 {
     // Is the bed temperature set by the provided custom G-code?
-    int  temp_by_gcode = -1;
-    bool include_g10   = print.config().gcode_flavor == gcfRepRapFirmware;
+    double temp_by_gcode = -1;
+    bool   include_g10   = print.config().gcode_flavor == gcfRepRapFirmware;
     if (custom_gcode_sets_temperature(gcode, 104, 109, include_g10, temp_by_gcode)) {
         // Set the extruder temperature at m_writer, but throw away the generated G-code as it will be written with the custom G-code.
         int temp = get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, first_printing_extruder_id);
         if (temp_by_gcode >= 0 && temp_by_gcode < 1000)
-            temp = temp_by_gcode;
+            temp = static_cast<int>(temp_by_gcode);
         m_writer.set_temperature(temp, wait, first_printing_extruder_id);
     } else {
         // Custom G-code does not set the extruder temperature. Do it now.

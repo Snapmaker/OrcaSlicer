@@ -2,6 +2,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include "libslic3r/Config.hpp"
+#include "libslic3r/GCode.hpp"
 #include "libslic3r/Print.hpp"
 #include "libslic3r/GCodeReader.hpp"
 #include "libslic3r/GCode/ToolOrdering.hpp"
@@ -156,6 +157,31 @@ void check_bed_temperature(const std::string &gcode, int first, int later)
     CHECK(later_layer_bed_temp(gcode) == later);
     CHECK(gcode.find("; bed_single=" + std::to_string(first)) != std::string::npos);
     CHECK(gcode.find("; first_layer_bed_temperature = " + std::to_string(first) + "\n") != std::string::npos);
+}
+
+std::vector<std::string> bed_commands(const std::string& gcode)
+{
+    std::vector<std::string> commands;
+    GCodeReader              reader;
+    reader.parse_buffer(gcode, [&](GCodeReader&, const GCodeReader::GCodeLine& line) {
+        if (line.cmd() == "M140" || line.cmd() == "M190")
+            commands.push_back(line.raw().substr(0, line.raw().find(" ;")));
+    });
+    return commands;
+}
+
+void check_second_layer_bed_command(const std::string& gcode, size_t script_start, bool expect_change)
+{
+    const std::string layer_marker = "\n; bed test layer\n";
+    const size_t      first_layer  = gcode.find(layer_marker, script_start);
+    REQUIRE(first_layer != std::string::npos);
+    const size_t second_layer = gcode.find(layer_marker, first_layer + layer_marker.size());
+    REQUIRE(second_layer != std::string::npos);
+    const size_t third_layer = gcode.find(layer_marker, second_layer + layer_marker.size());
+    REQUIRE(third_layer != std::string::npos);
+    CHECK(bed_commands(gcode.substr(first_layer, second_layer - first_layer)).empty());
+    const std::vector<std::string> expected = expect_change ? std::vector<std::string>{"M140 S60"} : std::vector<std::string>{};
+    CHECK(bed_commands(gcode.substr(second_layer, third_layer - second_layer)) == expected);
 }
 } // namespace
 
@@ -317,6 +343,49 @@ TEST_CASE("Start G-code bed commands expand from actual first-layer filaments", 
     CHECK(gcode.find("M190 S80") == std::string::npos);
 }
 
+TEST_CASE("Custom start bed temperature is used for the second-layer transition", "[BedTemperature]")
+{
+    const auto [script, expect_change] = GENERATE(table<std::string, bool>({{"M190 S80", true},
+                                                                            {"M140 S80", true},
+                                                                            {"M140 S90\nM190 S60", false},
+                                                                            {"M140 S60\nM190 R80", true},
+                                                                            {"M190 S60.5", true},
+                                                                            {"M140 S0", true}}));
+    CAPTURE(script);
+    auto config = support_bed_config();
+    config.set_deserialize_strict(
+        {{"textured_plate_temp", "60,75"}, {"machine_start_gcode", script}, {"before_layer_change_gcode", "; bed test layer"}});
+    const auto   gcode        = Test::slice({TestMesh::cube_20x20x20}, config);
+    const size_t script_start = gcode.find("\n" + script + "\n");
+    REQUIRE(script_start != std::string::npos);
+    const auto first_layer = gcode.find("\n; bed test layer\n", script_start);
+    REQUIRE(first_layer != std::string::npos);
+    CHECK(bed_commands(gcode.substr(0, first_layer)) == bed_commands(script));
+    check_second_layer_bed_command(gcode, script_start, expect_change);
+}
+
+TEST_CASE("Custom between-object bed temperature is used for the next second-layer transition", "[BedTemperature]")
+{
+    const int script_temp = GENERATE(60, 80);
+    CAPTURE(script_temp);
+    auto              config         = support_bed_config();
+    const std::string switch_marker  = "; bed test object switch";
+    const std::string switch_command = "M140 S" + std::to_string(script_temp);
+    config.set_deserialize_strict({{"enable_support", 0},
+                                   {"print_sequence", "by object"},
+                                   {"textured_plate_temp", "60,75"},
+                                   {"before_layer_change_gcode", "; bed test layer"},
+                                   {"printing_by_object_gcode", switch_marker + "\n" + switch_command}});
+    Print print;
+    Model model;
+    Test::init_print({TestMesh::cube_20x20x20, TestMesh::cube_20x20x20}, print, model, config);
+    const auto gcode        = Test::gcode(print);
+    const auto switch_start = gcode.find("\n" + switch_marker + "\n" + switch_command + "\n");
+    REQUIRE(switch_start != std::string::npos);
+    CHECK(bed_commands(gcode.substr(0, switch_start)) == std::vector<std::string>{"M190 S60"});
+    check_second_layer_bed_command(gcode, switch_start, script_temp != 60);
+}
+
 TEST_CASE("Current-tool raft uses the tool inherited by sequential export", "[BedTemperature]")
 {
     auto config = support_bed_config();
@@ -338,4 +407,62 @@ TEST_CASE("Current-tool raft uses the tool inherited by sequential export", "[Be
     });
     REQUIRE(first_extruding_tool == (sequential ? 1 : 0));
     check_bed_temperature(gcode, sequential ? 80 : 60, sequential ? 75 : 55);
+}
+
+TEST_CASE("Bed temperature follows current-tool raft after sequential clearance reorders objects", "[BedTemperature][SequentialClearance]")
+{
+    auto config = support_bed_config();
+    config.set_deserialize_strict({{"enable_support", 0},
+                                   {"print_sequence", "by object"},
+                                   {"textured_plate_temp_initial_layer", "80,60"},
+                                   {"textured_plate_temp", "75,55"},
+                                   {"support_filament", 0},
+                                   {"support_interface_filament", 0},
+                                   {"extruder_clearance_height_to_rod", 27.5},
+                                   {"extruder_clearance_height_to_lid", 140},
+                                   {"extruder_clearance_radius", 72.5},
+                                   {"gcode_label_objects", true}});
+    Print print;
+    Model model;
+    Test::init_print({make_cube(40, 40, 35), make_cube(40, 40, 10)}, print, model, config);
+    auto* tall         = model.objects[0];
+    auto* short_object = model.objects[1];
+    tall->name         = "bed_test_tall";
+    short_object->name = "bed_test_short";
+    tall->instances.front()->set_offset(Vec3d(60, 130, 0));
+    short_object->instances.front()->set_offset(Vec3d(190, 130, 0));
+    tall->config.set_key_value("raft_layers", new ConfigOptionInt(3));
+    for (const char* key : {"wall_filament", "sparse_infill_filament", "solid_infill_filament"})
+        short_object->config.set_key_value(key, new ConfigOptionInt(2));
+    print.apply(model, config);
+
+    REQUIRE(Print::sequential_print_clearance_valid(print).string.empty());
+    const auto order = sort_object_instances_by_model_order(print);
+    REQUIRE(order.size() == 2);
+    REQUIRE(order.front()->print_object->model_object() == print.model().objects[1]);
+
+    const auto gcode      = Test::gcode(print);
+    const auto tall_start = gcode.find("; printing object bed_test_tall");
+    const auto short_end  = gcode.rfind("; stop printing object bed_test_short");
+    REQUIRE(tall_start != std::string::npos);
+    REQUIRE(short_end != std::string::npos);
+    REQUIRE(short_end < tall_start);
+
+    int              tool = -1;
+    std::vector<int> tall_tools;
+    bool             tall_started = false;
+    GCodeReader      reader;
+    reader.parse_buffer(gcode, [&](GCodeReader& state, const GCodeReader::GCodeLine& line) {
+        if (line.cmd() == "T0")
+            tool = 0;
+        else if (line.cmd() == "T1")
+            tool = 1;
+        if (line.raw().find("; printing object bed_test_tall") == 0)
+            tall_started = true;
+        if (tall_started && line.extruding(state) && line.dist_XY(state) > 0 && (tall_tools.empty() || tall_tools.back() != tool))
+            tall_tools.push_back(tool);
+    });
+    CHECK(tall_tools == std::vector<int>{1, 0});
+    CHECK(bed_commands(gcode) == std::vector<std::string>{"M190 S60", "M140 S55", "M140 S60", "M140 S55"});
+    check_bed_temperature(gcode, 60, 55);
 }

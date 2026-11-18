@@ -15962,3 +15962,25 @@ msgstr "参与冷却降速的悬垂阈值"
 
 msgid "Decide which overhang part join the cooling function to slow down the speed. Expressed as percentage which indicates how much width of the line is without support from the lower layer. 100% means forcing cooling for all outer wall no matter how much overhang degree."
 msgstr "决定哪部分悬垂结构参与冷却降速。以线宽无下层支撑的比例表示。100% 表示无论悬垂程度如何，所有外墙都强制参与冷却降速。"
+
+msgid "Jump to: Support on build plate only"
+msgstr "跳转到：仅在打印板上生成支撑"
+
+msgid "Jump to: Support"
+msgstr "跳转到：支撑"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"检测到悬空部分未加支撑。\n"
+"模型\"%1%\"有 %2% 处垂悬区域。由于开启了\"仅在打印板上生成支撑\"，支撑无法生长到热床上。建议关闭该选项。"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"检测到悬空部分未加支撑。\n"
+"模型\"%1%\"有 %2% 处悬空区域未能生成支撑。可尝试调整支撑参数或模型朝向。"

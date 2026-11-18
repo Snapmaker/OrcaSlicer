@@ -21105,3 +21105,26 @@ msgstr ""
 #~ "Lütfen geçerli değerleri girin:\n"
 #~ "başlangıç > 10 adım >= 0\n"
 #~ "bitiş > başlangıç + adım)"
+
+msgid "Jump to: Support on build plate only"
+msgstr "Şuraya atla: Sadece baskı tablası üzerinde destek"
+
+msgid "Jump to: Support"
+msgstr "Şuraya atla: Destek"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Desteksiz çıkıntılar tespit edildi.\n"
+"\"%1%\" modelinde %2% çıkıntı bölgesi var. \"Sadece baskı tablası üzerinde destek\" etkin olduğundan destekler baskı tablasına kadar uzanamaz. Bu seçeneği kapatmayı dene."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Desteksiz çıkıntılar tespit edildi.\n"
+"\"%1%\" modelinde destek oluşturulamayan %2% çıkıntı bölgesi var. Destek ayarlarını değiştirmeyi veya nesnenin yönünü değiştirmeyi dene."
+

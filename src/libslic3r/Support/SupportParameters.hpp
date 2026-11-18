@@ -6,6 +6,31 @@
 #include "../Flow.hpp"
 
 namespace Slic3r {
+// Shared resolution of the raw support_style to the style the generators actually
+// use. SupportParameters applies it at construction; PrintObject::warn_uncovered_overhangs
+// uses it to classify the classic-drop path with the same result (MR !107 review F1).
+inline SupportMaterialStyle resolve_support_style(SupportMaterialStyle raw, SupportType support_type,
+                                                  bool has_custom_layering, bool soluble_interface)
+{
+    SupportMaterialStyle style = raw;
+    if (style != smsDefault) {
+        if ((style == smsSnug || style == smsGrid) && is_tree(support_type))
+            style = smsDefault;
+        if ((style == smsTreeSlim || style == smsTreeStrong || style == smsTreeHybrid || style == smsTreeOrganic) && !is_tree(support_type))
+            style = smsDefault;
+    }
+    if (style == smsDefault) {
+        if (is_tree(support_type)) {
+            // Align with Bambu Studio:
+            // Organic for normal cases, Hybrid for variable layer height or soluble interface
+            style = (has_custom_layering || soluble_interface) ? smsTreeHybrid : smsTreeOrganic;
+        } else {
+            style = smsGrid;
+        }
+    }
+    return style;
+}
+
 struct SupportParameters {
     SupportParameters() = delete;
     SupportParameters(const PrintObject& object)
@@ -193,26 +218,8 @@ struct SupportParameters {
                                                        object_config.tree_support_wall_count.value == 0 ? 0.25 * sqr(scaled<double>(5.0)) * M_PI :
                                                                                                           std::numeric_limits<double>::max();
 
-        support_style = object_config.support_style;
-        if (support_style != smsDefault) {
-            if ((support_style == smsSnug || support_style == smsGrid) && is_tree(object_config.support_type)) support_style = smsDefault;
-            if ((support_style == smsTreeSlim || support_style == smsTreeStrong || support_style == smsTreeHybrid || support_style == smsTreeOrganic) &&
-                !is_tree(object_config.support_type))
-                support_style = smsDefault;
-        }
-        if (support_style == smsDefault) {
-            if (is_tree(object_config.support_type)) {
-                // Align with Bambu Studio:
-                // Organic for normal cases, Hybrid for variable layer height or soluble interface
-                if (object.model_object()->has_custom_layering() || this->soluble_interface) {
-                    support_style = smsTreeHybrid;
-                } else {
-                    support_style = smsTreeOrganic;
-                }
-            } else {
-                support_style = smsGrid;
-            }
-        }
+        support_style = resolve_support_style(object_config.support_style, object_config.support_type,
+                                              object.model_object()->has_custom_layering(), this->soluble_interface);
     }
 	// Both top / bottom contacts and interfaces are soluble.
     bool                    soluble_interface;

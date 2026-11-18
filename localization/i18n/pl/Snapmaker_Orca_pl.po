@@ -22087,3 +22087,26 @@ msgstr ""
 #~ "Proszę podać poprawne wartości:\n"
 #~ "start > 10 kroków >= 0\n"
 #~ "koniec > start + krok)"
+
+msgid "Jump to: Support on build plate only"
+msgstr "Przejdź do: podpory tylko na stole roboczym"
+
+msgid "Jump to: Support"
+msgstr "Przejdź do: podpory"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Wykryto niepodparte nawisy.\n"
+"Model „%1%” ma %2% obszarów nawisu. Ponieważ włączono opcję „Podpory tylko na stole roboczym”, podpory nie mogą sięgać do stołu roboczego. Spróbuj wyłączyć tę opcję."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Wykryto niepodparte nawisy.\n"
+"Model „%1%” ma %2% obszarów nawisu, dla których nie można wygenerować podpór. Spróbuj dostosować ustawienia podpór lub zmienić orientację obiektu."
+

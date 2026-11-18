@@ -586,6 +586,10 @@ unscaled(const Eigen::Matrix<Tin, N, EigenArgs...> &v) noexcept
 // Align a coordinate to a grid. The coordinate may be negative,
 // the aligned value will never be bigger than the original one.
 inline coord_t align_to_grid(const coord_t coord, const coord_t spacing) {
+    // Degenerate input (e.g. support_base_pattern_spacing = 0 reaching the honeycomb
+    // filler): zero spacing must not divide by zero, so leave the coordinate as is.
+    if (spacing <= 0)
+        return coord;
     // Current C++ standard defines the result of integer division to be rounded to zero,
     // for both positive and negative numbers. Here we want to round down for negative
     // numbers as well.

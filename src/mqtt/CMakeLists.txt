@@ -64,6 +64,9 @@ if(PAHO_WITH_MQTT_C)
     ## Build the Paho C library from the submodule
     set(PAHO_ENABLE_TESTING FALSE CACHE BOOL "No Paho C tests")
     set(PAHO_HIGH_PERFORMANCE TRUE CACHE BOOL "Paho C high performance")
+    if(WIN32)
+        set(PAHO_ENABLE_CPACK FALSE CACHE BOOL "No Paho C package documentation" FORCE)
+    endif()
 
     # TODO: Remove this when the next Paho C update is released.
     set(CMAKE_POLICY_DEFAULT_CMP0048 NEW)
@@ -96,6 +99,14 @@ if(PAHO_WITH_MQTT_C)
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
     )
+    if(WIN32)
+        install(FILES
+            "${PROJECT_SOURCE_DIR}/externals/paho-mqtt-c/edl-v10"
+            "${PROJECT_SOURCE_DIR}/externals/paho-mqtt-c/epl-v20"
+            "${PROJECT_SOURCE_DIR}/externals/paho-mqtt-c/notice.html"
+            DESTINATION licenses/paho-mqtt-c
+        )
+    endif()
 else()
     find_package(eclipse-paho-mqtt-c REQUIRED)
 endif()

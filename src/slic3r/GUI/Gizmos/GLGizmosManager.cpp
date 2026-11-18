@@ -35,7 +35,7 @@
 
 #include <wx/glcanvas.h>
 
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 namespace Slic3r {
 namespace GUI {
 //BBS: GUI refactor: to support top layout
@@ -57,6 +57,24 @@ GLGizmosManager::GLGizmosManager(GLCanvas3D& parent)
     , m_object_manipulation(parent)
 {
     m_timer_set_color.Bind(wxEVT_TIMER, &GLGizmosManager::on_set_color_timer, this);
+}
+
+void GLGizmosManager::ReleasePainterGlResources()
+{
+    for (const std::unique_ptr<GLGizmoBase>& gizmo : m_gizmos) {
+        GLGizmoPainterBase* painter = dynamic_cast<GLGizmoPainterBase*>(gizmo.get());
+        if (painter != nullptr)
+            painter->ReleaseTriangleSelectorGlResources();
+    }
+}
+
+void GLGizmosManager::DetachPainterGlResources()
+{
+    for (const std::unique_ptr<GLGizmoBase>& gizmo : m_gizmos) {
+        GLGizmoPainterBase* painter = dynamic_cast<GLGizmoPainterBase*>(gizmo.get());
+        if (painter != nullptr)
+            painter->DetachTriangleSelectorGlResources();
+    }
 }
 
 std::vector<size_t> GLGizmosManager::get_selectable_idxs() const
@@ -762,6 +780,12 @@ bool GLGizmosManager::on_mouse(const wxMouseEvent &mouse_event)
     return false;
 }
 
+void GLGizmosManager::OnMouseCaptureLost()
+{
+    if (m_enabled && m_current != Undefined)
+        m_gizmos[m_current]->OnMouseCaptureLost();
+}
+
 bool GLGizmosManager::on_char(wxKeyEvent& evt)
 {
     // see include/wx/defs.h enum wxKeyCode
@@ -1424,6 +1448,7 @@ bool GLGizmosManager::activate_gizmo(EType type)
     if (type == Undefined) { 
         // it is deactivation of gizmo
         m_current = Undefined;
+        m_parent.set_as_dirty();
         return true;
     }
 
@@ -1446,6 +1471,7 @@ bool GLGizmosManager::activate_gizmo(EType type)
     new_gizmo.register_raycasters_for_picking();
 
     // sucessful activation of gizmo
+    m_parent.set_as_dirty();
     return true;
 }
 

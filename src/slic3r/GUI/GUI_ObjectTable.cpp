@@ -1434,16 +1434,43 @@ void ObjectGridTable::update_filament_to_config(ModelConfig* config, std::string
 }
 
 
-void ObjectGridTable::update_value_to_config(ModelConfig* config, std::string& key, ConfigOption& new_value,  ConfigOption& ori_value)
+// Snapmaker: flow variant
+size_t ObjectGridTable::speed_flow_index(bool volume_row)
+{
+    Tab* tab = wxGetApp().get_model_tab(volume_row);
+    return tab != nullptr ? tab->flow_variant_view_index() : 0;
+}
+
+// Snapmaker: flow variant
+static ConfigOption* clone_for_model_config(const ModelConfig* config, const std::string& key, const ConfigOption& value, size_t flow_index)
+{
+    if (!is_process_flow_variant_option(key))
+        return value.clone();
+
+    const DynamicPrintConfig& global_config = wxGetApp().preset_bundle->prints.get_edited_preset().config;
+    const ConfigOption* base = config->option(key);
+    if (base == nullptr)
+        base = global_config.option(key);
+    const auto* base_vec = base == nullptr ? nullptr : dynamic_cast<const ConfigOptionVectorBase*>(base);
+    if (base_vec == nullptr || base_vec->empty())
+        return value.clone();
+
+    std::unique_ptr<ConfigOption> merged(base->clone());
+    auto* merged_vec = dynamic_cast<ConfigOptionVectorBase*>(merged.get());
+    merged_vec->set_at(&value, flow_index, 0);
+    return merged.release();
+}
+
+void ObjectGridTable::update_value_to_config(ModelConfig* config, std::string& key, ConfigOption& new_value,  ConfigOption& ori_value, size_t flow_index)
 {
     if (!config->has(key))
     {
         if (ori_value != new_value)
-            config->set_key_value(key, new_value.clone());
+            config->set_key_value(key, clone_for_model_config(config, key, new_value, flow_index));
     }
     else {
         if (ori_value != new_value)
-            config->set_key_value(key, new_value.clone());
+            config->set_key_value(key, clone_for_model_config(config, key, new_value, flow_index));
         else
             config->erase(key);
     }
@@ -1600,7 +1627,7 @@ void ObjectGridTable::SetValue( int row, int col, const wxString& value )
         value.ToDouble(&double_value);
         option_value.value = (float)double_value;
 
-        update_value_to_config(grid_row->config, grid_col->key, option_value, option_ori_value);
+        update_value_to_config(grid_row->config, grid_col->key, option_value, option_ori_value, speed_flow_index(grid_row->row_type == row_volume));
     }
     else if (grid_col->type == coInt) {
         ConfigOptionInt &option_value = dynamic_cast<ConfigOptionInt &>((*grid_row)[(GridColType)col]);
@@ -1979,8 +2006,8 @@ void ObjectGridTable::construct_object_configs(ObjectGrid *object_grid)
         object_grid->ori_enable_support = *(global_config.option<ConfigOptionBool>(m_col_data[col_enable_support]->key));
         object_grid->brim_type = *(get_object_config_value<ConfigOptionEnum<BrimType>>(global_config, object_grid->config, m_col_data[col_brim_type]->key));
         object_grid->ori_brim_type = *(global_config.option<ConfigOptionEnum<BrimType>>(m_col_data[col_brim_type]->key));
-        object_grid->speed_perimeter = get_object_speed_value(global_config, object_grid->config, m_col_data[col_speed_perimeter]->key);
-        object_grid->ori_speed_perimeter = get_global_speed_value(global_config, m_col_data[col_speed_perimeter]->key);
+        object_grid->speed_perimeter = get_object_speed_value(global_config, object_grid->config, m_col_data[col_speed_perimeter]->key, speed_flow_index(false));
+        object_grid->ori_speed_perimeter = get_global_speed_value(global_config, m_col_data[col_speed_perimeter]->key, speed_flow_index(false));
         m_grid_data.push_back(object_grid);
 
         int volume_count = object->volumes.size();
@@ -2029,7 +2056,7 @@ void ObjectGridTable::construct_object_configs(ObjectGrid *object_grid)
             volume_grid->ori_enable_support = object_grid->enable_support;
             volume_grid->brim_type = *(get_volume_config_value<ConfigOptionEnum<BrimType>>(global_config, object_grid->config, volume_grid->config, m_col_data[col_brim_type]->key));
             volume_grid->ori_brim_type = object_grid->brim_type;
-            volume_grid->speed_perimeter = get_volume_speed_value(global_config, object_grid->config, volume_grid->config, m_col_data[col_speed_perimeter]->key);
+            volume_grid->speed_perimeter = get_volume_speed_value(global_config, object_grid->config, volume_grid->config, m_col_data[col_speed_perimeter]->key, speed_flow_index(true));
             volume_grid->ori_speed_perimeter = object_grid->speed_perimeter;
             m_grid_data.push_back(volume_grid);
         }
@@ -2075,8 +2102,8 @@ void ObjectGridTable::reload_object_data(ObjectGridRow* grid_row, const std::str
         grid_row->ori_enable_support = *(global_config.option<ConfigOptionBool>(m_col_data[col_enable_support]->key));
         grid_row->brim_type = *(get_object_config_value<ConfigOptionEnum<BrimType>>(global_config, grid_row->config, m_col_data[col_brim_type]->key));
         grid_row->ori_brim_type = *(global_config.option<ConfigOptionEnum<BrimType>>(m_col_data[col_brim_type]->key));
-        grid_row->speed_perimeter = get_object_speed_value(global_config, grid_row->config, m_col_data[col_speed_perimeter]->key);
-        grid_row->ori_speed_perimeter = get_global_speed_value(global_config, m_col_data[col_speed_perimeter]->key);
+        grid_row->speed_perimeter = get_object_speed_value(global_config, grid_row->config, m_col_data[col_speed_perimeter]->key, speed_flow_index(false));
+        grid_row->ori_speed_perimeter = get_global_speed_value(global_config, m_col_data[col_speed_perimeter]->key, speed_flow_index(false));
     }
     else if (category == L("Quality")) {
         grid_row->layer_height = *(get_object_config_value<ConfigOptionFloat>(global_config, grid_row->config, m_col_data[col_layer_height]->key));
@@ -2097,8 +2124,8 @@ void ObjectGridTable::reload_object_data(ObjectGridRow* grid_row, const std::str
         grid_row->ori_brim_type = *(global_config.option<ConfigOptionEnum<BrimType>>(m_col_data[col_brim_type]->key));
     }
     else if (category == L("Speed")) {
-        grid_row->speed_perimeter = get_object_speed_value(global_config, grid_row->config, m_col_data[col_speed_perimeter]->key);
-        grid_row->ori_speed_perimeter = get_global_speed_value(global_config, m_col_data[col_speed_perimeter]->key);
+        grid_row->speed_perimeter = get_object_speed_value(global_config, grid_row->config, m_col_data[col_speed_perimeter]->key, speed_flow_index(false));
+        grid_row->ori_speed_perimeter = get_global_speed_value(global_config, m_col_data[col_speed_perimeter]->key, speed_flow_index(false));
     }
 }
 
@@ -2115,7 +2142,7 @@ void ObjectGridTable::reload_part_data(ObjectGridRow* volume_row, ObjectGridRow*
         volume_row->ori_enable_support = object_row->enable_support;
         volume_row->brim_type = *(get_volume_config_value<ConfigOptionEnum<BrimType>>(global_config, object_row->config, volume_row->config, m_col_data[col_brim_type]->key));
         volume_row->ori_brim_type = object_row->brim_type;
-        volume_row->speed_perimeter = get_volume_speed_value(global_config, object_row->config, volume_row->config, m_col_data[col_speed_perimeter]->key);
+        volume_row->speed_perimeter = get_volume_speed_value(global_config, object_row->config, volume_row->config, m_col_data[col_speed_perimeter]->key, speed_flow_index(true));
         volume_row->ori_speed_perimeter = object_row->speed_perimeter;
     }
     else if (category == L("Quality")) {
@@ -2152,7 +2179,7 @@ void ObjectGridTable::reload_part_data(ObjectGridRow* volume_row, ObjectGridRow*
         volume_row->ori_brim_type = object_row->brim_type;
     }
     else if (category == L("Speed")) {
-        volume_row->speed_perimeter = get_volume_speed_value(global_config, object_row->config, volume_row->config, m_col_data[col_speed_perimeter]->key);
+        volume_row->speed_perimeter = get_volume_speed_value(global_config, object_row->config, volume_row->config, m_col_data[col_speed_perimeter]->key, speed_flow_index(true));
         if (volume_row->speed_perimeter == object_row->speed_perimeter) {
             volume_row->config->erase(m_col_data[col_speed_perimeter]->key);
         }
@@ -2514,7 +2541,7 @@ bool ObjectGridTable::OnCellLeftClick(int row, int col, ConfigOptionType &type)
                         update_volume_values_from_object(row, col-1);
                     }
                     else
-                        update_value_to_config(grid_row->config, grid_col_2->key, cur_option, orig_option);
+                        update_value_to_config(grid_row->config, grid_col_2->key, cur_option, orig_option, speed_flow_index(grid_row->row_type == row_volume));
                     ObjectVolumeID object_volume_id;
                     object_volume_id.object = m_panel->m_model->objects[grid_row->object_id];
                     object_volume_id.volume = (grid_row->row_type == row_object) ? nullptr : object_volume_id.object->volumes[grid_row->volume_id];

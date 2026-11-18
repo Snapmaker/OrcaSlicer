@@ -51,7 +51,6 @@ wxDECLARE_EVENT(EVT_LOAD_VAMS_TRAY, wxCommandEvent);
 wxDECLARE_EVENT(EVT_JUMP_TO_HMS, wxCommandEvent);
 wxDECLARE_EVENT(EVT_JUMP_TO_LIVEVIEW, wxCommandEvent);
 wxDECLARE_EVENT(EVT_UPDATE_TEXT_MSG, wxCommandEvent);
-wxDECLARE_EVENT(EVT_DOWN_URL_PACK, wxCommandEvent);
 
 class ReleaseNoteDialog : public DPIDialog
 {

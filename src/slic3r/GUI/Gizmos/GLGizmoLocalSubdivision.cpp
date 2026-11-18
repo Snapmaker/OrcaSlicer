@@ -64,15 +64,18 @@ bool GLGizmoLocalSubdivision::gizmo_event(SLAGizmoEventType action, const Vec2d&
     if ((action == SLAGizmoEventType::LeftUp || action == SLAGizmoEventType::RightUp)
       && m_button_down != Button::None) {
         // A paint stroke only changes the transient selection, not the model, so the
-        // GizmoAction snapshot the base class takes here would be an empty undo step.
-        // Intercepting the stroke end keeps one Ctrl+Z after the subdivision a direct
-        // jump back to the original mesh instead of stepping through the gizmo session.
-        // The stroke state must still be ended exactly like the base class does it:
-        // a stale m_last_mouse_click would make the next click interpolate a line of
-        // paint from the previous click position.
+        // GizmoAction snapshot the base FinalizePaintingStroke takes here would be an
+        // empty undo step. Intercepting the stroke end keeps one Ctrl+Z after the
+        // subdivision a direct jump back to the original mesh instead of stepping
+        // through the gizmo session. The stroke state must still be ended exactly
+        // like the base class does it: a stale m_last_mouse_click would make the next
+        // click interpolate a line of paint from the previous click position.
+        DiscardPaintingPreviewsAndFlush();
         update_model_object();
-        m_button_down      = Button::None;
-        m_last_mouse_click = Vec2d::Zero();
+        m_button_down             = Button::None;
+        m_strokeHasCommittedState = false;
+        m_last_mouse_click        = Vec2d::Zero();
+        _heightRangeLastBottomZ.reset();
         return true;
     }
     return GLGizmoPainterBase::gizmo_event(action, mouse_position, shift_down, alt_down, control_down);

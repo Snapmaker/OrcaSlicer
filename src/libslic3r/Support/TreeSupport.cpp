@@ -2329,28 +2329,96 @@ void TreeSupport::draw_circles()
     // its own disc survives the clip AND (it sits on the bed/raft, lands on the
     // model, fades, or its child prints). This matches the drop_nodes intent of
     // leaving no mid-air branches, at node level, without touching area lists.
+    //
+    // The collision map is computed once per layer and lazily per variant,
+    // mirroring the per-layer lazy caching of the draw loop's get_collision
+    // lambda (non-sharp vs sharp-tail offsets) so the pre-pass stays O(nodes)
+    // instead of recomputing the layer's collision per node.
     for (size_t li = 0; li < contact_nodes.size(); ++li) {
+        if (print->canceled())
+            break;
+        const size_t obj_layer_nr = m_ts_data->layer_heights[li].obj_layer_nr;
+        ExPolygons    collision_base;
+        ExPolygons    collision_sharp;
+        auto          collision_for = [&](bool sharp) -> ExPolygons & {
+            ExPolygons &collision = sharp ? collision_sharp : collision_base;
+            if (!collision.empty())
+                return collision;
+            collision = offset_ex(m_ts_data->m_layer_outlines[obj_layer_nr],
+                                  sharp ? scale_(top_z_distance) :
+                                  scale_((obj_layer_nr == 0) ? config.support_object_first_layer_gap : m_ts_data->m_xy_distance));
+            if (top_z_distance > EPSILON) {
+                float accum_height = 0;
+                for (size_t layer_id = obj_layer_nr + 1;
+                     layer_id < m_ts_data->m_layer_outlines.size() && (accum_height += m_object->get_layer(layer_id)->height) && accum_height <= top_z_distance;
+                     layer_id++) {
+                    collision = union_ex(collision, offset_ex(m_ts_data->m_layer_outlines[layer_id], scale_(top_z_distance)));
+                }
+            }
+            return collision;
+        };
         for (SupportNode *n : contact_nodes[li]) {
             bool clip_empty = false;
+            // Mirror the draw loop's clip condition: sharp-tail tips clip against
+            // the tighter top-z halo, plain nodes against the xy-clearance halo.
+            const bool       sharp    = n->is_sharp_tail && n->distance_to_top <= 0;
+            const ExPolygons &collision = collision_for(sharp);
             if (n->type == ePolygon) {
-                clip_empty = n->overhang.contour.points.empty();
-            } else {
-                const size_t obj_layer_nr = m_ts_data->layer_heights[li].obj_layer_nr;
-                ExPolygons    collision    = offset_ex(m_ts_data->m_layer_outlines[obj_layer_nr],
-                                                       scale_((obj_layer_nr == 0) ? config.support_object_first_layer_gap : m_ts_data->m_xy_distance));
-                if (top_z_distance > EPSILON) {
-                    float accum_height = 0;
-                    for (size_t layer_id = obj_layer_nr + 1;
-                         layer_id < m_ts_data->m_layer_outlines.size() && (accum_height += m_object->get_layer(layer_id)->height) && accum_height <= top_z_distance;
-                         layer_id++) {
-                        collision = union_ex(collision, offset_ex(m_ts_data->m_layer_outlines[layer_id], scale_(top_z_distance)));
-                    }
+                // Mirror the ePolygon draw path (overhang offset -> diff_clipped).
+                if (n->overhang.contour.points.empty()) {
+                    clip_empty = true;
+                } else {
+                    ExPolygons area;
+                    if (n->overhang.contour.size() > 100 || n->overhang.holes.size() > 1)
+                        area.emplace_back(n->overhang);
+                    else
+                        area = offset_ex({ n->overhang }, scale_(m_ts_data->m_xy_distance));
+                    area       = diff_clipped(area, collision);
+                    clip_empty = area.empty();
                 }
-                Polygon circle(branch_circle);
-                const double scale = n->radius / branch_radius;
-                for (int i = 0; i < circle.points.size(); i++)
-                    circle.points[i] = circle.points[i] * scale + n->position;
-                clip_empty = avoid_object_remove_extra_small_parts(ExPolygon(circle), collision).empty();
+            } else {
+                // Mirror the draw loop's interface-overhang replacement: when the node's
+                // area will be replaced by the expanded overhang (the interface path), the
+                // emptiness test must run on that candidate, not on the circle - otherwise
+                // the pre-pass kills a node whose interface polygon would still print.
+                if (top_interface_layers > 0 && (n->support_roof_layers_below > 1 || (n->support_roof_layers_below >= 0 && !n->is_sharp_tail))) {
+                    if (n->overhang.contour.points.empty()) {
+                        clip_empty = true;
+                    } else {
+                        ExPolygons overhang_expanded;
+                        if (n->overhang.contour.size() > 100 || n->overhang.holes.size() > 1)
+                            overhang_expanded.emplace_back(n->overhang);
+                        else
+                            overhang_expanded = offset_ex({ n->overhang }, scale_(m_ts_data->m_xy_distance));
+                        overhang_expanded = diff_clipped(overhang_expanded, collision);
+                        clip_empty       = overhang_expanded.empty();
+                    }
+                } else {
+                    Polygon circle(branch_circle);
+                    const double scale = n->radius / branch_radius;
+                    const double moveX = n->movement.x() / (scale * branch_radius_scaled);
+                    const double moveY = n->movement.y() / (scale * branch_radius_scaled);
+                    if (!SQUARE_SUPPORT && std::abs(moveX) > 0.001 && std::abs(moveY) > 0.001) {
+                        // Mirror the movement ellipse of the draw loop (its transform
+                        // matrix has eigenvalues >= 1, so the ellipse contains the bare
+                        // circle; using the bare circle here would kill discs the draw
+                        // loop keeps, changing the OFF-mode output).
+                        const double vsize_inv   = 0.5 / (0.01 + std::sqrt(moveX * moveX + moveY * moveY));
+                        double       matrix[2*2] = {
+                            scale * (1 + moveX * moveX * vsize_inv), scale * (0 + moveX * moveY * vsize_inv),
+                            scale * (0 + moveX * moveY * vsize_inv), scale * (1 + moveY * moveY * vsize_inv),
+                        };
+                        int i = 0;
+                        for (auto vertex : branch_circle.points) {
+                            vertex = Point(matrix[0] * vertex.x() + matrix[1] * vertex.y(), matrix[2] * vertex.x() + matrix[3] * vertex.y());
+                            circle.points[i++] = n->position + vertex;
+                        }
+                    } else {
+                        for (int i = 0; i < circle.points.size(); i++)
+                            circle.points[i] = circle.points[i] * scale + n->position;
+                    }
+                    clip_empty = avoid_object_remove_extra_small_parts(ExPolygon(circle), collision).empty();
+                }
             }
             n->drawn = !clip_empty && (li == 0 || n->landed || n->fading || (n->child != nullptr && n->child->drawn));
         }

@@ -30,7 +30,9 @@ public:
     // Start the initial async recipe search (call after the panel is shown).
     void begin_initial_recipe_load();
 
-    // Set target color from external UI and trigger recipe search.
+    // Set target color from external UI. A no-op (no new recipe search) only when
+    // a search for this exact target has already been issued; a never-searched
+    // target always triggers a fresh search.
     void set_target_color(const wxColour &target);
     void set_min_component_percent(int pct);
 
@@ -90,6 +92,10 @@ private:
     wxStaticText         *m_error_label          = nullptr;
 
     wxColour                     m_requested_target { wxColour("#26A69A") };
+    // The target the current recipe state corresponds to: written whenever a
+    // search is issued or a preset is applied (i.e. a recipe for it exists or
+    // is being produced). set_target_color() no-ops only against this value.
+    wxColour                     m_last_searched_target;
     wxColour                     m_selected_target  { wxColour("#26A69A") };
     MixedColorMatchRecipeResult  m_selected_recipe;
     wxTimer                      m_recipe_timer;

@@ -140,8 +140,9 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
     const float cursor_slider_left     = m_imgui->calc_text_size(m_desc.at("cursor_size")).x + m_imgui->scaled(1.5f);
     const float height_slider_left     = m_imgui->calc_text_size(m_desc.at("height_range")).x + m_imgui->scaled(1.5f);
     const float smart_fill_slider_left = m_imgui->calc_text_size(m_desc.at("smart_fill_angle")).x + m_imgui->scaled(1.5f);
+    const float subdiv_level_left      = m_imgui->calc_text_size(m_desc.at("subdiv_level")).x + m_imgui->scaled(1.5f);
     const float empty_button_width     = m_imgui->calc_button_size("").x;
-    const float sliders_left_width     = std::max(smart_fill_slider_left, std::max(cursor_slider_left, height_slider_left));
+    const float sliders_left_width     = std::max(subdiv_level_left, std::max(smart_fill_slider_left, std::max(cursor_slider_left, height_slider_left)));
     const float slider_icon_width      = m_imgui->get_slider_icon_size().x;
     const float max_tooltip_width      = ImGui::GetFontSize() * 20.0f;
     const float sliders_width          = m_imgui->scaled(7.0f);
@@ -197,6 +198,34 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
     (void) old_tool;
 
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.1));
+
+    // The parameter area under the tool buttons differs in height per tool: the
+    // triangle picker has none, the brushes have one slider row, the fill has a
+    // checkbox plus a slider row. The current layout is padded up to the
+    // tallest layout drawn so far this session (m_param_area_max_height), so
+    // switching tools never changes the panel height. The analytic two-row
+    // estimate below only seeds the maximum.
+    //
+    // The estimate follows the widget math: BBLCheckbox and BBLSliderScalarIn
+    // size their row as label height + 2x FramePadding (the drag input uses
+    // GetFrameHeight), and the measurement below starts one ItemSpacing under
+    // the dummy above, so that leading gap is counted for each row of the
+    // two-row fill layout.
+    const ImGuiStyle& style             = ImGui::GetStyle();
+    const float       widget_row_height = std::max(ImGui::GetFrameHeight(), ImGui::GetTextLineHeight() + style.FramePadding.y * 2.f);
+    const float       param_area_min_height = widget_row_height * 2.f + style.ItemSpacing.y * 2.f;
+    const float       param_area_top        = ImGui::GetCursorPosY();
+
+    // The brush and height-range tools have a single slider row; push it down
+    // so it sits in the middle of the reserved two-row area (the other half of
+    // the leftover is padded below after the measurement, keeping the row
+    // centered between the tool buttons and the separator).
+    const float inner_top_pad =
+        (m_current_tool == ImGui::CircleButtonIcon || m_current_tool == ImGui::HeightRangeIcon) ?
+            std::max(0.f, (widget_row_height - style.ItemSpacing.y) * 0.5f) :
+            0.f;
+    if (inner_top_pad > 0.f)
+        ImGui::Dummy(ImVec2(0.f, inner_top_pad));
 
     if (m_current_tool == ImGui::CircleButtonIcon) {
         m_cursor_type = TriangleSelector::CursorType::CIRCLE;
@@ -258,7 +287,30 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
         }
     }
 
+    // The remaining unused height goes above the separator, so the bottom
+    // cluster (counters, subdivision level stepper, action row) keeps its
+    // position: the subdivision level stays right above the Subdivide button
+    // while the panel height remains fixed across tools.
+    const float param_area_height = ImGui::GetCursorPosY() - param_area_top;
+    // Self-calibrating fixed height: pad the current layout up to the tallest
+    // layout drawn so far this session (the two-row analytic estimate below
+    // acts as a floor). Monotonic by construction, so switching tools never
+    // shrinks the panel.
+    m_param_area_max_height = std::max(m_param_area_max_height, param_area_min_height);
+    m_param_area_max_height = std::max(m_param_area_max_height, param_area_height);
+    // The padding Dummy occupies one ItemSpacing of its own on top of its
+    // height, so shorten it by that amount to keep the total extent of the
+    // section equal to the measured maximum.
+    const float pad_total = std::max(0.f, m_param_area_max_height - param_area_height - ImGui::GetStyle().ItemSpacing.y);
+    if (pad_total > 0.f)
+        ImGui::Dummy(ImVec2(0.f, pad_total));
+
     ImGui::Separator();
+
+    // A little breathing room around the counters and the subdivision level
+    // stepper so they do not hug the separator and each other.
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,
+                        ImVec2(ImGui::GetStyle().ItemSpacing.x, ImGui::GetStyle().ItemSpacing.y + ImGui::GetFontSize() * 0.5f));
 
     // How many facets are currently painted. Count the original (level-0) faces, not
     // the leaves of the selector tree: the selector subdivides triangles while painting,
@@ -306,8 +358,34 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
 
         ImGui::PopStyleColor(4); // Button, ButtonHovered, ButtonActive, Text
     }
+    ImGui::PopStyleVar();
+
     update_preview();
 
+    // One action row at the very bottom: the primary "Subdivide" on the far
+    // left, stretched over the width left by the two fixed-size buttons, then
+    // "Close" and "Erase all selection".
+    const float close_button_width = m_imgui->calc_button_size(m_desc["close"]).x;
+    const float clear_button_width = m_imgui->calc_button_size(m_desc["remove_all"]).x;
+    // Comfortable minimum width for the primary button when another row of the
+    // panel defines the window width.
+    const float subdiv_min_width = m_imgui->calc_text_size(m_desc["subdivide"]).x + ImGui::GetStyle().FramePadding.x * 6.f;
+    const float subdiv_button_width =
+        std::max(subdiv_min_width,
+                 ImGui::GetContentRegionAvail().x - close_button_width - clear_button_width - 2.f * ImGui::GetStyle().ItemSpacing.x);
+
+    m_imgui->disabled_begin(selected_facets == 0 || m_subdiv_level == 0);
+    m_imgui->push_confirm_button_style();
+    if (m_imgui->button(m_desc["subdivide"], subdiv_button_width, 0.f))
+        apply_subdivision();
+    m_imgui->pop_confirm_button_style();
+    m_imgui->disabled_end();
+
+    ImGui::SameLine();
+    if (m_imgui->bbl_button(m_desc["close"]))
+        close();
+
+    ImGui::SameLine();
     if (m_imgui->button(m_desc.at("remove_all"))) {
         // Like paint strokes, clearing the selection changes nothing on the model,
         // so no undo snapshot is taken for it.
@@ -322,17 +400,6 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
         m_preview_dirty = true;
         m_parent.set_as_dirty();
     }
-
-    m_imgui->disabled_begin(selected_facets == 0 || m_subdiv_level == 0);
-    m_imgui->push_confirm_button_style();
-    if (m_imgui->bbl_button(m_desc["subdivide"]))
-        apply_subdivision();
-    m_imgui->pop_confirm_button_style();
-    m_imgui->disabled_end();
-
-    ImGui::SameLine();
-    if (m_imgui->bbl_button(m_desc["close"]))
-        close();
 
     GizmoImguiEnd();
 

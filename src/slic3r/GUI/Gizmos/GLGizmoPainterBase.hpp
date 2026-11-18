@@ -353,7 +353,8 @@ private:
     struct CutContours
     {
         TriangleMesh mesh;
-        GLModel contours;
+        GLModel contours; // outline ring of the slice
+        GLModel plane;    // translucent filled slice, used as the height range preview
         double cut_z{ 0.0 };
         Vec3d position{ Vec3d::Zero() };
         Vec3d shift{ Vec3d::Zero() };

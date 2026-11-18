@@ -55,8 +55,9 @@ private:
     // paint stroke ends in update_model_object(), used here to invalidate the preview.
     void update_model_object() override { m_preview_dirty = true; }
     void update_from_model_object(bool first_update = false) override;
-    // Every time the gizmo is opened, start without a subdivision preview.
-    void on_opening() override { m_subdiv_level = 0; }
+    // Every time the gizmo is opened, start without a subdivision preview and
+    // recalibrate the fixed panel height from scratch.
+    void on_opening() override { m_subdiv_level = 0; m_param_area_max_height = 0.f; }
     void on_shutdown() override;
 
     void apply_subdivision();
@@ -91,6 +92,10 @@ private:
     int  m_subdiv_level  = 0;   // wanted subdivision level (slider)
     bool m_preview_dirty = true; // painted facets changed, the caches must be rebuilt
     int  m_shown_level   = 0;   // level whose geometry is currently displayed (0 = original)
+    // Tallest parameter layout drawn so far this session; shorter layouts are
+    // padded up to it so switching tools never changes the panel height. Reset
+    // when the gizmo opens.
+    float m_param_area_max_height = 0.f;
     std::vector<Preview> m_previews;
 };
 

@@ -12,6 +12,8 @@
 #include "libslic3r/Model.hpp"
 #include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/Tesselate.hpp"
+#include "libslic3r/TriangleMeshSlicer.hpp"
 
 #include <memory>
 #include <optional>
@@ -326,6 +328,22 @@ void GLGizmoPainterBase::render_cursor_height_range(const Transform3d& trafo) co
 
             shader->set_uniform("view_model_matrix", view_model_matrix);
             shader->set_uniform("projection_matrix", camera.get_projection_matrix());
+
+            // The translucent filled slice makes the height range boundaries
+            // readable while dragging. It is drawn without depth writes and
+            // pushed slightly away in depth so the outline ring on the same
+            // plane stays visible on top of it.
+            if (m_cut_contours[m_volumes_index].plane.is_initialized()) {
+                glsafe(::glPushAttrib(GL_ENABLE_BIT | GL_DEPTH_BUFFER_BIT | GL_POLYGON_BIT));
+                glsafe(::glEnable(GL_BLEND));
+                glsafe(::glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+                glsafe(::glDepthMask(GL_FALSE));
+                glsafe(::glEnable(GL_POLYGON_OFFSET_FILL));
+                glsafe(::glPolygonOffset(1.0f, 1.0f));
+                m_cut_contours[m_volumes_index].plane.render();
+                glsafe(::glPopAttrib());
+            }
+
             glsafe(::glLineWidth(2.0f));
             m_cut_contours[m_volumes_index].contours.render();
             m_volumes_index++;
@@ -369,6 +387,7 @@ void GLGizmoPainterBase::update_contours(int i, const TriangleMesh& vol_mesh, fl
                 m_cut_contours[i].object_id = model_object->id();
                 m_cut_contours[i].instance_idx = instance_idx;
                 m_cut_contours[i].contours.reset();
+                m_cut_contours[i].plane.reset();
 
                 MeshSlicingParams slicing_params;
                 slicing_params.trafo = Transform3d::Identity().matrix();
@@ -377,13 +396,34 @@ void GLGizmoPainterBase::update_contours(int i, const TriangleMesh& vol_mesh, fl
                     m_cut_contours[i].contours.init_from(polys, static_cast<float>(cursor_z));
                     m_cut_contours[i].contours.set_color({ 1.0f, 1.0f, 1.0f, 1.0f });
                 }
+                // Filled translucent copy of the same slice, used as the height
+                // range preview plane.
+                MeshSlicingParamsEx slicing_params_ex;
+                slicing_params_ex.trafo = Transform3d::Identity().matrix();
+                const std::vector<ExPolygons> expolys = slice_mesh_ex(m_cut_contours[i].mesh.its, std::vector<float>{cursor_z}, slicing_params_ex);
+                if (!expolys.empty() && !expolys.front().empty()) {
+                    const std::vector<Vec3d> triangles = triangulate_expolygons_3d(expolys.front(), cursor_z);
+                    if (!triangles.empty()) {
+                        indexed_triangle_set plane_its;
+                        plane_its.vertices.reserve(triangles.size());
+                        for (const Vec3d& v : triangles)
+                            plane_its.vertices.emplace_back(v.cast<float>());
+                        plane_its.indices.reserve(triangles.size() / 3);
+                        for (size_t ti = 0; ti + 2 < triangles.size(); ti += 3)
+                            plane_its.indices.emplace_back(stl_triangle_vertex_indices(int(ti), int(ti + 1), int(ti + 2)));
+                        m_cut_contours[i].plane.init_from(plane_its);
+                        m_cut_contours[i].plane.set_color({ 0.0f, 0.59f, 0.53f, 0.35f });
+                    }
+                }
             }
             else if (box.center() != m_cut_contours[i].position) {
                 m_cut_contours[i].shift = box.center() - m_cut_contours[i].position;
             }
         }
-        else
+        else {
             m_cut_contours[i].contours.reset();
+            m_cut_contours[i].plane.reset();
+        }
 }
 
 bool GLGizmoPainterBase::is_mesh_point_clipped(const Vec3d& point, const Transform3d& trafo) const

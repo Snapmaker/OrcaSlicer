@@ -623,6 +623,12 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
 
 wxBitmap *get_extruder_color_icon(std::string color, std::string label, int icon_width, int icon_height)
 {
+    // Smallest font scale the badge label is allowed to shrink to. Numeric filament numbers
+    // ("10".."45") land around 0.85 and are rendered at that size; anything that would need to
+    // go below this stays at the full size and is clipped as before, rather than becoming
+    // unreadable (e.g. a call site that passes a tray name instead of a number).
+    static const double kMinLabelShrinkRatio = 0.6;
+
     static Slic3r::GUI::BitmapCache bmp_cache;
 
     std::string bitmap_key = color + "-h" + std::to_string(icon_height) + "-w" + std::to_string(icon_width) + "-i" + label;
@@ -662,9 +668,36 @@ wxBitmap *get_extruder_color_icon(std::string color, std::string label, int icon
             dc.SetPen(*wxGREY_PEN);
             dc.DrawRectangle(0, 0, icon_width, icon_height);
         }
-        auto size = dc.GetTextExtent(wxString(label));
+        // Fit the label inside the badge. The badge has a fixed DIP size while the label grows
+        // with the filament count ("1" .. "45"): a two digit label used to be drawn centred and
+        // clipped on both sides, which showed up as a truncated "2<garbage>" from filament 21 on.
+        //
+        // The font is sized once from the widest label the badge must hold - measured from both
+        // "00" and the label being drawn, so that "1" and "45" share one font size while a wider
+        // label (three digits) still shrinks to fit instead of being clipped.
+        const int max_label_width = std::max(icon_width - 2, 1);
+        wxFont    label_font      = dc.GetFont();
+        const double base_size    = label_font.GetFractionalPointSize();
+        if (base_size > 0) {
+            const int two_digit_width = dc.GetTextExtent("00").x;
+            const int label_width     = dc.GetTextExtent(wxString(label)).x;
+            const int widest_width    = std::max(two_digit_width, label_width);
+            if (widest_width > max_label_width) {
+                // Only shrink while the result stays readable. Numeric filament numbers need a
+                // few percent, while a call site passing a tray name (PresetComboBoxes) would be
+                // squeezed far below legibility - those keep the previous behaviour (full size,
+                // possibly clipped) instead of turning into unreadable specks.
+                const double ratio = double(max_label_width) / double(widest_width);
+                if (ratio >= kMinLabelShrinkRatio) {
+                    label_font.SetFractionalPointSize(std::max(base_size * ratio, 1.0));
+                    dc.SetFont(label_font);
+                }
+            }
+        }
+        const wxString label_text(label);
+        const wxSize   size = dc.GetTextExtent(label_text);
         dc.SetTextForeground(clr.GetLuminance() < 0.51 ? *wxWHITE : *wxBLACK);
-        dc.DrawText(label, (icon_width - size.x) / 2, (icon_height - size.y) / 2);
+        dc.DrawText(label_text, (icon_width - size.x) / 2, (icon_height - size.y) / 2);
         dc.SelectObject(wxNullBitmap);
     }
     return bitmap;

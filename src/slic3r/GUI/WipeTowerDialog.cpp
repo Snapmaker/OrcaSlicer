@@ -1,5 +1,8 @@
 #include <algorithm>
+#include <cmath>
 #include <sstream>
+#include <wx/display.h>
+#include <wx/scrolwin.h>
 #include "libslic3r/FlushVolCalc.hpp"
 #include "WipeTowerDialog.hpp"
 #include "BitmapCache.hpp"
@@ -29,7 +32,6 @@ static const wxColour g_text_color = wxColour(107, 107, 107, 255);
 #define TABLE_BORDER            FromDIP(28)
 #define HEADER_VERT_PADDING     FromDIP(12)
 #define HEADER_BEG_PADDING      FromDIP(30)
-#define ICON_GAP                FromDIP(44)
 #define HEADER_END_PADDING      FromDIP(24)
 #define ROW_VERT_PADDING        FromDIP(6)
 #define ROW_BEG_PADDING         FromDIP(20)
@@ -39,7 +41,17 @@ static const wxColour g_text_color = wxColour(107, 107, 107, 255);
 #define BTN_GAP                 FromDIP(20)
 #define TEXT_BEG_PADDING        FromDIP(30)
 #define MAX_FLUSH_VALUE         2147483520
-#define MIN_WIPING_DIALOG_WIDTH FromDIP(300)
+// The dialog width used to be derived from the filament count; keep that value as the
+// floor so the historical minimum width of the dialog is preserved.
+#define MIN_WIPING_DIALOG_WIDTH_DIP 300
+#define MIN_WIPING_DIALOG_WIDTH     FromDIP(MIN_WIPING_DIALOG_WIDTH_DIP)
+// Minimum size of the scrolling viewport (DIP). The dialog may be shrunk down to this;
+// below the fitted size the matrix is simply scrolled instead of being clipped.
+#define MIN_WIPING_VIEW_WIDTH_DIP  240
+#define MIN_WIPING_VIEW_HEIGHT_DIP 120
+// Scroll step of the matrix viewport, in DIP. Re-applied on a DPI change (see
+// WipingPanel::refit_in_dialog()), because the pixel value follows the scale factor.
+#define SCROLL_RATE_DIP            10
 #define TIP_MESSAGES_PADDING    FromDIP(8)
 
 
@@ -274,6 +286,138 @@ wxBoxSizer* WipingPanel::create_calc_btn_sizer(wxWindow* parent) {
 
     return btn_sizer;
 }
+
+namespace {
+
+/// \brief Work area (task bar excluded) of the display the given dialog is on.
+///
+/// \param dlg  The dialog whose display is queried. The dialog itself is used as the reference
+///             window so that a dialog dragged to a secondary display is measured on that
+///             display, not on the one its parent is on; the parent and then the main frame are
+///             tried next, which is what the constructor call relies on (the dialog has no
+///             native handle of its own yet at that point).
+/// \return     The client area of that display, or an empty rectangle when it cannot be
+///             resolved (headless / no display).
+///
+/// GUI thread only: it queries window hierarchy and display geometry.
+wxRect dialog_work_area(const wxWindow* dlg)
+{
+    // Prefer the dialog itself: a dialog dragged to a secondary display must be measured on
+    // that display, not on the one its parent is on. The parent (and then the main frame) are
+    // the fallbacks for the constructor call, where the dialog has no native handle yet and
+    // wxDisplay cannot resolve it.
+    const wxWindow* candidates[] = {
+        dlg,
+        dlg != nullptr ? dlg->GetParent() : nullptr,
+        wxGetApp().mainframe,
+    };
+    for (const wxWindow* ref : candidates) {
+        if (ref == nullptr)
+            continue;
+        wxDisplay display(ref);
+        if (display.IsOk())
+            return display.GetClientArea();
+    }
+    return wxRect();
+}
+
+/// \brief Size the dialog so that the whole flushing matrix stays reachable.
+///
+/// The matrix holds one row and one column per filament, so its natural size grows with the
+/// filament count. WipingDialog used to size itself to the content via SetSizeHints(), and
+/// because wx clamps that size to the display, every row/column past the screen edge was
+/// simply clipped: there was no scrollbar and the dialog was not resizable, so the rest of
+/// the matrix could not be reached at all.
+///
+/// This keeps the dialog inside 4/5 of the display work area (the same ratio as
+/// GUI::fit_in_display()) and leaves the overflow to the scrolling viewport that hosts the
+/// panel: the panel's minimum size and the viewport's virtual size are both set to the
+/// measured content size, and what does not fit becomes scrollable.
+///
+/// \param dlg       The dialog to size. It is resized as a side effect and its minimum client
+///                  size is set to the fitted size, so it can be shrunk but not below chrome +
+///                  the DIP floor.
+/// \param viewport  The scrolling window that hosts \a content. Must be the parent of
+///                  \a content: its sizer lays \a content out, and it is the window whose
+///                  minimum size and virtual size are pinned.
+/// \param content   The panel holding the matrix; its best size is the content size.
+///
+/// Call it again on a DPI change (WipingPanel::refit_in_dialog()). The content itself does not
+/// change while the dialog is open, so no other caller is needed.
+///
+/// GUI thread only: it reads/sets window geometry and queries the display the dialog is on.
+/// GUI::fit_in_display() is not reused here: it only resizes a top level window from a desired
+/// size and knows nothing about the scrolling viewport that has to be resized instead, nor
+/// about the minimum size the window keeps while it can be shrunk.
+///
+/// Note: do NOT call SetSizeHints() here. It pins the window's minimum client size to the
+/// fitted size, and that size is computed from the content size, so the viewport would be
+/// forced back to the full matrix size and the scrollbars would never appear.
+void fit_wiping_dialog_to_display(wxDialog* dlg, wxScrolledWindow* viewport, WipingPanel* content)
+{
+    if (dlg == nullptr || viewport == nullptr || content == nullptr)
+        return;
+
+    wxSizer* sizer = dlg->GetSizer();
+    if (sizer == nullptr)
+        return;
+
+    // Measure the matrix at its full content size. GetBestSize() is clamped to the window's
+    // current minimum size (wxWindowBase::DoGetBestSize ends with IncTo(GetMinSize())), so any
+    // minimum the panel already carries would leak into the measurement and make the content
+    // size grow-only (it would not shrink back after a DPI decrease).
+    //
+    // Drop it first, and keep doing so unconditionally: where that minimum comes from is the
+    // panel's business and may change with the wx version and with the order of the calls in
+    // its constructor (in wx 3.1.5 the `m_sizer->SetSizeHints(this)` that runs before
+    // `SetSizer(m_sizer)` takes `GetSizer()` internally and therefore sets nothing; a version
+    // or a reordering that lets it see the sizer would pin the minimum to whatever page was
+    // visible at construction). Resetting here is cheap and keeps this function correct either
+    // way - do not remove it as "dead code".
+    content->SetMinSize(wxDefaultSize);
+    const wxSize content_size = content->GetBestSize(); // == min size of WipingPanel's sizer
+
+    // Pin the panel's minimum to that content size: the viewport sizer lays the panel out at
+    // this size, so the whole matrix is laid out and the viewport can scroll over it. Without
+    // it the panel would be shrunk to the visible area and its rows would be clipped a second
+    // time, where scrolling cannot reach them.
+    content->SetMinSize(content_size);
+
+    // Measure the dialog as if the whole matrix was visible at once: the viewport at full
+    // content size plus the fixed chrome (separator + button row).
+    viewport->SetMinSize(content_size);
+    const wxSize full_size = sizer->GetMinSize();
+
+    const wxRect work_area = dialog_work_area(dlg);
+    wxSize     view_size   = content_size;
+    if (work_area.GetWidth() > 0 && work_area.GetHeight() > 0) {
+        const wxSize max_size(work_area.GetWidth() * 4 / 5, work_area.GetHeight() * 4 / 5);
+        view_size.x = std::max(view_size.x - std::max(0, full_size.x - max_size.x), dlg->FromDIP(MIN_WIPING_VIEW_WIDTH_DIP));
+        view_size.y = std::max(view_size.y - std::max(0, full_size.y - max_size.y), dlg->FromDIP(MIN_WIPING_VIEW_HEIGHT_DIP));
+    }
+
+    viewport->SetMinSize(view_size);
+    viewport->SetVirtualSize(content_size); // same as FitInside(): the scrollable area
+
+    // Initial size: fitted to the matrix, so a small matrix does not need any scrolling.
+    wxSize fitted = sizer->GetMinSize();
+    fitted.x = std::max(fitted.x, dlg->FromDIP(MIN_WIPING_DIALOG_WIDTH_DIP));
+
+    // Minimum size: a small but usable viewport instead of the fitted size, so the window
+    // can be shrunk as well; the scrollbars keep the whole matrix reachable either way.
+    // Setting the minimum before the size mirrors wxSizer::SetSizeHints().
+    viewport->SetMinSize(wxSize(std::min(view_size.x, dlg->FromDIP(MIN_WIPING_VIEW_WIDTH_DIP)),
+                                std::min(view_size.y, dlg->FromDIP(MIN_WIPING_VIEW_HEIGHT_DIP))));
+    wxSize min_client = sizer->GetMinSize();
+    min_client.x = std::max(min_client.x, dlg->FromDIP(MIN_WIPING_DIALOG_WIDTH_DIP));
+
+    dlg->SetMinClientSize(min_client);
+    dlg->SetClientSize(fitted);
+    dlg->Layout();
+}
+
+} // anonymous namespace
+
 void WipingDialog::on_dpi_changed(const wxRect &suggested_rect)
 {
     for (auto button_item : m_button_list) 
@@ -284,6 +428,19 @@ void WipingDialog::on_dpi_changed(const wxRect &suggested_rect)
         }
     }
     m_panel_wiping->msw_rescale();
+
+    // Re-clamp the dialog for the display it is on now. Two things are frozen and two are not:
+    //  - frozen: the panel's DIP sizes, evaluated once when it was constructed (ITEM_WIDTH() and
+    //    the FromDIP constants are baked into the controls' minimum sizes), and msw_rescale()
+    //    only swaps the icon bitmaps - so the re-measured content size keeps its width and can
+    //    only differ in height (fonts);
+    //  - recomputed: the display work area and the DIP floors (240x120 / 300 DIP).
+    // The re-fit therefore re-applies the display area to the same content size.
+    //
+    // Trade-off: the fit sets the client size explicitly, so a size the user dragged the dialog
+    // to is replaced by the fitted one. That is intentional - after a DPI change the fitted size
+    // is what keeps the whole matrix reachable, and the user can resize again afterwards.
+    m_panel_wiping->refit_in_dialog();
     this->Refresh();
 };
 
@@ -295,30 +452,42 @@ WipingDialog::WipingDialog(wxWindow* parent, const std::vector<float>& matrix, c
                 _(L("Flushing volumes for filament change")),
                 wxDefaultPosition,
                 wxDefaultSize,
-                wxDEFAULT_DIALOG_STYLE /* | wxRESIZE_BORDER*/)
+                wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
     auto m_line_top = new wxPanel(this, wxID_ANY, wxDefaultPosition, wxSize(-1, 1));
     m_line_top->SetBackgroundColour(wxColour(166, 169, 170));
 
     this->SetBackgroundColour(*wxWHITE);
-    this->SetMinSize(wxSize(MIN_WIPING_DIALOG_WIDTH, -1));
-    
+    // No SetMinSize() here: fit_wiping_dialog_to_display() sets the minimum client size, and it
+    // already enforces MIN_WIPING_DIALOG_WIDTH_DIP; a second minimum would only drift from it.
 
-    m_panel_wiping = new WipingPanel(this, matrix, extruders, extruder_colours, nullptr, extra_flush_volume, flush_multiplier);
+    // The flushing matrix grows with the filament count (one row and one column per
+    // filament), so host it in a scrolling viewport instead of letting the dialog grow
+    // with the content: the dialog is kept inside the display work area below, and
+    // whatever does not fit (the last rows and columns) stays reachable by scrolling.
+    wxScrolledWindow* viewport = new wxScrolledWindow(this, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxHSCROLL | wxVSCROLL);
+    viewport->SetScrollRate(FromDIP(SCROLL_RATE_DIP), FromDIP(SCROLL_RATE_DIP));
+    viewport->SetBackgroundColour(*wxWHITE);
+
+    m_panel_wiping = new WipingPanel(viewport, matrix, extruders, extruder_colours, nullptr, extra_flush_volume, flush_multiplier);
+
+    auto viewport_sizer = new wxBoxSizer(wxVERTICAL);
+    // proportion 1: when the viewport is larger than the matrix, the panel still fills it
+    // (the alternating row background covers the whole width, as before); when it is
+    // smaller, the sizer keeps the panel at its minimum, i.e. at full content size.
+    viewport_sizer->Add(m_panel_wiping, 1, wxEXPAND);
+    viewport->SetSizer(viewport_sizer);
 
     auto main_sizer = new wxBoxSizer(wxVERTICAL);
     main_sizer->Add(m_line_top, 0, wxEXPAND, 0);
-    
-    // set min sizer width according to extruders count
-    auto sizer_width = (int)((sqrt(matrix.size()) + 2.8)*ITEM_WIDTH());
-    sizer_width = sizer_width > MIN_WIPING_DIALOG_WIDTH ? sizer_width : MIN_WIPING_DIALOG_WIDTH;
-    main_sizer->SetMinSize(wxSize(sizer_width, -1));
-    main_sizer->Add(m_panel_wiping, 1, wxEXPAND | wxALL, 0);
+    main_sizer->Add(viewport, 1, wxEXPAND, 0);
 
+    // The button row stays outside of the scrolling area, so it is always visible.
     auto dlg_btns = new DialogButtons(this, {"OK", "Cancel"});
     main_sizer->Add(dlg_btns, 0, wxEXPAND);
     SetSizer(main_sizer);
-    main_sizer->SetSizeHints(this);
+    fit_wiping_dialog_to_display(this, viewport, m_panel_wiping);
+    this->CenterOnParent();
 
     dlg_btns->GetOK()->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {                 // if OK button is clicked..
         m_output_matrix = m_panel_wiping->read_matrix_values();    // ..query wiping panel and save returned values
@@ -386,6 +555,13 @@ WipingPanel::WipingPanel(wxWindow* parent, const std::vector<float>& matrix, con
 ,m_matrix(matrix), m_min_flush_volume(extra_flush_volume), m_max_flush_volume(Slic3r::g_max_flush_volume)
 {
     m_number_of_extruders = (int)(sqrt(matrix.size())+0.001);
+
+    // Contract: one minimum flush volume per filament. `extra_flush_volume` comes from
+    // Plater's get_min_flush_volumes(full_config), which sizes it by filament_diameter, and
+    // PresetBundle::update_multi_material_filament_presets() keeps the matrix at n x n, so the
+    // dialog never derives a dimension from data the caller does not have. No assert on
+    // purpose: a project whose two vectors disagree would turn a debug build into an abort on
+    // load, instead of opening the dialog.
 
     for (const std::string& color : extruder_colours) {
         Slic3r::ColorRGB rgb;
@@ -486,15 +662,36 @@ WipingPanel::WipingPanel(wxWindow* parent, const std::vector<float>& matrix, con
     auto header_line_sizer = new wxBoxSizer(wxHORIZONTAL);
     header_line_panel->SetSizer(header_line_sizer);
 
-    header_line_sizer->AddSpacer(HEADER_BEG_PADDING);
+    // The header row must be built from exactly the same per-column geometry as the matrix
+    // rows (spacer EDIT_BOXES_GAP + a cell ITEM_WIDTH wide), and the same leading offset as
+    // a row's first cell (ROW_BEG_PADDING + icon width). The two layouts used to compute the
+    // column pitch differently - a 44 DIP gap plus the 16 DIP icon here vs EDIT_BOXES_GAP
+    // plus ITEM_WIDTH there - which is the same 60 DIP nominally but rounds differently at
+    // fractional DPI scaling: the header drifted 1 px per column, so by the time you scrolled
+    // to the 40th column the icons were ~40 px away from the values underneath them.
+    header_line_sizer->AddSpacer(ROW_BEG_PADDING + ICON_SIZE.x);
     for (unsigned int i = 0; i < m_number_of_extruders; ++i) {
-        wxButton* icon = new wxButton(header_line_panel, wxID_ANY, {}, wxDefaultPosition, ICON_SIZE, wxBORDER_NONE | wxBU_AUTODRAW);
+        auto* cell = new wxPanel(header_line_panel, wxID_ANY, wxDefaultPosition, wxSize(ITEM_WIDTH(), -1));
+        cell->SetBackgroundColour(header_line_panel->GetBackgroundColour());
+
+        wxButton* icon = new wxButton(cell, wxID_ANY, {}, wxDefaultPosition, ICON_SIZE, wxBORDER_NONE | wxBU_AUTODRAW);
         icon->SetBitmap(*get_extruder_color_icon(m_colours[i].GetAsString(wxC2S_HTML_SYNTAX).ToStdString(), std::to_string(i + 1), FromDIP(16), FromDIP(16)));
         icon->SetCanFocus(false);
         icon_list1.push_back(icon);
-        
-        header_line_sizer->AddSpacer(ICON_GAP);
-        header_line_sizer->Add(icon, 0, wxALIGN_CENTER_VERTICAL | wxTOP | wxBOTTOM, HEADER_VERT_PADDING);
+
+        auto* cell_sizer = new wxBoxSizer(wxHORIZONTAL);
+        cell_sizer->AddStretchSpacer();
+        cell_sizer->Add(icon, 0, wxALIGN_CENTER_VERTICAL);
+        cell_sizer->AddStretchSpacer();
+        cell->SetSizer(cell_sizer);
+        // The sizer's minimum is just the icon width (the stretch spacers can shrink to 0), and
+        // this cell is added with proportion 0, so without a minimum the header cell would be
+        // ICON_SIZE.x wide while the data cells below it are ITEM_WIDTH() wide - the very
+        // column-pitch mismatch this change is meant to remove.
+        cell->SetMinSize(wxSize(ITEM_WIDTH(), -1));
+
+        header_line_sizer->AddSpacer(EDIT_BOXES_GAP);
+        header_line_sizer->Add(cell, 0, wxALIGN_CENTER_VERTICAL | wxTOP | wxBOTTOM, HEADER_VERT_PADDING);
     }
     header_line_sizer->AddSpacer(HEADER_END_PADDING);
     
@@ -780,19 +977,22 @@ void WipingPanel::msw_rescale()
 
 // Reads values from the (advanced) wiping matrix:
 std::vector<float> WipingPanel::read_matrix_values() {
-    if (!m_advanced)
-        fill_in_matrix();
+    // No fill_in_matrix() call here: it is only reachable from toggle_advanced(true), which
+    // nothing calls - the constructor's toggle_advanced() takes no user_action, so m_advanced is
+    // always true and the removed "if (!m_advanced)" branch never ran.
+    float flush_multipler = get_flush_multiplier();
+
     std::vector<float> output;
     for (unsigned int i=0;i<m_number_of_extruders;++i) {
         for (unsigned int j=0;j<m_number_of_extruders;++j) {
             double val = 0.;
-            float  flush_multipler = get_flush_multiplier();
+            edit_boxes[j][i]->GetValue().ToDouble(&val);
+
             if (flush_multipler == 0) {
                 output.push_back(0.);
             }
             else {
-                edit_boxes[j][i]->GetValue().ToDouble(&val);
-                output.push_back((float) val / get_flush_multiplier());
+                output.push_back((float) val / flush_multipler);
             }
         }
     }
@@ -852,4 +1052,35 @@ void WipingPanel::toggle_advanced(bool user_action) {
 
    m_sizer->Layout();
    Refresh();
+}
+
+/// \brief Re-measure this panel and resize the dialog that hosts it.
+///
+/// The dialog pins this panel's minimum size and the scrolling viewport's virtual size to the
+/// panel's content size, so both have to be recomputed when the fitted size would change. That
+/// happens on a DPI change: the panel's DIP sizes are frozen at construction, while the display
+/// work area and the DIP floors follow the scale factor.
+///
+/// No page-switch caller is needed: toggle_advanced() is called once from the constructor
+/// without user_action and nothing else calls it, so the visible page never changes and the
+/// panel's content size stays the same while the dialog is open.
+/// WipingDialog::on_dpi_changed() is therefore the only caller.
+///
+/// Both windows are looked up from the hierarchy: the scrolling viewport is our parent and the
+/// dialog is our top level window.
+///
+/// Does nothing outside the expected hierarchy (for example when no viewport/dialog was found).
+///
+/// GUI thread only: it reads/sets window geometry.
+void WipingPanel::refit_in_dialog()
+{
+    auto* viewport = dynamic_cast<wxScrolledWindow*>(GetParent());
+    auto* dlg      = dynamic_cast<wxDialog*>(wxGetTopLevelParent(this));
+    if (viewport == nullptr || dlg == nullptr)
+        return;
+
+    // Re-apply the scroll step too: it was converted from DIP with the scale factor that was
+    // active when the dialog was built, and this is the DPI-change path.
+    viewport->SetScrollRate(viewport->FromDIP(SCROLL_RATE_DIP), viewport->FromDIP(SCROLL_RATE_DIP));
+    fit_wiping_dialog_to_display(dlg, viewport, this);
 }

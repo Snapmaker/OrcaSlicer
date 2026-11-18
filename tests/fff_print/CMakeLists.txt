@@ -11,6 +11,7 @@ add_executable(${_TEST_NAME}_tests
 	test_gcodewriter.cpp
 	test_model.cpp
 	test_print.cpp
+	test_sequential_print_clearance.cpp
 	test_printgcode.cpp
 	test_printobject.cpp
 	test_skirt_brim.cpp
@@ -26,6 +27,7 @@ add_executable(${_TEST_NAME}_tests
 	test_gcode_processor.cpp
 	test_adaptive_pa.cpp
 	test_wipe_tower.cpp
+	test_triangle_mesh_slicer.cpp
 	)
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)

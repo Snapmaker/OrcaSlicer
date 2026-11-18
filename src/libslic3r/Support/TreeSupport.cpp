@@ -1581,9 +1581,11 @@ void TreeSupport::generate_toolpaths()
 
     // coconut: use same intensity settings as SupportMaterial.cpp
     auto m_support_material_interface_flow = support_material_interface_flow(m_object, float(m_slicing_params.layer_height));
-    coordf_t interface_spacing = object_config.support_interface_spacing.value + m_support_material_interface_flow.spacing();
+    // Orca: Force solid support interface when using support ironing (mirrors SupportParameters.hpp)
+    coordf_t interface_spacing        = (m_support_params.ironing ? 0. : object_config.support_interface_spacing.value) +
+                                  m_support_material_interface_flow.spacing();
     coordf_t bottom_interface_spacing = object_config.support_bottom_interface_spacing.value + m_support_material_interface_flow.spacing();
-    coordf_t interface_density = std::min(1., m_support_material_interface_flow.spacing() / interface_spacing);
+    coordf_t interface_density        = std::min(1., m_support_material_interface_flow.spacing() / interface_spacing);
     coordf_t bottom_interface_density = std::min(1., m_support_material_interface_flow.spacing() / bottom_interface_spacing);
 
     const coordf_t branch_radius = object_config.tree_support_branch_diameter.value / 2;
@@ -1591,6 +1593,39 @@ void TreeSupport::generate_toolpaths()
 
     if (m_object->support_layers().empty())
         return;
+
+    // Orca: generate support interface ironing for the 2D tree pipeline (slim/strong/hybrid),
+    // which does not go through the shared generate_support_toolpaths() where support ironing
+    // is implemented. Ported from Bambu Studio 35e3da24e (STUDIO-16058), adapted to the
+    // SupportParameters ironing fields and the shared erIroning extrusion role.
+    auto generate_support_ironing_entity = [this](const ExPolygons& unioned_expolygons, const BoundingBox& bbox_object,
+                                          const SupportLayer* ts_layer, ExtrusionEntityCollection* temp_entity_collection) {
+        if (m_support_params.ironing && !unioned_expolygons.empty()) {
+            auto ironing_fill = std::unique_ptr<Fill>(Fill::new_from_type(m_support_params.ironing_pattern));
+            ironing_fill->set_bounding_box(bbox_object);
+            ironing_fill->layer_id        = ts_layer->id();
+            ironing_fill->z               = ts_layer->print_z;
+            ironing_fill->overlap         = 0;
+            ironing_fill->angle           = m_support_params.interface_angle;
+            ironing_fill->spacing         = m_support_params.ironing_spacing;
+            ironing_fill->link_max_length = (coord_t) scale_(3. * ironing_fill->spacing);
+
+            ExPolygons polys_to_iron = unioned_expolygons;
+
+            FillParams ironing_fill_params;
+            ironing_fill_params.density     = 1.0f;
+            ironing_fill_params.dont_adjust = true;
+            fill_expolygons_generate_paths(
+                // Destination
+                temp_entity_collection->entities,
+                // Regions to fill
+                polys_to_iron,
+                // Filler and its parameters
+                ironing_fill.get(), ironing_fill_params,
+                // Extrusion parameters
+                ExtrusionRole::erIroning, m_support_params.ironing_flow);
+        }
+    };
 
     // calculate fill areas for raft layers
     ExPolygons raft_areas;
@@ -1682,6 +1717,13 @@ void TreeSupport::generate_toolpaths()
 
         fill_expolygons_generate_paths(ts_layer->support_fills.entities, raft_interface_areas,
             filler_interface, fill_params, erSupportMaterialInterface, support_flow);
+
+        // Orca: iron the topmost raft interface layer
+        if (m_support_params.ironing && !raft_interface_areas.empty()
+            && layer_nr == m_slicing_params.base_raft_layers + m_slicing_params.interface_raft_layers - 1) {
+            BoundingBox bbox_object(Point(-scale_(1.), -scale_(1.0)), Point(scale_(1.), scale_(1.)));
+            generate_support_ironing_entity(raft_interface_areas, bbox_object, ts_layer, &(ts_layer->support_fills));
+        }
 
         fill_params.density = object_config.raft_first_layer_density * 0.01;
         fill_expolygons_generate_paths(ts_layer->support_fills.entities, raft_base_areas,
@@ -1788,6 +1830,28 @@ void TreeSupport::generate_toolpaths()
                             ts_layer->support_fills.entities.push_back(temp_support_fills);
                         else
                             delete temp_support_fills;
+
+                        // Orca: iron the roof steps exposed to the layer above. Tree roofs are
+                        // multi-layer staircases, so every exposed step gets ironed (Bambu
+                        // semantics), not only the top contact layer.
+                        if (m_support_params.ironing) {
+                            const SupportLayer*         ts_upper_layer        = m_object->get_support_layer(layer_id + 1);
+                            ExtrusionEntityCollection*  temp_support_ironings = new ExtrusionEntityCollection();
+                            ExPolygons                  unioned_expolygons    = union_ex(polys), upper_expolygons;
+                            if (ts_upper_layer != nullptr) {
+                                for (auto& area_t : ts_upper_layer->area_groups) upper_expolygons.push_back(*(area_t.area));
+                                unioned_expolygons = diff_ex(unioned_expolygons, upper_expolygons);
+                                unioned_expolygons = union_ex(unioned_expolygons);
+                            }
+                            if (!unioned_expolygons.empty()) {
+                                generate_support_ironing_entity(unioned_expolygons, bbox_object, ts_layer, temp_support_ironings);
+                            }
+                            temp_support_ironings->no_sort = true; // make sure loops are first
+                            if (!temp_support_ironings->entities.empty())
+                                ts_layer->support_fills.entities.push_back(temp_support_ironings);
+                            else
+                                delete temp_support_ironings;
+                        }
                     }
                     else {
                         // base_areas

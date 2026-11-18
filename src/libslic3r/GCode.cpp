@@ -797,6 +797,13 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     Vec2f wipe_tower_offset = (tcr.priming ? Vec2f::Zero() : m_wipe_tower_pos) + m_rib_offset;
     float wipe_tower_rotation = tcr.priming ? 0.f : alpha;
 
+	// For Snapmaker Artision
+    gcodegen.m_next_wipe_x = 0;
+    gcodegen.m_next_wipe_y = 0;
+    auto transformed_pos = Eigen::Rotation2Df(wipe_tower_rotation) * tcr.start_pos + wipe_tower_offset;
+    gcodegen.m_next_wipe_x = transformed_pos(0);
+    gcodegen.m_next_wipe_y = transformed_pos(1);
+
     std::string tcr_rotated_gcode = post_process_wipe_tower_moves(tcr, wipe_tower_offset, wipe_tower_rotation);
 
     Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
@@ -1507,6 +1514,9 @@ std::string WipeTowerIntegration::tool_change(GCode& gcodegen, int extruder_id, 
         const Vec2f plate_origin_2d(m_plate_origin(0), m_plate_origin(1));
         const Vec2f start_pos = transform_wt_pt(local_path.front());
         const Vec2f start_machine = start_pos + plate_origin_2d;
+
+        gcodegen.m_next_wipe_x = start_pos.x();
+        gcodegen.m_next_wipe_y = start_pos.y();
 
         gcode += gcodegen.writer().unlift();
 
@@ -8083,11 +8093,39 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         _mm3_per_mm *= m_config.bottom_solid_infill_flow_ratio;
     else if (path.role() == erInternalBridgeInfill)
         _mm3_per_mm *= m_config.internal_bridge_flow;
+    else if (path.role() == erBrim)
+        _mm3_per_mm *= m_config.brim_flow_ratio;
     else if (path.role() == erSupportTransition)
         // Apply independent flow ratio for support transition layers
         _mm3_per_mm *= m_config.support_transition_flow_ratio.get_abs_value(1.0f);
     else if (sloped)
         _mm3_per_mm *= m_config.scarf_joint_flow_ratio;
+
+    if (m_config.set_other_flow_ratios) {
+        if (path.role() == erExternalPerimeter) {
+            _mm3_per_mm *= m_config.outer_wall_flow_ratio;
+        } else if (path.role() == erPerimeter) {
+            _mm3_per_mm *= m_config.inner_wall_flow_ratio;
+        } else if (path.role() == erOverhangPerimeter) {
+            _mm3_per_mm *= m_config.overhang_flow_ratio;
+        } else if (path.role() == erInternalInfill) {
+            _mm3_per_mm *= m_config.sparse_infill_flow_ratio;
+        } else if (path.role() == erSolidInfill) {
+            _mm3_per_mm *= m_config.internal_solid_infill_flow_ratio;
+        } else if (path.role() == erGapFill) {
+            _mm3_per_mm *= m_config.gap_fill_flow_ratio;
+        } else if (path.role() == erSupportMaterial) { // Should this condition also cover erSupportTransition?
+            _mm3_per_mm *= m_config.support_flow_ratio;
+        } else if (path.role() == erSupportMaterialInterface) {
+            _mm3_per_mm *= m_config.support_interface_flow_ratio;
+        }
+
+        // Additionally, adjust the value if we are on the first layer (except for brims and skirts)
+        if (this->on_first_layer() && (path.role() != erBrim && path.role() != erSkirt)) {
+            _mm3_per_mm *= m_config.first_layer_flow_ratio;
+        }
+    }
+
     // Effective extrusion length per distance unit = (filament_flow_ratio/cross_section) * mm3_per_mm / print flow ratio
     // m_writer.extruder()->e_per_mm3() below is (filament flow ratio / cross-sectional area)
     double e_per_mm = m_writer.extruder()->e_per_mm3() * _mm3_per_mm;
@@ -8121,7 +8159,7 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         } else if (path.role() == erTopSolidInfill) {
             speed = this->process_flow_value(m_config.top_surface_speed);
         } else if (path.role() == erIroning) {
-            speed = this->process_flow_value(m_config.ironing_speed);
+            speed = m_config.ironing_speed;
         } else if (path.role() == erBottomSurface) {
             speed = this->process_flow_value(m_config.initial_layer_infill_speed);
         } else if (path.role() == erGapFill) {
@@ -9301,6 +9339,10 @@ std::string GCode::set_extruder(unsigned int extruder_id, double print_z, bool b
         snprintf(key_value, sizeof(key_value), "flush_length_%d", flush_idx + 1);
         dyn_config.set_key_value(key_value, new ConfigOptionFloat(0.f));
     }
+
+    // For Snapmaker Artisian
+    dyn_config.set_key_value("next_wipe_x", new ConfigOptionFloat(m_next_wipe_x));
+    dyn_config.set_key_value("next_wipe_y", new ConfigOptionFloat(m_next_wipe_y));
 
     // Process the custom change_filament_gcode.
     const std::string& change_filament_gcode = m_config.change_filament_gcode.value;

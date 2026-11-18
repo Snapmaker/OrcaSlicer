@@ -129,7 +129,8 @@ static t_config_enum_values s_keys_map_NoiseType {
     { "perlin",         int(NoiseType::Perlin) },
     { "billow",         int(NoiseType::Billow) },
     { "ridgedmulti",    int(NoiseType::RidgedMulti) },
-    { "voronoi",        int(NoiseType::Voronoi) }
+    { "voronoi",        int(NoiseType::Voronoi) },
+    { "ripple",         int(NoiseType::Ripple) }
 };
 CONFIG_OPTION_ENUM_DEFINE_STATIC_MAPS(NoiseType)
 
@@ -1193,6 +1194,102 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(1));
 
+    def = this->add("set_other_flow_ratios", coBool);
+    def->label = L("Set other flow ratios");
+    def->category = L("Advanced");
+    def->tooltip = L("Change flow ratios for other extrusion path types.");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def = this->add("first_layer_flow_ratio", coFloat);
+    def->label = L("First layer flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material on the first layer for the extrusion path roles listed in this section.\n\n"
+                     "For the first layer, the actual flow ratio for each path role (does not affect brims and skirts) will be multiplied by this value.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("outer_wall_flow_ratio", coFloat);
+    def->label = L("Outer wall flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for outer walls.\n\n"
+                     "The actual outer wall flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("inner_wall_flow_ratio", coFloat);
+    def->label = L("Inner wall flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for inner walls.\n\n"
+                     "The actual inner wall flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("overhang_flow_ratio", coFloat);
+    def->label = L("Overhang flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for overhangs.\n\n"
+                     "The actual overhang flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("sparse_infill_flow_ratio", coFloat);
+    def->label = L("Sparse infill flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for sparse infill.\n\n"
+                     "The actual sparse infill flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("internal_solid_infill_flow_ratio", coFloat);
+    def->label = L("Internal solid infill flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for internal solid infill.\n\n"
+                     "The actual internal solid infill flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("gap_fill_flow_ratio", coFloat);
+    def->label = L("Gap fill flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for filling the gaps.\n\n"
+                     "The actual gap filling flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("support_flow_ratio", coFloat);
+    def->label = L("Support flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for support.\n\n"
+                     "The actual support flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
+
+    def = this->add("support_interface_flow_ratio", coFloat);
+    def->label = L("Support interface flow ratio");
+    def->category = L("Advanced");
+    def->tooltip = L("This factor affects the amount of material for the support interface.\n\n"
+                     "The actual support interface flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
 
     def = this->add("precise_outer_wall",coBool);
     def->label = L("Precise wall");
@@ -1438,6 +1535,17 @@ void PrintConfigDef::init_fff_params()
     def->max = 2;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.));
+
+    def = this->add("brim_flow_ratio", coFloat);
+    def->label = L("Brim flow ratio");
+    def->category = L("Support");
+    def->tooltip = L("This factor affects the amount of material for brims.\n\n"
+                     "The actual brim flow used is calculated by multiplying this value by the filament flow ratio, and if set, the object's flow ratio.\n\n"
+                     "Note: The resulting value will not be affected by the first-layer flow ratio.");
+    def->min = 0;
+    def->max = 2;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(1));
 
     def = this->add("brim_ears", coBool);
     def->label = L("Brim ears");
@@ -3084,10 +3192,13 @@ void PrintConfigDef::init_fff_params()
     def = this->add("fuzzy_skin_thickness", coFloat);
     def->label = L("Fuzzy skin thickness");
     def->category = L("Others");
-    def->tooltip = L("The width within which to jitter. It's advised to be below outer wall line width.");
+    def->tooltip = L("The width of jittering: it\u2019s recommended to keep this lower than the outer wall line "
+                     "width.\n"
+                     "The allowed range is [0,2] mm. If the value is below 0.001 mm, fuzzy skin will be turned off "
+                     "automatically when slicing.");
     def->sidetext = "mm";	// milimeters, don't need translation
     def->min = 0;
-    def->max = 1;
+    def->max = 2;
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionFloat(0.2));
 
@@ -3139,18 +3250,21 @@ void PrintConfigDef::init_fff_params()
                      "Perlin: Perlin noise, which gives a more consistent texture.\n"
                      "Billow: Similar to perlin noise, but clumpier.\n"
                      "Ridged Multifractal: Ridged noise with sharp, jagged features. Creates marble-like textures.\n"
-                     "Voronoi: Divides the surface into voronoi cells, and displaces each one by a random amount. Creates a patchwork texture.");
+                     "Voronoi: Divides the surface into voronoi cells, and displaces each one by a random amount. Creates a patchwork texture.\n"
+                     "Ripple: Uniform ripple pattern that ripples left and right of the original path. Repeating pattern, woven appearance.");
     def->enum_keys_map = &ConfigOptionEnum<NoiseType>::get_enum_values();
     def->enum_values.push_back("classic");
     def->enum_values.push_back("perlin");
     def->enum_values.push_back("billow");
     def->enum_values.push_back("ridgedmulti");
     def->enum_values.push_back("voronoi");
+    def->enum_values.push_back("ripple");
     def->enum_labels.push_back(L("Classic"));
     def->enum_labels.push_back(L("Perlin"));
     def->enum_labels.push_back(L("Billow"));
     def->enum_labels.push_back(L("Ridged Multifractal"));
     def->enum_labels.push_back(L("Voronoi"));
+    def->enum_labels.push_back(L("Ripple"));
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionEnum<NoiseType>(NoiseType::Classic));
 
@@ -3181,6 +3295,39 @@ void PrintConfigDef::init_fff_params()
     def->max = 1;
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.5));
+
+    def = this->add("fuzzy_skin_ripples_per_layer", coInt);
+    def->label = L("Number of ripples per layer");
+    def->category = L("Others");
+    def->tooltip  = L("Controls how many full cycles of ripples will be added per layer.");
+    def->min = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(15));
+
+    def = this->add("fuzzy_skin_ripple_offset", coPercent);
+    def->label = L("Ripple offset");
+    def->category = L("Others");
+    def->tooltip = L("Shifts the ripple phase forward along the print path by the specified percentage of a wavelength each layer period.\n"
+                     "- 0% keeps every layer identical.\n"
+                     "- 50% shifts the pattern by half a wavelength, effectively inverting the phase.\n"
+                     "- 100% shifts the pattern by a full wavelength, returning to the original phase.\n\n"
+                     "The shift is applied once every number of layers set by Layers between ripple offset, so layers within the same group are printed identically.");
+    def->min = 0;
+    def->max = 100;
+    def->sidetext = "%";
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionPercent(50));
+
+    def = this->add("fuzzy_skin_layers_between_ripple_offset", coInt);
+    def->label = L("Layers between ripple offset");
+    def->category = L("Others");
+    def->tooltip = L("Specifies how many consecutive layers share the same ripple phase before the offset is applied.\n"
+                     "For example:\n"
+                     "- 1 = Layer 1 is printed with the base ripple pattern, then layer 2 is shifted by the configured offset, then layer 3 returns to the base pattern, and so on.\n"
+                     "- 3 = Layers 1 to 3 are printed with the base ripple pattern, then layers 4 to 6 are shifted by the configured offset, then layers 7 to 9 return to the base pattern, etc.");
+    def->min = 1;
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(1));
 
     def = this->add("filter_out_gap_fill", coFloat);
     def->label = L("Filter out tiny gaps");
@@ -3777,14 +3924,14 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0));
 
-    def = this->add("ironing_speed", coFloats);
+    def = this->add("ironing_speed", coFloat);
     def->label = L("Ironing speed");
     def->category = L("Quality");
     def->tooltip = L("Print speed of ironing lines.");
     def->sidetext = "mm/s";	// milimeters per second, don't need translation
     def->min = 1;
     def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloats { 20. });
+    def->set_default_value(new ConfigOptionFloat(20));
 
     def           = this->add("ironing_angle", coFloat);
     def->label    = L("Ironing angle");
@@ -7599,7 +7746,6 @@ const std::vector<std::string>& process_flow_variant_options()
         "gap_infill_speed",
         "bridge_speed",
         "internal_bridge_speed",
-        "ironing_speed",
         "small_perimeter_speed",
         "small_perimeter_threshold",
         "support_speed",

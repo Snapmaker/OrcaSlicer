@@ -127,14 +127,14 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
                     {"precise_z_height", "",10}
 
                     }},
-    { L("Support"), {{"brim_type", "",1},{"brim_width", "",2},{"brim_object_gap", "",3},
-                    {"enable_support", "",4},{"support_type", "",5},{"support_threshold_angle", "",6}, {"support_threshold_overlap", "",6}, {"support_on_build_plate_only", "",7},
-                    {"support_filament", "",8},{"support_interface_filament", "",9},{"support_expansion", "",24},{"support_style", "",25},
-                    {"tree_support_brim_width", "",26}, {"tree_support_branch_angle", "",10},{"tree_support_branch_angle_organic","",10}, {"tree_support_wall_count", "",11},{"tree_support_branch_diameter_angle", "",11},//tree support
-                    {"support_top_z_distance", "",13},{"support_bottom_z_distance", "",12},{"support_base_pattern", "",14},{"support_base_pattern_spacing", "",15},
-                    {"support_interface_top_layers", "",16},{"support_interface_bottom_layers", "",17},{"support_interface_spacing", "",18},{"support_interface_min_area", "",30},{"support_bottom_interface_spacing", "",19},
-                    {"support_object_xy_distance", "",20}, {"bridge_no_support", "",21},{"max_bridge_length", "",22},{"support_critical_regions_only", "",23},{"support_remove_small_overhang","",27},
-                    {"support_object_first_layer_gap","",28}
+    { L("Support"), {{"brim_type", "",1},{"brim_width", "",2},{"brim_object_gap", "",3},{"brim_flow_ratio", "",4},
+                    {"enable_support", "",5},{"support_type", "",6},{"support_threshold_angle", "",7}, {"support_threshold_overlap", "",7}, {"support_on_build_plate_only", "",8},
+                    {"support_filament", "",9},{"support_interface_filament", "",10},{"support_expansion", "",25},{"support_style", "",26},
+                    {"tree_support_brim_width", "",27}, {"tree_support_branch_angle", "",11},{"tree_support_branch_angle_organic","",11}, {"tree_support_wall_count", "",12},{"tree_support_branch_diameter_angle", "",12},//tree support
+                    {"support_top_z_distance", "",14},{"support_bottom_z_distance", "",13},{"support_base_pattern", "",15},{"support_base_pattern_spacing", "",16},
+                    {"support_interface_top_layers", "",17},{"support_interface_bottom_layers", "",18},{"support_interface_spacing", "",19},{"support_interface_min_area", "",31},{"support_bottom_interface_spacing", "",20},
+                    {"support_object_xy_distance", "",21}, {"bridge_no_support", "",22},{"max_bridge_length", "",23},{"support_critical_regions_only", "",24},{"support_remove_small_overhang","",28},
+                    {"support_object_first_layer_gap","",29}
                             }},
     { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13}
                     }}

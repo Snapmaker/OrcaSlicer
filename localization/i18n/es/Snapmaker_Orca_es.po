@@ -22298,3 +22298,27 @@ msgstr ""
 
 #~ msgid "preparing, export 3mf failed!"
 #~ msgstr "Preparando; ¡Error al exportar 3MF!"
+
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr "Ir a: Soporte solo en la placa de construcción"
+
+msgid "Jump to: Support"
+msgstr "Ir a: Soporte"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Se detectaron voladizos sin soporte.\n"
+"El modelo \"%1%\" tiene %2% región(es) de voladizo. Dado que \"Soporte solo en la placa de construcción\" está habilitado, los soportes no pueden extenderse hasta la placa de construcción. Intenta desactivar esta opción."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Se detectaron voladizos sin soporte.\n"
+"El modelo \"%1%\" tiene %2% región(es) de voladizo que no pudieron obtener soporte. Intenta ajustar los ajustes de soporte o reorientar el objeto."
+

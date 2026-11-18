@@ -20997,3 +20997,27 @@ msgstr ""
 #~ "inferiore a quella del primo layer di oltre questa soglia. Una "
 #~ "temperatura del piano troppo bassa degli altri layer può causare il "
 #~ "distacco dell'oggetto dal piatto."
+
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr "Vai a: Supporto solo sulla piastra"
+
+msgid "Jump to: Support"
+msgstr "Vai a: Supporto"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Sono state rilevate sporgenze non supportate.\n"
+"Il modello \"%1%\" ha %2% regioni di sporgenza. Poiché \"Supporto solo sulla piastra\" è abilitato, i supporti non possono crescere verso il basso fino alla piastra. Prova a disattivare questa opzione."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Sono state rilevate sporgenze non supportate.\n"
+"Il modello \"%1%\" ha %2% regioni di sporgenza che non hanno ricevuto supporto. Prova a regolare le impostazioni di supporto o a riorientare l'oggetto."
+

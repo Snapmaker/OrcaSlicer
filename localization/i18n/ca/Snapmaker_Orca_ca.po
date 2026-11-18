@@ -20178,3 +20178,24 @@ msgstr ""
 
 #~ msgid "End end: "
 #~ msgstr "Final: "
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr "Jump to: Support on build plate only"
+
+msgid "Jump to: Support"
+msgstr "Jump to: Support"
+
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+

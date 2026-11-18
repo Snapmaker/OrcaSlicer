@@ -21701,3 +21701,27 @@ msgstr ""
 #~ "Zusammenführung der Äste und spart viel Material (Standard), während der "
 #~ "Hybridmodus bei großen überhängenden Flächen eine ähnliche Struktur wie "
 #~ "bei normalen Stützstrukturen erzeugt."
+
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr "Springen zu: Stützstruktur nur auf Druckplatte"
+
+msgid "Jump to: Support"
+msgstr "Springen zu: Stützstruktur"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Nicht unterstützte Überhänge erkannt.\n"
+"Modell „%1%“ weist %2% Überhangbereich(e) auf. Da „Stützstruktur nur auf Druckplatte“ aktiviert ist, können Stützstrukturen nicht bis zur Druckplatte wachsen. Versuchen Sie, diese Option zu deaktivieren."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Nicht unterstützte Überhänge erkannt.\n"
+"Modell „%1%“ weist %2% Überhangbereich(e) auf, die nicht gestützt werden konnten. Versuchen Sie, die Einstellungen für Stützstrukturen anzupassen oder das Objekt neu auszurichten."
+

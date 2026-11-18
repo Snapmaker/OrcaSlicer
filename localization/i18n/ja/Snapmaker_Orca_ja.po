@@ -17724,3 +17724,27 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "モデルの向きを調整"
+
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr "ジャンプ先：ビルドプレート上のみサポート"
+
+msgid "Jump to: Support"
+msgstr "ジャンプ先：サポート"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"サポートされていないオーバーハングが検出されました。\n"
+"モデル「%1%」に %2% か所のオーバーハング領域があります。「ビルドプレート上のみサポート」が有効になっているため、ビルドプレートまでサポートを生成できません。このオプションを無効にしてみてください。"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"サポートされていないオーバーハングが検出されました。\n"
+"モデル「%1%」にサポートを生成できないオーバーハング領域が %2% か所あります。サポート設定を調整するか、オブジェクトの配置方向を変更してみてください。"
+

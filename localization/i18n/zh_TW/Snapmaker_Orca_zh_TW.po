@@ -18274,3 +18274,27 @@ msgstr "啟用內支撐肋以增強擦料塔的穩定性。"
 
 msgid "Enable tower interface features"
 msgstr "啟用料塔接觸層最佳化"
+
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr "跳至：僅限列印板上支撐"
+
+msgid "Jump to: Support"
+msgstr "跳至：支撐"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"偵測到未受支撐的懸空結構。\n"
+"模型「%1%」有 %2% 個懸空區域。由於已啟用「僅限列印板上支撐」，支撐無法向下延伸到列印板。嘗試關閉此選項。"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"偵測到未受支撐的懸空結構。\n"
+"模型「%1%」有 %2% 個無法獲得支撐的懸空區域。嘗試調整支撐設定或重新擺放物件。"
+

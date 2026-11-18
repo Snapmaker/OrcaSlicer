@@ -20095,3 +20095,27 @@ msgstr ""
 
 #~ msgid "Right click to reset value to system default."
 #~ msgstr "Правая кнопка мыши - сброс значения до системного по умолчанию."
+
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr "Перейти к: Поддержка только на печатной пластине"
+
+msgid "Jump to: Support"
+msgstr "Перейти к: Поддержка"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Обнаружены нависающие элементы без поддержки.\n"
+"Модель \"%1%\" содержит %2% область(и) нависающих элементов. Поскольку включён параметр \"Поддержка только на печатной пластине\", поддержка не может дойти до печатной пластины. Попробуйте отключить этот параметр."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Обнаружены нависающие элементы без поддержки.\n"
+"Модель \"%1%\" содержит %2% область(и) нависающих элементов, для которых не удалось создать поддержку. Попробуйте изменить настройки поддержки или ориентацию объекта."
+

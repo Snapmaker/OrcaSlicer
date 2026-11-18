@@ -733,10 +733,15 @@ void PrintObject::warn_uncovered_overhangs()
     assert(std::is_sorted(support_zs.begin(), support_zs.end()));
     m_print->throw_if_canceled();
 
-    // How far below an overhang its supporting layer may sit: the configured gap, plus slack for
-    // adaptive support layer heights. Erring wide only costs us false negatives.
+    // How far below an overhang its supporting layer may sit: the configured top gap, plus the
+    // max layer height for the quantized bottom clearance and the min for room to extrude support
+    // (port of Bambu 55ad2d66). Erring wide only costs us false negatives.
     const coordf_t search_depth = m_slicing_params.gap_support_object +
-        2. * std::max(m_slicing_params.max_suport_layer_height, m_slicing_params.layer_height);
+        std::max(m_slicing_params.max_suport_layer_height, m_slicing_params.layer_height) +
+        m_slicing_params.min_layer_height;
+    // XY tolerance when testing coverage: a support branch is placed support_object_xy_distance
+    // away from the model, so accept coverage within that distance (port of Bambu 55ad2d66).
+    const coordf_t coverage_offset = m_config.support_object_xy_distance.value;
 
     struct LayerStat {
         double   uncovered_area  = 0.;
@@ -746,7 +751,11 @@ void PrintObject::warn_uncovered_overhangs()
     std::vector<LayerStat> stats(m_layers.size());
 
     tbb::parallel_for(tbb::blocked_range<size_t>(0, m_layers.size()),
-        [this, &support_zs, &support_layer_indices, search_depth, &stats](const tbb::blocked_range<size_t> &range) {
+        [this, &support_zs, &support_layer_indices, search_depth, coverage_offset, &stats](const tbb::blocked_range<size_t> &range) {
+            // Collected areas are layer-stable: neighbouring object layers query the same
+            // support layers, so compute each support layer's union once (MR !107 review).
+            std::vector<ExPolygons> collected_cache(m_support_layers.size());
+            std::vector<bool>       collected_done(m_support_layers.size(), false);
             for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++ layer_idx) {
                 m_print->throw_if_canceled();
                 const Layer *layer = m_layers[layer_idx];
@@ -754,25 +763,52 @@ void PrintObject::warn_uncovered_overhangs()
                     continue;
 
                 const coordf_t bottom_z = layer->bottom_z();
+                const coordf_t lowest_z = bottom_z - search_depth;
                 const auto     it_end   = std::upper_bound(support_zs.begin(), support_zs.end(), bottom_z + EPSILON);
-                const auto     it_begin = std::lower_bound(support_zs.begin(), it_end, bottom_z - search_depth);
+                const auto     it_begin = std::lower_bound(support_zs.begin(), it_end, lowest_z);
                 ExPolygons     support_below;
                 for (auto it = it_begin; it != it_end; ++ it) {
                     const size_t support_layer_idx = support_layer_indices[it - support_zs.begin()];
-                    append(support_below, this->collected_support_areas(m_support_layers[support_layer_idx]));
+                    if (!collected_done[support_layer_idx]) {
+                        collected_cache[support_layer_idx] = this->collected_support_areas(m_support_layers[support_layer_idx]);
+                        collected_done[support_layer_idx] = true;
+                    }
+                    append(support_below, collected_cache[support_layer_idx]);
                 }
                 if (! support_below.empty())
                     support_below = union_ex(support_below);
+
+                // Model material within the search span leaves no usable Z room: subtract it from
+                // the requirement so such islands stop being reported (port of Bambu 55ad2d66).
+                const BoundingBox overhang_bbox = get_extents(layer->loverhangs);
+                Polygons         model_below;
+                if (overhang_bbox.defined) {
+                    for (size_t model_layer_idx = layer_idx; model_layer_idx-- > 0;) {
+                        const Layer *model_layer = m_layers[model_layer_idx];
+                        if (model_layer->print_z < lowest_z - EPSILON)
+                            break;
+                        append(model_below, ClipperUtils::clip_clipper_polygons_with_subject_bbox(
+                            model_layer->lslices, overhang_bbox.inflated(SCALED_EPSILON)));
+                    }
+                }
 
                 LayerStat &stat = stats[layer_idx];
                 for (const ExPolygon &island : layer->loverhangs) {
                     const double island_area = area(island) * SCALING_FACTOR * SCALING_FACTOR;
                     if (island_area < MIN_REPORTED_OVERHANG_AREA_MM2)
                         continue;
+                    // A difference can only reduce the area: drop pieces that shrink below the
+                    // report threshold after the model subtraction.
+                    ExPolygons required = model_below.empty() ? ExPolygons{ island } :
+                        diff_ex(island, model_below);
+                    if (required.empty())
+                        continue;
+                    ExPolygons coverage_area = coverage_offset > EPSILON ?
+                        offset_ex(required, scale_(coverage_offset)) : std::move(required);
                     ++ stat.num_significant;
                     double covered_area = 0.;
                     if (! support_below.empty())
-                        covered_area = area(intersection_ex(island, support_below)) * SCALING_FACTOR * SCALING_FACTOR;
+                        covered_area = area(intersection_ex(coverage_area, support_below)) * SCALING_FACTOR * SCALING_FACTOR;
                     if (covered_area < MIN_SUPPORTED_OVERHANG_RATIO * island_area) {
                         stat.uncovered_area += island_area;
                         ++ stat.num_uncovered;
@@ -804,7 +840,17 @@ void PrintObject::warn_uncovered_overhangs()
     if (total_uncovered_area < MIN_TOTAL_UNCOVERED_AREA_MM2)
         return;
 
-    const bool classic_tree_drop = m_config.support_style.value != smsTreeOrganic;
+    // F1 (MR !107 review): classify the classic-drop path from the RESOLVED style, using the
+    // same resolution as SupportParameters (SupportParameters.hpp): Default resolves to Organic
+    // for ordinary layering with a non-soluble interface, and to Hybrid otherwise.
+    SupportMaterialStyle resolved_style = m_config.support_style.value;
+    if (resolved_style == smsDefault) {
+        if (is_tree(m_config.support_type.value))
+            resolved_style = (this->model_object()->has_custom_layering() || m_slicing_params.soluble_interface) ? smsTreeHybrid : smsTreeOrganic;
+        else
+            resolved_style = smsGrid;
+    }
+    const bool classic_tree_drop = resolved_style != smsTreeOrganic;
     std::string warning_message;
     PrintStateBase::SlicingNotificationType warning_id = PrintStateBase::SlicingSupportIncomplete;
     if (m_config.support_on_build_plate_only.value && classic_tree_drop) {

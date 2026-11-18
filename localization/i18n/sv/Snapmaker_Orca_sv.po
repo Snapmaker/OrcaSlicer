@@ -18256,3 +18256,27 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Orientera modellen"
+
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr "Hoppa till: Stöd endast på byggplattan"
+
+msgid "Jump to: Support"
+msgstr "Hoppa till: Stöd"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Det har upptäckts överhäng utan stöd.\n"
+"Modellen \"%1%\" har %2% överhängsregion(er). Eftersom \"Stöd endast på byggplattan\" är aktiverat kan stöd inte sträcka sig ner till byggplattan. Försök att stänga av detta alternativ."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Det har upptäckts överhäng utan stöd.\n"
+"Modellen \"%1%\" har %2% överhängsregion(er) som inte kunde få stöd. Försök att justera stödinställningarna eller orientera om objektet."
+

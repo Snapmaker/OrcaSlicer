@@ -19339,3 +19339,23 @@ msgstr ""
 
 #~ msgid "Set the brim type to \"painted\""
 #~ msgstr "Встановіть тип кайми на \"Мальована\""
+
+# issue 7141560751
+msgid "Jump to: Support on build plate only"
+msgstr ""
+
+msgid "Jump to: Support"
+msgstr ""
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+

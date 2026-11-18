@@ -18,6 +18,7 @@
 #endif /* WIN32 */
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <cstring>
 #include <iostream>
@@ -66,6 +67,8 @@ using namespace nlohmann;
 #include "libslic3r/Format/OBJ.hpp"
 #include "libslic3r/Format/SL1.hpp"
 #include "libslic3r/Utils.hpp"
+#include "libslic3r/AppConfig.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include "libslic3r/Time.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/BlacklistedLibraryCheck.hpp"
@@ -1848,6 +1851,62 @@ int CLI::run(int argc, char **argv)
             boost::nowide::cerr << "invalid printer_technology " <<printer_technology<<", from config "<< file <<std::endl;
             record_exit_reson(outfile_dir, CLI_INVALID_PRINTER_TECH, 0, cli_errors[CLI_INVALID_PRINTER_TECH], sliced_info);
             flush_and_exit(CLI_INVALID_PRINTER_TECH);
+        }
+    }
+
+    // Fallback for bare STL input: no --load-settings machine/process and no
+    // 3MF-embedded presets. Use the presets the user has selected in the GUI
+    // (stored in the app config) instead of the built-in "Default Printer" /
+    // "Default Setting" (200x200x100 bed, relative E distances, empty layer
+    // G-code), which fails Print::validate() with "Relative extruder addressing
+    // requires resetting the extruder position at each layer". See GH #1184.
+    if (new_printer_name.empty() && new_process_name.empty() && current_printer_name.empty() && current_process_name.empty()) {
+        AppConfig app_config;
+        try {
+            // NB: AppConfig::load() itself can throw (e.g. std::out_of_range
+            // when the config file is missing/empty: the Win32 JSON reader
+            // substr()s past the end of an empty string and only catches
+            // nlohmann::parse_error). In CLI mode the data dir is empty
+            // unless --datadir is given, so the app config is normally NOT
+            // found here. Keep the load() call inside the try so a load
+            // failure falls back to the built-in defaults instead of
+            // terminating the process with an unhandled exception (0xE06D7363).
+            if (app_config.load().empty()) {
+                PresetBundle preset_bundle;
+                preset_bundle.load_presets(app_config, ForwardCompatibilitySubstitutionRule::Enable);
+                const Preset &selected_printer = preset_bundle.printers.get_selected_preset();
+                const Preset &selected_process = preset_bundle.prints.get_selected_preset();
+                if (selected_printer.name != "Default Printer" && selected_process.name != "Default Setting") {
+                    // Machine (printer) preset.
+                    new_printer_name = selected_printer.name;
+                    new_printer_config_is_system = selected_printer.is_system;
+                    load_machine_config = selected_printer.config;
+                    load_machine_config.set("printer_settings_id", new_printer_name, true);
+                    const std::string &printer_inherits = load_machine_config.option<ConfigOptionString>("inherits", true)->value;
+                    new_printer_system_name = printer_inherits.empty() ? new_printer_name : printer_inherits;
+                    printer_model = load_machine_config.option<ConfigOptionString>("printer_model", true)->value;
+                    if (!printer_model.empty()) {
+                        std::string printer_model_path = resources_dir() + "/profiles/BBL/machine_full/" + printer_model + ".json";
+                        if (boost::filesystem::exists(printer_model_path)) {
+                            std::map<std::string, std::string> key_values;
+                            load_key_values_from_json(printer_model_path, key_values);
+                            if (key_values.find("model_id") != key_values.end())
+                                printer_model_id = key_values["model_id"];
+                        }
+                    }
+                    // Process preset.
+                    new_process_name = selected_process.name;
+                    new_process_config_is_system = selected_process.is_system;
+                    load_process_config = selected_process.config;
+                    load_process_config.set("print_settings_id", new_process_name, true);
+                    const std::string &process_inherits = load_process_config.option<ConfigOptionString>("inherits", true)->value;
+                    new_process_system_name = process_inherits.empty() ? new_process_name : process_inherits;
+                    new_print_compatible_printers = load_process_config.option<ConfigOptionStrings>("compatible_printers", true)->values;
+                    BOOST_LOG_TRIVIAL(info) << boost::format("CLI fallback: using saved presets, printer %1%, process %2%") % new_printer_name % new_process_name;
+                }
+            }
+        } catch (const std::exception &ex) {
+            BOOST_LOG_TRIVIAL(warning) << "CLI fallback: failed to load saved presets, using built-in defaults: " << ex.what();
         }
     }
 
@@ -6065,6 +6124,55 @@ int CLI::run(int argc, char **argv)
     return 0;
 }
 
+// Resolve the per-user data folder, using exactly the same resolution the
+// GUI uses when <exe-dir>/data_dir does not exist (GUI_App::OnInit):
+// wxStandardPaths::GetUserDataDir() on Windows/macOS, ${XDG_CONFIG_HOME}
+// (or ~/.config) + app name on Linux. The app name is SLIC3R_APP_KEY,
+// which is also what the GUI sets via SetAppName().
+static std::string get_user_data_dir()
+{
+#if defined(__linux__) || defined(__LINUX__)
+    // Since version 2.3, config dir on Linux is in ${XDG_CONFIG_HOME}.
+    const char* xdg_config_home = std::getenv("XDG_CONFIG_HOME");
+    std::string dir = (xdg_config_home != nullptr && *xdg_config_home != '\0') ?
+        xdg_config_home : (wxFileName::GetHomeDir() + wxS("/.config")).ToUTF8().data();
+    return dir + "/" + SLIC3R_APP_KEY;
+#else
+    return wxStandardPaths::Get().GetUserDataDir().ToUTF8().data();
+#endif
+}
+
+// Return the app-directory config folder (<exe-dir>/data_dir), creating
+// it if it does not exist. This is the portable location the GUI already
+// prefers when it exists (GUI_App::OnInit), so using it here makes the
+// CLI and the GUI share one universal config location in the install
+// folder instead of a per-user data folder, and no --datadir is needed.
+// The executable directory is resolved at runtime from the running
+// binary; no path is hardcoded.
+static std::string get_portable_data_dir()
+{
+    auto app_folder = boost::filesystem::path(wxStandardPaths::Get().GetExecutablePath().ToUTF8().data()).parent_path();
+#ifdef __APPLE__
+    // On macOS, the executable is inside the .app bundle.
+    app_folder = app_folder.parent_path().parent_path().parent_path();
+#endif
+    const boost::filesystem::path app_data_dir = app_folder / "data_dir";
+    if (!boost::filesystem::exists(app_data_dir))
+        boost::filesystem::create_directories(app_data_dir);
+    // First use of the app-directory folder: migrate the user's existing
+    // config (AppConfig + user presets) from the per-user data folder
+    // when one is detected, so the saved printer/process selection
+    // carries over instead of starting empty (GH #1184). Best effort
+    // only — the migration no-ops when the app-directory folder already
+    // has its own config, and a failed migration never breaks startup.
+    try {
+        Slic3r::PresetBundle::migrate_user_config_to_portable_data_dir(get_user_data_dir(), app_data_dir.string());
+    } catch (...) {
+        // Best effort only; the (possibly empty) folder is still usable.
+    }
+    return app_data_dir.string();
+}
+
 bool CLI::setup(int argc, char **argv)
 {
     // Detect the operating system flavor after SLIC3R_LOGLEVEL is set.
@@ -6149,6 +6257,17 @@ bool CLI::setup(int argc, char **argv)
             m_config.option(optdef.first, true);
 
     set_data_dir(m_config.opt_string("datadir"));
+    if (data_dir().empty() && !m_actions.empty()) {
+        // No --datadir was given and a CLI action was requested: use the
+        // app-directory config folder, creating it if needed, so the
+        // saved-presets fallback in CLI::run loads the user's presets
+        // from the install folder instead of the built-in "Default
+        // Printer" / "Default Setting", which fails Print::validate()
+        // with -51 (GH #1184). The data dir is left empty when no CLI
+        // action was given, so a GUI startup still resolves it itself
+        // in GUI_App::OnInit.
+        set_data_dir(get_portable_data_dir());
+    }
 
     //FIXME Validating at this stage most likely does not make sense, as the config is not fully initialized yet.
     if (!validity.empty()) {

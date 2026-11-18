@@ -779,10 +779,9 @@ void PrintObject::warn_uncovered_overhangs()
                 ExPolygons     support_below;
                 for (auto it = it_begin; it != it_end; ++ it) {
                     const size_t support_layer_idx = support_layer_indices[it - support_zs.begin()];
-                    if (!collected_done[support_layer_idx]) {
-                        collected_cache[support_layer_idx] = this->collected_support_areas(m_support_layers[support_layer_idx]);
-                        collected_done[support_layer_idx] = true;
-                    }
+                    // Precomputed up front for every non-empty support layer; the read below
+                    // is shared and immutable inside the partition (MR !107 review).
+                    assert(collected_done[support_layer_idx]);
                     append(support_below, collected_cache[support_layer_idx]);
                 }
                 if (! support_below.empty())

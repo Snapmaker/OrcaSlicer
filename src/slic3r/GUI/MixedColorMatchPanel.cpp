@@ -342,6 +342,10 @@ void MixedColorMatchPanel::begin_initial_recipe_load()
 void MixedColorMatchPanel::set_target_color(const wxColour &target)
 {
     if (!target.IsOk()) return;
+    // No-op only when a search for this exact target has already been issued:
+    // compare against the last searched target, not the requested one, so the
+    // construction-time initial (never searched) is always honoured.
+    if (target == m_last_searched_target) return;
     m_requested_target = target;
     sync_inputs_to_requested();
     request_recipe_match(target, true, _L("Calculating closest supported mix..."));
@@ -471,6 +475,7 @@ void MixedColorMatchPanel::request_recipe_match(const wxColour &target, bool deb
     sync_inputs_to_requested();
 
     ++m_recipe_request_token;
+    m_last_searched_target = target; // the recipe being produced is for this target
     set_recipe_loading(true, loading_message);
 
     if (m_recipe_timer.IsRunning())
@@ -539,6 +544,7 @@ void MixedColorMatchPanel::apply_preset(MixedColorMatchRecipeResult preset)
     sync_recipe_preview(preset);
     ++m_recipe_request_token;
     m_requested_target = preset.preview_color;
+    m_last_searched_target = preset.preview_color; // the applied recipe is for this target
     m_selected_target  = preset.preview_color;
     m_selected_recipe  = std::move(preset);
     m_has_recipe_result = true;

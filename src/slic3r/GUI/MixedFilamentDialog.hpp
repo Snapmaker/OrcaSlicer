@@ -136,6 +136,9 @@ private:
     wxTextCtrl*             m_match_hex_input       = nullptr;
     wxPanel*                m_match_hex_wrapper     = nullptr;
     bool                    m_match_hex_error       = false;
+    // Last target colour actually applied from the hex field; blur/Enter/OK only
+    // commit (and touch banners/gates) when the parsed text differs from it.
+    wxColour                m_match_hex_applied;
     wxPanel*                m_match_target_swatch   = nullptr;
 
     // Range slider row (inside ratio card, match-mode only)
@@ -168,6 +171,13 @@ private:
     void rebuild_match_legend();
     void clamp_match_ratio_to_minimum();
     void update_match_legend_labels();
+    /// \brief Commit the match-mode target hex field (apply + gate refresh).
+    ///
+    /// Parses the field; invalid text raises the hex error state and the shared
+    /// error banner. A parsed target is applied (picker + panel search) only when
+    /// it differs from m_match_hex_applied, so idle blur/Enter/OK neither re-issue
+    /// a search nor clear unrelated error banners. Main thread only.
+    void validate_match_hex();
     void rebuild_cycle_legend();
     void validate_cycle_pattern();
     void update_ratio_or_tri_visibility();

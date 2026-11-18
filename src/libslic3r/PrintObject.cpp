@@ -637,6 +637,12 @@ void PrintObject::detect_overhangs_for_lift()
 
 void PrintObject::generate_support_material()
 {
+    // Support preview needs perimeter fill regions before generating real bridge envelopes.
+    if (!is_step_done(posSupportMaterial) && has_support() && m_config.support_type == stNormalAuto &&
+        m_config.support_top_z_distance == 0.) {
+        this->make_perimeters();
+        this->infill();
+    }
     if (this->set_started(posSupportMaterial)) {
         this->clear_support_layers();
 
@@ -1395,9 +1401,8 @@ bool PrintObject::invalidate_state_by_config_options(
                 m_print->config().dithering_local_z_whole_objects.value)
                 steps.emplace_back(posSlice);
         } else if (opt_key == "bridge_flow" || opt_key == "internal_bridge_flow") {
-            if (m_config.support_top_z_distance > 0.) {
-            	// Only invalidate due to bridging if bridging is enabled.
-            	// If later "support_top_z_distance" is modified, the complete PrintObject is invalidated anyway.
+            if (m_config.support_top_z_distance > 0. || (has_support() && m_config.support_type == stNormalAuto)) {
+                // Zero-gap normal support also depends on bridge flow and height.
             	steps.emplace_back(posPerimeters);
             	steps.emplace_back(posInfill);
 	            steps.emplace_back(posSupportMaterial);
@@ -1498,6 +1503,11 @@ bool PrintObject::invalidate_step(PrintObjectStep step)
 {
 	bool invalidated = Inherited::invalidate_step(step);
 
+    // Zero-gap contacts depend on the actual bridge paths, not just nominal slices.
+    if ((step == posPerimeters || step == posPrepareInfill || step == posInfill) && m_config.support_type == stNormalAuto &&
+        m_config.support_top_z_distance == 0.)
+        invalidated |= this->invalidate_step(posSupportMaterial);
+
     // propagate to dependent steps
     if (step == posPerimeters) {
 		invalidated |= this->invalidate_steps({ posPrepareInfill, posInfill, posIroning, posSimplifyPath, posSimplifyInfill });
@@ -1580,12 +1590,9 @@ void PrintObject::detect_surfaces_type()
             		// In non-spiral vase mode, go over all layers.
             		m_layers.size()),
             [this, region_id, interface_shells, &surfaces_new](const tbb::blocked_range<size_t>& range) {
-                // Only normal automatic support may replace bridge infill with bottom infill
-                // on a zero-gap interface. Tree support contacts may be filtered or reduced,
-                // so even max_bridge_length == 0 does not guarantee full bottom coverage.
-                const bool bottom_is_fully_supported = this->has_support() && m_config.support_top_z_distance.value == 0 &&
-                                                       m_config.support_type.value == stNormalAuto && !m_config.bridge_no_support.value;
-                SurfaceType surface_type_bottom_other = bottom_is_fully_supported ? stBottom : stBottomBridge;
+                // Support contacts are generated later and may be filtered or blocked.
+                // A zero top Z distance does not guarantee full support under an overhang.
+                const SurfaceType surface_type_bottom_other = stBottomBridge;
                 for (size_t idx_layer = range.begin(); idx_layer < range.end(); ++ idx_layer) {
                     m_print->throw_if_canceled();
                     // BOOST_LOG_TRIVIAL(trace) << "Detecting solid surfaces for region " << region_id << " and layer " << layer->print_z;

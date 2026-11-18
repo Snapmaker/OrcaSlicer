@@ -6157,17 +6157,8 @@ std::string GUI_App::gateway_locale() const
     if (locale.empty())
         locale = into_u8(current_language_code_safe());
 
-    const std::size_t separator = locale.find_first_of("-_");
-    std::string       language  = separator == std::string::npos ? locale : locale.substr(0, separator);
-    std::transform(language.begin(), language.end(), language.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (language != "zh")
-        language = "en";
-
     std::string region = app_config != nullptr ? app_config->get_country_code() : "US";
-    if (region != "CN")
-        region = "US";
-
-    return language + "-" + region;
+    return Gateway::ConnectionProcessManager::gateway_locale(locale, region);
 }
 
 bool GUI_App::start_gateway_service(bool restart)

@@ -144,13 +144,16 @@ void PrinterWebView::SendAPIKey()
         if (window.__sm_apikey_hooked) return;
         window.__sm_apikey_hooked = true;
         var apiKey = '%s';
+        // OctoPrint <= 1.10 never stores the session of a request authenticated by API key,
+        // so a login sent with the header loops back to the login page (#1088).
+        var isLogin = function(u) { return /\/api\/login(\?|$)/.test(String(u && u.url || u)); };
         // Override fetch to inject X-API-Key header
         if (window.fetch) {
             var originalFetch = window.fetch;
             window.fetch = function(input, init) {
                 init = init || {};
                 init.headers = init.headers || {};
-                if (!init.headers['X-API-Key']) {
+                if (!isLogin(input) && !init.headers['X-API-Key']) {
                     init.headers['X-API-Key'] = apiKey;
                 }
                 return originalFetch(input, init);
@@ -166,7 +169,7 @@ void PrinterWebView::SendAPIKey()
             var headersSet = false;
             xhr.open = function(method, url) {
                 origOpen.apply(xhr, arguments);
-                if (!headersSet) {
+                if (!headersSet && !isLogin(url)) {
                     xhr.setRequestHeader('X-API-Key', apiKey);
                     headersSet = true;
                 }

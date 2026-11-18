@@ -3503,6 +3503,9 @@ void TabPrintModel::reset_model_config()
     }
     update_model_config();
     wxGetApp().mainframe->on_config_changed(m_config);
+    // Reset erases the overrides directly; the pill tab colour is set only by
+    // notify_object_config_changed(), so refresh it here as the other paths do.
+    wxGetApp().params_panel()->notify_object_config_changed();
 }
 
 bool TabPrintModel::has_key(std::string const& key)

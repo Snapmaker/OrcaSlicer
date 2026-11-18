@@ -22088,7 +22088,6 @@ msgstr ""
 #~ "start > 10 kroków >= 0\n"
 #~ "koniec > start + krok)"
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Przejdź do: podpory tylko na stole roboczym"
 

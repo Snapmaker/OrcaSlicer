@@ -20096,7 +20096,6 @@ msgstr ""
 #~ msgid "Right click to reset value to system default."
 #~ msgstr "Правая кнопка мыши - сброс значения до системного по умолчанию."
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Перейти к: Поддержка только на печатной пластине"
 

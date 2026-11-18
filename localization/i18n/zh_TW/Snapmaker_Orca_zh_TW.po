@@ -18275,7 +18275,6 @@ msgstr "啟用內支撐肋以增強擦料塔的穩定性。"
 msgid "Enable tower interface features"
 msgstr "啟用料塔接觸層最佳化"
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "跳至：僅限列印板上支撐"
 

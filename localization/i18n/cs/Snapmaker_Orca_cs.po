@@ -18966,7 +18966,6 @@ msgstr ""
 #~ "start > 10 kroků >= 0\n"
 #~ "konec > začátek + krok)"
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr ""
 

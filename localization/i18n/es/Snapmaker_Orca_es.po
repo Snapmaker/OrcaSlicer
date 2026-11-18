@@ -22299,7 +22299,6 @@ msgstr ""
 #~ msgid "preparing, export 3mf failed!"
 #~ msgstr "Preparando; ¡Error al exportar 3MF!"
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Ir a: Soporte solo en la placa de construcción"
 

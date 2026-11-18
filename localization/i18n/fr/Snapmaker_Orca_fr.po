@@ -21599,7 +21599,6 @@ msgstr ""
 #~ "Début > 10 intervalles >= 0\n"
 #~ "Fin > Début + Intervalle"
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Aller à : Support uniquement sur la plaque d'impression"
 

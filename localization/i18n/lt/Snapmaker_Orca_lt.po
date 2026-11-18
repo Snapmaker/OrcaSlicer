@@ -19742,7 +19742,6 @@ msgstr ""
 #, c-format, boost-format
 #~ msgid "Support: propagate branches at layer %d"
 #~ msgstr "Atramos: skleisti šakas sluoksnyje %d"
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Jump to: Support on build plate only"
 

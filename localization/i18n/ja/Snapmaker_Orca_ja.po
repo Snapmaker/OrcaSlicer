@@ -17725,7 +17725,6 @@ msgstr ""
 #~ msgid "Orient the model"
 #~ msgstr "モデルの向きを調整"
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "ジャンプ先：ビルドプレート上のみサポート"
 

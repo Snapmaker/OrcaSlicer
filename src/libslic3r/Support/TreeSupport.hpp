@@ -127,7 +127,7 @@ struct SupportNode
     bool           is_sharp_tail   = false;
     bool           valid = true;
     bool           fading = false;   // port of Bambu 976b5062c: edge-eCircle marked to shrink to nothing
-    bool           drawn = true;     // issue 7141560751: disc survives the clip and something below prints
+    bool           drawn = true;     // disc survives the clip and something below prints
     bool           landed = false;   // valid=false via the link-cut rest-on-model conversion; keep drawing it
     ExPolygon      overhang; // when type==ePolygon, set this value to get original overhang area
     coordf_t       origin_area   = 0.0;

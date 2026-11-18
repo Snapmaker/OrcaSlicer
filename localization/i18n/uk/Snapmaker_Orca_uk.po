@@ -19340,7 +19340,6 @@ msgstr ""
 #~ msgid "Set the brim type to \"painted\""
 #~ msgstr "Встановіть тип кайми на \"Мальована\""
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr ""
 

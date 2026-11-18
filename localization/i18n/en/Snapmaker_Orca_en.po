@@ -17294,7 +17294,6 @@ msgstr ""
 msgid "%1% infill pattern doesn't support 100%% density."
 msgstr "%1% infill pattern doesn't support 100%% density."
 
-# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr ""
 

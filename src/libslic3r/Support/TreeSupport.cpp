@@ -2376,7 +2376,7 @@ void TreeSupport::draw_circles()
                (top_interface_layers > 0 && (n.support_roof_layers_below > 1 || (n.support_roof_layers_below >= 0 && !n.is_sharp_tail)));
     };
 
-    // Defect 7141560751 (https://project.feishu.cn/z301ik/issue/detail/7141560751): pre-pass that decides which nodes actually print. A branch
+    // Pre-pass that decides which nodes actually print. A branch
     // hugging a wall keeps its ledger chain intact while its disc is fully clipped
     // by the collision halo for one or more layers, so the layer above used to
     // print a floating disc over the empty gap. Mirror the draw-time clip here and
@@ -2489,7 +2489,7 @@ void TreeSupport::draw_circles()
                     if (print->canceled())
                         break;
 
-                    // Defect 7141560751 (https://project.feishu.cn/z301ik/issue/detail/7141560751): pre-pass decided this node must not print
+                    // Pre-pass decided this node must not print
                     // (disc fully clipped, or nothing prints beneath it).
                     if (!p_node->drawn)
                         continue;
@@ -3304,7 +3304,7 @@ void TreeSupport::drop_nodes()
                     // if the link between parent and current is cut by contours, mark current as bottom contact node
                     if (p_node->parent && intersection_ln({p_node->position, p_node->parent->position}, layer_contours).empty()==false)
                     {
-                        // Defect 7141560751 (https://project.feishu.cn/z301ik/issue/detail/7141560751): resting on the model is only legitimate when the
+                        // Resting on the model is only legitimate when the
                         // branch is allowed to. Under build-plate-only the branch has not
                         // reached the plate, its line must be pruned or it draws as a floating
                         // fragment (single disc, chain end, observed at the antenna tip).

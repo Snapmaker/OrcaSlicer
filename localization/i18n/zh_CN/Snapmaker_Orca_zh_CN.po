@@ -15963,7 +15963,7 @@ msgstr "参与冷却降速的悬垂阈值"
 msgid "Decide which overhang part join the cooling function to slow down the speed. Expressed as percentage which indicates how much width of the line is without support from the lower layer. 100% means forcing cooling for all outer wall no matter how much overhang degree."
 msgstr "决定哪部分悬垂结构参与冷却降速。以线宽无下层支撑的比例表示。100% 表示无论悬垂程度如何，所有外墙都强制参与冷却降速。"
 
-# issue 7141560751
+# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "跳转到：仅在打印板上生成支撑"
 

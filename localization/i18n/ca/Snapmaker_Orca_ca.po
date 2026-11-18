@@ -20178,7 +20178,7 @@ msgstr ""
 
 #~ msgid "End end: "
 #~ msgstr "Final: "
-# issue 7141560751
+# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Jump to: Support on build plate only"
 

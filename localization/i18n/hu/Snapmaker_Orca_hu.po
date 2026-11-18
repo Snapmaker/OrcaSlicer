@@ -18264,7 +18264,7 @@ msgstr ""
 #~ msgid "Orient the model"
 #~ msgstr "Modell orientációja"
 
-# issue 7141560751
+# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Ugrás ide: csak a nyomtatótálcán lévő támasz"
 

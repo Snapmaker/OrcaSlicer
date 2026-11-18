@@ -18693,7 +18693,7 @@ msgstr ""
 #~ msgid "Orient the model"
 #~ msgstr "Oriënteer het model"
 
-# issue 7141560751
+# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Ga naar: Alleen ondersteuning op de bouwplaat"
 

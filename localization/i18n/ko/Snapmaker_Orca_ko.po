@@ -20141,7 +20141,7 @@ msgstr ""
 #~ "시작 > 10 단계 >= 0\n"
 #~ "끝 > 시작 + 단계)"
 
-# issue 7141560751
+# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "이동: 빌드 플레이트에서만 서포트"
 

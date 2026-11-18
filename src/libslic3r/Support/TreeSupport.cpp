@@ -2321,7 +2321,62 @@ void TreeSupport::draw_circles()
         return;
     BOOST_LOG_TRIVIAL(info) << "draw_circles for object: " << m_object->model_object()->name;
 
-    // Issue 7141560751: pre-pass that decides which nodes actually print. A branch
+    // Single source for both the pre-pass and the rendering loop (MR !107 review):
+    // candidate construction and collision maps must never drift apart again.
+    auto make_overhang_candidate = [&](const SupportNode &n) -> ExPolygons {
+        if (n.overhang.contour.points.empty())
+            return {};
+        if (n.overhang.contour.size() > 100 || n.overhang.holes.size() > 1)
+            return { n.overhang };
+        return offset_ex({ n.overhang }, scale_(m_ts_data->m_xy_distance));
+    };
+    auto make_disc = [&](const SupportNode &n) -> ExPolygons {
+        Polygon circle(branch_circle);
+        const double scale = n.radius / branch_radius;
+        const double moveX = n.movement.x() / (scale * branch_radius_scaled);
+        const double moveY = n.movement.y() / (scale * branch_radius_scaled);
+        if (!SQUARE_SUPPORT && std::abs(moveX) > 0.001 && std::abs(moveY) > 0.001) {
+            // Ellipse along the movement direction; its transform matrix has
+            // eigenvalues >= 1, so the ellipse contains the bare circle.
+            const double vsize_inv   = 0.5 / (0.01 + std::sqrt(moveX * moveX + moveY * moveY));
+            double       matrix[2*2] = {
+                scale * (1 + moveX * moveX * vsize_inv), scale * (0 + moveX * moveY * vsize_inv),
+                scale * (0 + moveX * moveY * vsize_inv), scale * (1 + moveY * moveY * vsize_inv),
+            };
+            int i = 0;
+            for (auto vertex : branch_circle.points) {
+                vertex = Point(matrix[0] * vertex.x() + matrix[1] * vertex.y(), matrix[2] * vertex.x() + matrix[3] * vertex.y());
+                circle.points[i++] = n.position + vertex;
+            }
+        } else {
+            for (int i = 0; i < circle.points.size(); i++)
+                circle.points[i] = circle.points[i] * scale + n.position;
+        }
+        return { ExPolygon(circle) };
+    };
+    auto build_collision = [&](size_t obj_layer_nr, bool sharp) -> ExPolygons {
+        ExPolygons collision = offset_ex(m_ts_data->m_layer_outlines[obj_layer_nr],
+                                         sharp ? scale_(top_z_distance) :
+                                         scale_((obj_layer_nr == 0) ? config.support_object_first_layer_gap : m_ts_data->m_xy_distance));
+        // the top layers may be too close to interface with adaptive layer heights and very small overhang angle
+        if (top_z_distance > EPSILON) {
+            float accum_height = 0;
+            for (size_t layer_id = obj_layer_nr + 1;
+                 layer_id < m_ts_data->m_layer_outlines.size() && (accum_height += m_object->get_layer(layer_id)->height) && accum_height <= top_z_distance;
+                 layer_id++) {
+                collision = union_ex(collision, offset_ex(m_ts_data->m_layer_outlines[layer_id], scale_(top_z_distance)));
+            }
+        }
+        return collision;
+    };
+    // A node's candidate is overhang-based when it is an ePolygon/virtual node or the
+    // interface-overhang replacement applies; otherwise it is a disc (circle/ellipse).
+    auto candidate_is_overhang = [&](const SupportNode &n) -> bool {
+        return n.type == ePolygon || (n.distance_to_top < 0 && !n.is_sharp_tail) ||
+               (top_interface_layers > 0 && (n.support_roof_layers_below > 1 || (n.support_roof_layers_below >= 0 && !n.is_sharp_tail)));
+    };
+
+    // Defect 7141560751 (https://project.feishu.cn/z301ik/issue/detail/7141560751): pre-pass that decides which nodes actually print. A branch
     // hugging a wall keeps its ledger chain intact while its disc is fully clipped
     // by the collision halo for one or more layers, so the layer above used to
     // print a floating disc over the empty gap. Mirror the draw-time clip here and
@@ -2334,91 +2389,41 @@ void TreeSupport::draw_circles()
     // mirroring the per-layer lazy caching of the draw loop's get_collision
     // lambda (non-sharp vs sharp-tail offsets) so the pre-pass stays O(nodes)
     // instead of recomputing the layer's collision per node.
-    for (size_t li = 0; li < contact_nodes.size(); ++li) {
+    //
+    // Iterate over layer_heights (support layers without the raft tail), not
+    // contact_nodes (which carries extra empty slots after the raft layers) -
+    // reading layer_heights[li] beyond its end is out of bounds there.
+    for (size_t li = 0; li < m_ts_data->layer_heights.size(); ++li) {
         if (print->canceled())
             break;
+        const std::vector<SupportNode*> &layer_nodes = contact_nodes[li];
+        if (layer_nodes.empty())
+            continue;
         const size_t obj_layer_nr = m_ts_data->layer_heights[li].obj_layer_nr;
         ExPolygons    collision_base;
         ExPolygons    collision_sharp;
+        bool          collision_base_done  = false;
+        bool          collision_sharp_done = false;
         auto          collision_for = [&](bool sharp) -> ExPolygons & {
             ExPolygons &collision = sharp ? collision_sharp : collision_base;
-            if (!collision.empty())
+            bool       &done      = sharp ? collision_sharp_done : collision_base_done;
+            if (done)
                 return collision;
-            collision = offset_ex(m_ts_data->m_layer_outlines[obj_layer_nr],
-                                  sharp ? scale_(top_z_distance) :
-                                  scale_((obj_layer_nr == 0) ? config.support_object_first_layer_gap : m_ts_data->m_xy_distance));
-            if (top_z_distance > EPSILON) {
-                float accum_height = 0;
-                for (size_t layer_id = obj_layer_nr + 1;
-                     layer_id < m_ts_data->m_layer_outlines.size() && (accum_height += m_object->get_layer(layer_id)->height) && accum_height <= top_z_distance;
-                     layer_id++) {
-                    collision = union_ex(collision, offset_ex(m_ts_data->m_layer_outlines[layer_id], scale_(top_z_distance)));
-                }
-            }
+            done      = true;
+            collision = build_collision(obj_layer_nr, sharp);
             return collision;
         };
-        for (SupportNode *n : contact_nodes[li]) {
-            bool clip_empty = false;
-            // Mirror the draw loop's clip condition: sharp-tail tips clip against
-            // the tighter top-z halo, plain nodes against the xy-clearance halo.
+        for (SupportNode *n : layer_nodes) {
+            // Same candidate + clip as the rendering loop, from the shared builders.
             const bool       sharp    = n->is_sharp_tail && n->distance_to_top <= 0;
             const ExPolygons &collision = collision_for(sharp);
-            if (n->type == ePolygon) {
-                // Mirror the ePolygon draw path (overhang offset -> diff_clipped).
-                if (n->overhang.contour.points.empty()) {
-                    clip_empty = true;
-                } else {
-                    ExPolygons area;
-                    if (n->overhang.contour.size() > 100 || n->overhang.holes.size() > 1)
-                        area.emplace_back(n->overhang);
-                    else
-                        area = offset_ex({ n->overhang }, scale_(m_ts_data->m_xy_distance));
-                    area       = diff_clipped(area, collision);
-                    clip_empty = area.empty();
-                }
+            bool clip_empty;
+            if (candidate_is_overhang(*n)) {
+                ExPolygons cand = make_overhang_candidate(*n);
+                clip_empty = cand.empty() || diff_clipped(cand, collision).empty();
             } else {
-                // Mirror the draw loop's interface-overhang replacement: when the node's
-                // area will be replaced by the expanded overhang (the interface path), the
-                // emptiness test must run on that candidate, not on the circle - otherwise
-                // the pre-pass kills a node whose interface polygon would still print.
-                if (top_interface_layers > 0 && (n->support_roof_layers_below > 1 || (n->support_roof_layers_below >= 0 && !n->is_sharp_tail))) {
-                    if (n->overhang.contour.points.empty()) {
-                        clip_empty = true;
-                    } else {
-                        ExPolygons overhang_expanded;
-                        if (n->overhang.contour.size() > 100 || n->overhang.holes.size() > 1)
-                            overhang_expanded.emplace_back(n->overhang);
-                        else
-                            overhang_expanded = offset_ex({ n->overhang }, scale_(m_ts_data->m_xy_distance));
-                        overhang_expanded = diff_clipped(overhang_expanded, collision);
-                        clip_empty       = overhang_expanded.empty();
-                    }
-                } else {
-                    Polygon circle(branch_circle);
-                    const double scale = n->radius / branch_radius;
-                    const double moveX = n->movement.x() / (scale * branch_radius_scaled);
-                    const double moveY = n->movement.y() / (scale * branch_radius_scaled);
-                    if (!SQUARE_SUPPORT && std::abs(moveX) > 0.001 && std::abs(moveY) > 0.001) {
-                        // Mirror the movement ellipse of the draw loop (its transform
-                        // matrix has eigenvalues >= 1, so the ellipse contains the bare
-                        // circle; using the bare circle here would kill discs the draw
-                        // loop keeps, changing the OFF-mode output).
-                        const double vsize_inv   = 0.5 / (0.01 + std::sqrt(moveX * moveX + moveY * moveY));
-                        double       matrix[2*2] = {
-                            scale * (1 + moveX * moveX * vsize_inv), scale * (0 + moveX * moveY * vsize_inv),
-                            scale * (0 + moveX * moveY * vsize_inv), scale * (1 + moveY * moveY * vsize_inv),
-                        };
-                        int i = 0;
-                        for (auto vertex : branch_circle.points) {
-                            vertex = Point(matrix[0] * vertex.x() + matrix[1] * vertex.y(), matrix[2] * vertex.x() + matrix[3] * vertex.y());
-                            circle.points[i++] = n->position + vertex;
-                        }
-                    } else {
-                        for (int i = 0; i < circle.points.size(); i++)
-                            circle.points[i] = circle.points[i] * scale + n->position;
-                    }
-                    clip_empty = avoid_object_remove_extra_small_parts(ExPolygon(circle), collision).empty();
-                }
+                ExPolygons cand = make_disc(*n);
+                clip_empty = cand.empty() || avoid_object_remove_extra_small_parts(cand.front(), collision).empty();
             }
             n->drawn = !clip_empty && (li == 0 || n->landed || n->fading || (n->child != nullptr && n->child->drawn));
         }
@@ -2463,22 +2468,15 @@ void TreeSupport::draw_circles()
                 bool need_extra_wall = false;
                 ExPolygons collision_sharp_tails;
                 ExPolygons collision_base;
+                bool       collision_base_done  = false;
+                bool       collision_sharp_done = false;
                 auto             get_collision = [&](bool sharp_tail) -> ExPolygons             &{
                     ExPolygons &collision = sharp_tail ? collision_sharp_tails : collision_base;
-                    if (collision.empty()) {
-                        collision = offset_ex(m_ts_data->m_layer_outlines[obj_layer_nr],
-                                              sharp_tail ? scale_(top_z_distance) :
-                                                           scale_((obj_layer_nr == 0) ? config.support_object_first_layer_gap : m_ts_data->m_xy_distance));
-                        // the top layers may be too close to interface with adaptive layer heights and very small overhang angle
-                        if (top_z_distance > EPSILON) {
-                            float accum_height = 0;
-                            for (size_t layer_id = obj_layer_nr + 1;
-                                 layer_id < m_ts_data->m_layer_outlines.size() && (accum_height += m_object->get_layer(layer_id)->height) && accum_height <= top_z_distance;
-                                 layer_id++) {
-                                collision = union_ex(collision, offset_ex(m_ts_data->m_layer_outlines[layer_id], scale_(top_z_distance)));
-                            }
-                        }
-                    }
+                    bool       &done      = sharp_tail ? collision_sharp_done : collision_base_done;
+                    if (done)
+                        return collision;
+                    done      = true;
+                    collision = build_collision(obj_layer_nr, sharp_tail);
                     return collision;
                 };
 
@@ -2491,74 +2489,30 @@ void TreeSupport::draw_circles()
                     if (print->canceled())
                         break;
 
-                    // Issue 7141560751: pre-pass decided this node must not print
+                    // Defect 7141560751 (https://project.feishu.cn/z301ik/issue/detail/7141560751): pre-pass decided this node must not print
                     // (disc fully clipped, or nothing prints beneath it).
                     if (!p_node->drawn)
                         continue;
 
                     const SupportNode& node = *p_node;
                     ExPolygons area;
-                    // Generate directly from overhang polygon if one of the following is true:
-                    // 1) node is a normal part of hybrid support
-                    // 2) node is virtual
-                    if (node.type == ePolygon || (node.distance_to_top<0 && !node.is_sharp_tail)) {
-                        if (node.overhang.contour.size() > 100 || node.overhang.holes.size()>1)
-                            area.emplace_back(node.overhang);
-                        else {
-                            area = offset_ex({ node.overhang }, scale_(m_ts_data->m_xy_distance));
-                        }
-                        area = diff_clipped(area, get_collision(node.is_sharp_tail && node.distance_to_top <= 0));
+                    const bool       sharp    = node.is_sharp_tail && node.distance_to_top <= 0;
+                    const ExPolygons &collision = get_collision(sharp);
+                    // need_extra_wall follows the ORIGINAL circle-path condition (before the
+                    // interface-overhang replacement): interface nodes used to run through the
+                    // circle branch and propagate the flag; keep that exact semantics.
+                    if (!(node.type == ePolygon || (node.distance_to_top < 0 && !node.is_sharp_tail)) && node.need_extra_wall)
+                        need_extra_wall = true;
+                    // Same candidate + clip as the pre-pass, from the shared builders.
+                    if (candidate_is_overhang(node)) {
+                        area = make_overhang_candidate(node);
+                        area = diff_clipped(area, collision);
                         if (node.type == ePolygon) append(area_poly, area);
-                    }
-                    else {
-                        Polygon circle(branch_circle);
-                        double  scale = node.radius / branch_radius;
-                        double moveX = node.movement.x() / (scale * branch_radius_scaled);
-                        double moveY = node.movement.y() / (scale * branch_radius_scaled);
-                        //BOOST_LOG_TRIVIAL(debug) << format("scale,moveX,moveY: %.3f,%.3f,%.3f", scale, moveX, moveY);
-
-                        if (!SQUARE_SUPPORT && std::abs(moveX)>0.001 && std::abs(moveY)>0.001) { // draw ellipse along movement direction
-                            const double vsize_inv = 0.5 / (0.01 + std::sqrt(moveX * moveX + moveY * moveY));
-                            double       matrix[2*2]  = {
-                                scale * (1 + moveX * moveX * vsize_inv),scale * (0 + moveX * moveY * vsize_inv),
-                                scale * (0 + moveX * moveY * vsize_inv),scale * (1 + moveY * moveY * vsize_inv),
-                            };
-                            int i = 0;
-                            for (auto vertex: branch_circle.points) {
-                                vertex = Point(matrix[0] * vertex.x() + matrix[1] * vertex.y(), matrix[2] * vertex.x() + matrix[3] * vertex.y());
-                                circle.points[i++] = node.position + vertex;
-                            }
-                        } else {
-                            for (int i = 0;i< circle.points.size(); i++) {
-                                circle.points[i] = circle.points[i] * scale + node.position;
-                            }
-                        }
-                        area = avoid_object_remove_extra_small_parts(ExPolygon(circle), get_collision(node.is_sharp_tail && node.distance_to_top <= 0));
-                        // area = diff_clipped({ ExPolygon(circle) }, get_collision(node.is_sharp_tail && node.distance_to_top <= 0));
-
                         if (!area.empty()) has_circle_node = true;
-                        if (node.need_extra_wall) need_extra_wall = true;
-
-                        // merge overhang to get a smoother interface surface.
-                        // Only when overhang exists — circle nodes that descended through drop_nodes
-                        // lose their overhang, so keep the grown circle to preserve transition connectivity.
-                        if (top_interface_layers > 0 && (node.support_roof_layers_below > 1 || (node.support_roof_layers_below >= 0 && !node.is_sharp_tail))) {
-                            // Port of Orca #13192: merging the overhang into the roof area keeps tree
-                            // tips producing a continuous support interface. Suppressing this for
-                            // build-plate-only support drops the roof polygons of valid branches.
-                            ExPolygons overhang_expanded;
-                            if (node.overhang.contour.size() > 100 || node.overhang.holes.size()>1)
-                                overhang_expanded.emplace_back(node.overhang);
-                            else {
-                                overhang_expanded = offset_ex({ node.overhang }, scale_(m_ts_data->m_xy_distance));
-                            }
-                            // Replace the circle area with the expanded overhang (aligns with Bambu)
-                            // This produces a single coherent polygon instead of circle+overhang fragments
-                            area = std::move(overhang_expanded);
-                            // Apply collision avoidance to the overhang area
-                            area = diff_clipped(area, get_collision(node.is_sharp_tail && node.distance_to_top <= 0));
-                            if (!area.empty()) has_circle_node = true;
-                        }
+                    } else {
+                        area = make_disc(node);
+                        area = avoid_object_remove_extra_small_parts(area.front(), collision);
+                        if (!area.empty()) has_circle_node = true;
                     }
 
                     if (obj_layer_nr == 0 && m_raft_layers == 0) {
@@ -3350,7 +3304,7 @@ void TreeSupport::drop_nodes()
                     // if the link between parent and current is cut by contours, mark current as bottom contact node
                     if (p_node->parent && intersection_ln({p_node->position, p_node->parent->position}, layer_contours).empty()==false)
                     {
-                        // Issue 7141560751: resting on the model is only legitimate when the
+                        // Defect 7141560751 (https://project.feishu.cn/z301ik/issue/detail/7141560751): resting on the model is only legitimate when the
                         // branch is allowed to. Under build-plate-only the branch has not
                         // reached the plate, its line must be pruned or it draws as a floating
                         // fragment (single disc, chain end, observed at the antenna tip).

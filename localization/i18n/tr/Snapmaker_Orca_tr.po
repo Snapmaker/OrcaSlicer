@@ -21106,7 +21106,7 @@ msgstr ""
 #~ "başlangıç > 10 adım >= 0\n"
 #~ "bitiş > başlangıç + adım)"
 
-# issue 7141560751
+# defect https://project.feishu.cn/z301ik/issue/detail/7141560751
 msgid "Jump to: Support on build plate only"
 msgstr "Şuraya atla: Sadece baskı tablası üzerinde destek"
 

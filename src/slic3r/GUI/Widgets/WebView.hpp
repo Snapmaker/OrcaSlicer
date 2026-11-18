@@ -14,6 +14,8 @@ public:
     static void LoadUrl(wxWebView * webView, wxString const &url);
 
     static bool RunScript(wxWebView * webView, wxString const & msg);
+    // Linux only (no-op elsewhere): make the bundled Flutter pages take Flutter's Chromium code path under WebKitGTK.
+    static void AddFlutterCompatScript(wxWebView * webView);
 
     static void RecreateAll();
 };

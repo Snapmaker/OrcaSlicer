@@ -193,6 +193,7 @@ void PrinterWebView::SendAPIKey()
     // AddUserScript works correctly on these platforms (Edge WebView2, WebKitGTK).
     // Do NOT call Reload() — the current page is already handled by RunScript above.
     m_browser->RemoveAllUserScripts();
+    WebView::AddFlutterCompatScript(m_browser);
     m_browser->AddUserScript(script);
 #endif
 }

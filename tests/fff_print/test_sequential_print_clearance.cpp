@@ -200,3 +200,38 @@ TEST_CASE("Sequential clearance rejects thin fins that produce toolpaths", "[Seq
                     above_rod += !region->perimeters.empty();
     REQUIRE(above_rod > 0);
 }
+
+TEST_CASE("Sequential clearance documents the expanded support fallback", "[SequentialClearance][SupportClearanceP2]")
+{
+    for (double gap : {45., 75.}) {
+        for (SupportType type : {stNormalAuto, stNormal, stTreeAuto, stTree}) {
+            for (bool enabled : {false, true}) {
+                CAPTURE(gap, type, enabled);
+                Print print;
+                Model model;
+                auto  config = sequential_config();
+                config.set_key_value("enable_support", new ConfigOptionBool(enabled));
+                config.set_key_value("support_type", new ConfigOptionEnum<SupportType>(type));
+                config.set_key_value("raft_layers", new ConfigOptionInt(0));
+                config.set_key_value("enforce_support_layers", new ConfigOptionInt(0));
+                init_print({box(40, 20, 35), box(40, 20, 35)}, print, model, config);
+                place(print, model, config, {Vec2d(60, 100), Vec2d(190, 120 + gap)});
+                // A known P2 restriction: both expanded Y footprints are used for possible support.
+                const bool rejected = enabled && gap == 45.;
+                const auto before   = Print::sequential_print_clearance_valid(print);
+                CHECK(before.string.empty() == !rejected);
+                CHECK((before.string.find("too tall") != std::string::npos) == rejected);
+                print.process(); // Inspect generated support without exporting this potentially rejected plate.
+                size_t support_layers = 0;
+                for (const PrintObject* object : print.objects())
+                    support_layers += object->support_layers().size();
+                CHECK(support_layers == 0);
+                // Empty generated support must not become a general validation bypass.
+                const auto after = Print::sequential_print_clearance_valid(print);
+                CHECK(after.string.empty() == !rejected);
+                CHECK((after.string.find("too tall") != std::string::npos) == rejected);
+                require_order(print, 0, 1);
+            }
+        }
+    }
+}

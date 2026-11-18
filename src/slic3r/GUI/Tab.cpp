@@ -780,6 +780,11 @@ void Tab::update_label_colours()
             else
                 color = &m_modified_label_clr;
         }
+        // value differs from the last saved preset while matching the parent/system
+        // value: keep the modified colour so the label agrees with the revert icon
+        else if ((opt.second & osInitValue) == 0) {
+            color = &m_modified_label_clr;
+        }
         if (opt.first == "printable_area"            ||
             opt.first == "compatible_prints"    || opt.first == "compatible_printers"           ) {
             if (Line* line = get_line(opt.first))
@@ -802,8 +807,8 @@ void Tab::update_label_colours()
             if (translate_category(page->title(), m_type) != title)
                 continue;
 
-            const wxColor *clr = !page->m_is_nonsys_values ? &m_sys_label_clr :
-                page->m_is_modified_values ? &m_modified_label_clr :
+            const wxColor *clr = page->m_is_modified_values ? &m_modified_label_clr :
+                !page->m_is_nonsys_values ? &m_sys_label_clr :
                 (m_type < Preset::TYPE_COUNT ? &m_default_text_clr : &m_modified_label_clr);
 
             m_tabctrl->SetItemTextColour(cur_item, clr == &m_modified_label_clr ? *clr : StateColor(
@@ -855,6 +860,11 @@ void Tab::decorate()
             // value is modified
             else
                 color = &m_modified_label_clr;
+        }
+        // value differs from the last saved preset while matching the parent/system
+        // value: keep the modified colour so the label agrees with the revert icon
+        else if ((opt.second & osInitValue) == 0) {
+            color = &m_modified_label_clr;
         }
         if ((opt.second & osInitValue) != 0)
         {
@@ -1314,8 +1324,9 @@ void Tab::update_changed_tree_ui()
                 }
             }
 
-            const wxColor *clr = sys_page ? (m_is_default_preset ? &m_default_text_clr : &m_sys_label_clr) :
-                                 (modified_page || m_type >= Preset::TYPE_COUNT) ? &m_modified_label_clr : &m_default_text_clr;
+            const wxColor *clr = modified_page ? &m_modified_label_clr :
+                                 sys_page ? (m_is_default_preset ? &m_default_text_clr : &m_sys_label_clr) :
+                                 (m_type >= Preset::TYPE_COUNT) ? &m_modified_label_clr : &m_default_text_clr;
 
             if (page->set_item_colour(clr))
                 m_tabctrl->SetItemTextColour(cur_item, clr == &m_modified_label_clr ? *clr : StateColor(

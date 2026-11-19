@@ -373,9 +373,8 @@ inline size_t tree_support_effective_wall_count(SupportMaterialStyle style, int 
  * \brief Sliver-hole cleanup for tree support area groups, guarded by hole ownership.
  *
  * draw_circles() carves the per-layer area polygons against each other
- * (roof_areas -= roof_1st_layer, base_areas -= roofs). Since 5f02f3ed5d the diff
- * direction is roof_areas = diff(roof_areas, roof_1st_layer), so a whole transition
- * strip or roof fragment regularly ends up as a hole smaller than 2mm in both
+ * (roof_1st_layer -= roof_areas, base_areas -= roofs). A whole interface
+ * island or roof fragment may end up as a hole smaller than 2mm in both
  * dimensions inside the polygon of another group. Erasing such a hole (the plain
  * sliver cleanup inherited from Bambu Studio, same 2mm box threshold) re-expands the
  * owner polygon over the other group's area, so two support roles get printed on top

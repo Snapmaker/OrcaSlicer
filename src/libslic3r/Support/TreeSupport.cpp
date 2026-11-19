@@ -2557,8 +2557,8 @@ void TreeSupport::draw_circles()
                 roof_1st_layer = union_ex(roof_1st_layer); // merge fragments into continuous transition surface
 
                 // roof_areas and roof_1st_layer may intersect.
-                // Subtract roof_1st_layer from roof_areas so transition strips keep support body filament.
-                roof_areas = diff_ex(roof_areas, roof_1st_layer);
+                // Keep interface material wherever a roof overlaps a descending transition strip.
+                roof_1st_layer = diff_ex(roof_1st_layer, roof_areas);
                 roof_1st_layer = intersection_ex(roof_1st_layer, m_machine_border);
 
                 // Move small roof_areas (< 1mm^2) into roof_1st_layer, matching Bambu Studio behavior.

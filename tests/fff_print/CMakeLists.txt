@@ -17,6 +17,7 @@ add_executable(${_TEST_NAME}_tests
 	test_skirt_brim.cpp
 	test_support_material.cpp
 	test_tree_support_bridge.cpp
+	test_tree_support_interface.cpp
 	test_bed_temperature.cpp
 	test_trianglemesh.cpp
 	test_pressure_equalizer.cpp

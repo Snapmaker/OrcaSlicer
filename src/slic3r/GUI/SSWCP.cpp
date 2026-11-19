@@ -2677,7 +2677,7 @@ nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename, c
                 std::string filament_type = filament_type_opt->get_at(int(i));
                 boost::trim(filament_type);
                 filament_types.emplace_back(std::move(filament_type));
-                if (filament_is_support_opt != nullptr && filament_is_support_opt->get_at(i))
+                if (filament_is_support_opt != nullptr && i < filament_is_support_opt->values.size() && filament_is_support_opt->values[i])
                     filament_is_support[i] = 1;
             }
             response["filament_type"] = filament_types;
@@ -2909,7 +2909,7 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
                 std::string filament_type = filament_type_opt->get_at(int(i));
                 boost::trim(filament_type);
                 filament_types.emplace_back(std::move(filament_type));
-                if (filament_is_support_opt != nullptr && filament_is_support_opt->get_at(i))
+                if (filament_is_support_opt != nullptr && i < filament_is_support_opt->values.size() && filament_is_support_opt->values[i])
                     filament_is_support[i] = 1;
             }
             response["filament_type"] = filament_types;

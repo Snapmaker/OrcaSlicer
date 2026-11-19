@@ -273,14 +273,23 @@ TEST_CASE("Generated brims retain their filament bed temperature", "[BedTemperat
 TEST_CASE("Sequential bed temperature covers every object's first layer", "[BedTemperature]")
 {
     auto config = support_bed_config();
-    config.set_deserialize_strict({ { "enable_support", 0 }, { "print_sequence", "by object" } });
+    const bool request_prime_tower = GENERATE(false, true);
+    config.set_deserialize_strict({
+        { "enable_support", 0 }, { "print_sequence", "by object" },
+        { "enable_prime_tower", request_prime_tower }, { "nozzle_diameter", "0.4,0.4" },
+        { "filament_type", "PLA,PLA" }, { "flush_volumes_matrix", "0,140,140,0" }
+    });
     Print print;
     Model model;
     Test::init_print({ TestMesh::cube_20x20x20, TestMesh::cube_20x20x20 }, print, model, config);
     for (const char *key : { "wall_filament", "sparse_infill_filament", "solid_infill_filament" })
         model.objects.back()->config.set_key_value(key, new ConfigOptionInt(2));
     print.apply(model, config);
+    REQUIRE(print.config().print_sequence == PrintSequence::ByObject);
+    REQUIRE(print.objects().size() == 2);
+    REQUIRE_FALSE(print.has_wipe_tower());
     const auto gcode = Test::gcode(print);
+    CHECK(print.wipe_tower_data().tool_changes.empty());
     REQUIRE(gcode.find("\nT1") != std::string::npos);
     check_bed_temperature(gcode, 80, 75);
     // Reusing the print must rebuild the export's set rather than retain filament 2.
@@ -315,18 +324,23 @@ TEST_CASE("Prime tower planning does not add unused support to bed temperature",
 {
     auto config = support_bed_config();
     const bool mixed_first_layer = GENERATE(false, true);
+    const bool by_object = GENERATE(false, true);
     config.set_deserialize_strict({
         { "enable_prime_tower", 1 }, { "nozzle_diameter", "0.4,0.4" },
         { "filament_type", "PLA,PLA" }, { "flush_volumes_matrix", "0,140,140,0" },
+        { "print_sequence", by_object ? "by object" : "by layer" },
         { "layer_change_gcode", "G92 E0" }, { "wall_filament", mixed_first_layer ? 2 : 1 }
     });
     Print print;
     Model model;
     Test::init_print({ TestMesh::cube_20x20x20 }, print, model, config);
+    REQUIRE(print.config().print_sequence == (by_object ? PrintSequence::ByObject : PrintSequence::ByLayer));
     const auto gcode = Test::gcode(print);
     REQUIRE((gcode.find("\nT1") != std::string::npos) == mixed_first_layer);
-    if (mixed_first_layer)
+    if (mixed_first_layer) {
+        REQUIRE(print.has_wipe_tower());
         REQUIRE_FALSE(print.wipe_tower_data().tool_changes.empty());
+    }
     check_bed_temperature(gcode, mixed_first_layer ? 80 : 60, mixed_first_layer ? 75 : 55);
 }
 

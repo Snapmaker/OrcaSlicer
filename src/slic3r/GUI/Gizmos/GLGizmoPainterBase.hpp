@@ -519,9 +519,11 @@ protected:
     bool m_strokeHasCommittedState = false;
     // Hit Z of the previous height-range event in the current stroke; empty when the sweep restarts.
     std::optional<float> _heightRangeLastBottomZ;
+    // Reentrancy guard, set while the stroke-finalizing cleanup runs (base
+    // FinalizePaintingStroke or a derived gizmo's equivalent). Protected for the same reason as above.
+    bool m_finishingPaintingInteraction = false;
 
 private:
-    bool m_finishingPaintingInteraction = false;
     EState m_old_state = Off; // to be able to see that the gizmo has just been closed (see on_set_state)
 
     // Following cache holds result of a raycast query. The queries are asked

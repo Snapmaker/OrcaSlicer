@@ -6,6 +6,8 @@
 
 #include "slic3r/GUI/GLModel.hpp"
 
+#include <utility>
+
 namespace Slic3r {
 namespace GUI {
 
@@ -70,7 +72,7 @@ private:
     struct Preview {
         ObjectID                            object_id;  // owning object id at cache build time
         ModelVolume*                        volume = nullptr; // the model part being previewed
-        int                                 volume_idx = -1;  // its index among the model parts
+        int                                 gl_volume_idx = -1; // full index into ModelObject::volumes, matches GLVolume::volume_idx()
         std::shared_ptr<const TriangleMesh> origin;      // mesh identity at cache build time
         size_t                              facet_count = 0;  // painted original facets
         std::vector<uint32_t>     next_facets;      // selection for the next subdivision step
@@ -92,6 +94,10 @@ private:
     int  m_subdiv_level  = 0;   // wanted subdivision level (slider)
     bool m_preview_dirty = true; // painted facets changed, the caches must be rebuilt
     int  m_shown_level   = 0;   // level whose geometry is currently displayed (0 = original)
+    int  m_selected_facet_count = 0; // painted original-face count shown in the panel; refreshed while m_preview_dirty
+    // (Requested, achieved) level pair of the last "subdivision stopped early"
+    // notification; repaints that fail the same way do not re-notify.
+    std::pair<int, int> m_last_failed_levels = {0, 0};
     // Tallest parameter layout drawn so far this session; shorter layouts are
     // padded up to it so switching tools never changes the panel height. Reset
     // when the gizmo opens.

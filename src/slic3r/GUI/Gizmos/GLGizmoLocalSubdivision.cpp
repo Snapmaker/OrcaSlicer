@@ -70,12 +70,18 @@ bool GLGizmoLocalSubdivision::gizmo_event(SLAGizmoEventType action, const Vec2d&
         // through the gizmo session. The stroke state must still be ended exactly
         // like the base class does it: a stale m_last_mouse_click would make the next
         // click interpolate a line of paint from the previous click position.
+        if (m_finishingPaintingInteraction)
+            return true;
+        m_finishingPaintingInteraction = true;
         DiscardPaintingPreviewsAndFlush();
         update_model_object();
         m_button_down             = Button::None;
         m_strokeHasCommittedState = false;
         m_last_mouse_click        = Vec2d::Zero();
         _heightRangeLastBottomZ.reset();
+        m_finishingPaintingInteraction = false;
+        // Finalizing cleared the hover preview; rebuild it here since macOS/Linux send no move after mouse-up.
+        GLGizmoPainterBase::gizmo_event(SLAGizmoEventType::Moving, mouse_position, shift_down, alt_down, control_down);
         return true;
     }
     return GLGizmoPainterBase::gizmo_event(action, mouse_position, shift_down, alt_down, control_down);
@@ -317,11 +323,15 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
 
     // How many facets are currently painted. Count the original (level-0) faces, not
     // the leaves of the selector tree: the selector subdivides triangles while painting,
-    // so one painted face can hold many selected leaf triangles.
-    int selected_facets = 0;
-    for (const auto& triangle_selector : m_triangle_selectors)
-        selected_facets += int(triangle_selector->get_facets_indices_by_state(EnforcerBlockerType::ENFORCER).size());
-    m_imgui->text(format_wxstr("%1%: %2%", m_desc["selected_facets"], selected_facets));
+    // so one painted face can hold many selected leaf triangles. The selectors are
+    // rewalked only while the preview cache is dirty (a paint stroke just ended);
+    // idle frames reuse the cached total instead of walking and allocating per frame.
+    if (m_preview_dirty) {
+        m_selected_facet_count = 0;
+        for (const auto& triangle_selector : m_triangle_selectors)
+            m_selected_facet_count += int(triangle_selector->get_facets_indices_by_state(EnforcerBlockerType::ENFORCER).size());
+    }
+    m_imgui->text(format_wxstr("%1%: %2%", m_desc["selected_facets"], m_selected_facet_count));
 
     // Subdivision level stepper with live preview: [-] value [+]. Each change swaps
     // the rendered mesh of the painted region for the subdivided one.
@@ -377,7 +387,7 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
         std::max(subdiv_min_width,
                  ImGui::GetContentRegionAvail().x - close_button_width - clear_button_width - 2.f * ImGui::GetStyle().ItemSpacing.x);
 
-    m_imgui->disabled_begin(selected_facets == 0 || m_subdiv_level == 0);
+    m_imgui->disabled_begin(m_selected_facet_count == 0 || m_subdiv_level == 0);
     m_imgui->push_confirm_button_style();
     if (m_imgui->button(m_desc["subdivide"], subdiv_button_width, 0.f))
         apply_subdivision();
@@ -448,8 +458,9 @@ void GLGizmoLocalSubdivision::update_preview()
         // The selectors are built by update_from_model_object; without them there is
         // nothing to preview yet.
         if (! m_triangle_selectors.empty()) {
-            int idx = -1;
-            for (ModelVolume* mv : mo->volumes) {
+            int idx = -1; // counts model parts only, indexing m_triangle_selectors
+            for (int full_idx = 0; full_idx < int(mo->volumes.size()); ++full_idx) {
+                ModelVolume* mv = mo->volumes[size_t(full_idx)];
                 if (! mv->is_model_part())
                     continue;
                 ++idx;
@@ -459,10 +470,10 @@ void GLGizmoLocalSubdivision::update_preview()
                 if (facets.empty())
                     continue;
                 Preview p;
-                p.object_id   = mo->id();
-                p.volume      = mv;
-                p.volume_idx  = idx;
-                p.origin      = mv->mesh_ptr();
+                p.object_id     = mo->id();
+                p.volume        = mv;
+                p.gl_volume_idx = full_idx;
+                p.origin        = mv->mesh_ptr();
                 p.facet_count = facets.size();
                 p.next_facets.assign(facets.begin(), facets.end());
                 p.meshes.emplace_back(mv->mesh().its); // level 0 = the original mesh
@@ -493,6 +504,25 @@ void GLGizmoLocalSubdivision::update_preview()
         }
     }
 
+    // A region whose inner edges are not all 2-manifold stops growing at the level
+    // where the pairing guard trips: say so instead of silently showing a lower
+    // level than the slider requests. Throttled to one notification per (requested,
+    // achieved) level pair, so repainting does not re-notify on every mouse move.
+    int lowest_achieved = m_subdiv_level;
+    for (const Preview& p : m_previews)
+        lowest_achieved = std::min(lowest_achieved, int(p.meshes.size()) - 1);
+    if (m_subdiv_level > 0 && ! m_previews.empty() && lowest_achieved < m_subdiv_level) {
+        if (m_last_failed_levels != std::make_pair(m_subdiv_level, lowest_achieved)) {
+            m_last_failed_levels = {m_subdiv_level, lowest_achieved};
+            wxGetApp().plater()->get_notification_manager()->push_notification(
+                NotificationManager::NotificationLevel::WarningNotificationLevel, 5,
+                wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."),
+                                 lowest_achieved, m_subdiv_level).ToStdString());
+        }
+    } else {
+        m_last_failed_levels = {0, 0};
+    }
+
     if (m_subdiv_level > 0 && ! m_previews.empty()) {
         // Hide the original volumes and draw the subdivided level ourselves: the
         // surroundings with the raw volume color (same color the level-0 rendering
@@ -508,7 +538,7 @@ void GLGizmoLocalSubdivision::update_preview()
             const GLVolume* glv = nullptr;
             for (const auto& i : selection.get_volume_idxs()) {
                 const GLVolume* v = selection.get_volume(i);
-                if (v->volume_idx() == p.volume_idx) {
+                if (v->volume_idx() == p.gl_volume_idx) {
                     glv = v;
                     break;
                 }
@@ -566,7 +596,7 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
     if (gouraud_shader == nullptr)
         return;
 
-    glsafe(::glPushAttrib(GL_DEPTH_TEST));
+    glsafe(::glPushAttrib(GL_DEPTH_BUFFER_BIT));
     glsafe(::glEnable(GL_DEPTH_TEST));
     gouraud_shader->start_using();
     const Camera&     camera      = wxGetApp().plater()->get_camera();
@@ -577,7 +607,7 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
         const GLVolume* glv = nullptr;
         for (const auto& i : selection.get_volume_idxs()) {
             const GLVolume* v = selection.get_volume(i);
-            if (v->volume_idx() == p.volume_idx) {
+            if (v->volume_idx() == p.gl_volume_idx) {
                 glv = v;
                 break;
             }
@@ -612,10 +642,18 @@ void GLGizmoLocalSubdivision::apply_subdivision()
         return;
 
     // The subdivision of a volume failed when its cache did not reach the wanted
-    // level (smooth_triangle_mesh_local_its returned ok == false): apply nothing.
+    // level (smooth_triangle_mesh_local_its returned ok == false): apply nothing
+    // and tell the user why the button had no effect.
+    int lowest_achieved = m_subdiv_level;
     for (const Preview& p : m_previews)
-        if (int(p.meshes.size()) <= m_subdiv_level)
-            return;
+        lowest_achieved = std::min(lowest_achieved, int(p.meshes.size()) - 1);
+    if (lowest_achieved < m_subdiv_level) {
+        wxGetApp().plater()->get_notification_manager()->push_notification(
+            NotificationManager::NotificationLevel::WarningNotificationLevel, 10,
+            wxString::Format(_L("Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."),
+                             lowest_achieved, m_subdiv_level).ToStdString());
+        return;
+    }
 
     // Upper bound of the face count after the subdivision: unselected faces stay,
     // every painted face becomes at most 4^level faces.

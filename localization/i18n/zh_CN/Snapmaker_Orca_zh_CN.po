@@ -15809,6 +15809,14 @@ msgstr "细分完成"
 msgid "Subdivision failed"
 msgstr "细分失败"
 
+#, c-format
+msgid "Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."
+msgstr "局部细分停留在第 %d 级（共 %d 级）：所选区域存在非流形边。"
+
+#, c-format
+msgid "Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."
+msgstr "细分失败：所选区域存在非流形边（到达第 %d 级，共 %d 级）。未应用任何更改。"
+
 msgid "Enable Snapmaker Space"
 msgstr "开启模型站"
 

@@ -1412,6 +1412,18 @@ int CLI::run(int argc, char **argv)
                 //LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig|LoadStrategy::AddDefaultInstances;
                 //if (load_aux) strategy = strategy | LoadStrategy::LoadAuxiliary;
                 model = Model::read_from_file(file, &config, &config_substitutions, strategy, &plate_data_src, &project_presets, &is_bbl_3mf, &file_version, nullptr, nullptr, nullptr, plate_to_slice);
+                // Snapmaker_Orca: the Application metadata alone marks a 3mf as a project, but the project
+                // branch below reads these options without checking them. A file without them (no
+                // Metadata/project_settings.config, or an incomplete one) is loaded as plain geometry.
+                if (is_bbl_3mf) {
+                    for (const char *key : {"printer_settings_id", "print_settings_id", "filament_settings_id", "printable_height"}) {
+                        if (config.option(key) == nullptr) {
+                            BOOST_LOG_TRIVIAL(warning) << boost::format("%1%: project settings are incomplete (%2% is missing), loading the file as a plain model") %file %key;
+                            is_bbl_3mf = false;
+                            break;
+                        }
+                    }
+                }
                 if (is_bbl_3mf)
                 {
                     if (!first_file)

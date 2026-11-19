@@ -47,6 +47,8 @@ public:
 
     std::string set_temperature(unsigned int temperature, bool wait = false, int tool = -1) const;
     std::string set_bed_temperature(int temperature, bool wait = false);
+    // A negative target marks the temperature as unknown after a custom command.
+    void        record_custom_bed_temperature(double temperature);
     std::string set_chamber_temperature(int temperature, bool wait = false);
     std::string set_print_acceleration(unsigned int acceleration)   { return set_acceleration_internal(Acceleration::Print, acceleration); }
     std::string set_travel_acceleration(unsigned int acceleration)  { return set_acceleration_internal(Acceleration::Travel, acceleration); }
@@ -151,7 +153,7 @@ public:
 
     //BBS
     unsigned int    m_last_additional_fan_speed;
-    int             m_last_bed_temperature;
+    double          m_last_bed_temperature;
     bool            m_last_bed_temperature_reached;
     double          m_lifted;
 

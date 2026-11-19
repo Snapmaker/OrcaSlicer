@@ -2583,6 +2583,7 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
     m_fan_mover.release();
 
     m_writer.set_is_bbl_machine(is_bbl_printers);
+    m_bed_temperature_extruders = first_layer_extruders(print);
 
     // How many times will be change_layer() called?
     // change_layer() in turn increments the progress bar status.
@@ -3087,10 +3088,9 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
         this->placeholder_parser().set("bbl_bed_temperature_gcode", new ConfigOptionBool(false));
         this->placeholder_parser().set("bed_temperature_initial_layer", new ConfigOptionInts(*first_bed_temp_opt));
         this->placeholder_parser().set("bed_temperature", new ConfigOptionInts(*bed_temp_opt));
-        // BBS: the single bed temperature value accommodates the highest-temperature filament of the print
-        // (max over all used extruders instead of the initial extruder only).
+        // Use the same first-layer tools as the bed commands and config headers.
         int bed_temp_single = 0;
-        for (const unsigned int extruder_id : print.extruders())
+        for (const unsigned int extruder_id : m_bed_temperature_extruders)
             bed_temp_single = std::max(bed_temp_single, first_bed_temp_opt->get_at(extruder_id));
         this->placeholder_parser().set("bed_temperature_initial_layer_single", new ConfigOptionInt(bed_temp_single));
         this->placeholder_parser().set("bed_temperature_initial_layer_vector", new ConfigOptionString());
@@ -3904,8 +3904,11 @@ std::string GCode::placeholder_parser_process(const std::string&   name,
 
 // Parse the custom G-code, try to find mcode_set_temp_dont_wait and mcode_set_temp_and_wait or optionally G10 with temperature inside the
 // custom G-code. Returns true if one of the temp commands are found, and try to parse the target temperature value into temp_out.
-static bool custom_gcode_sets_temperature(
-    const std::string& gcode, const int mcode_set_temp_dont_wait, const int mcode_set_temp_and_wait, const bool include_g10, int& temp_out)
+static bool custom_gcode_sets_temperature(const std::string& gcode,
+                                          const int          mcode_set_temp_dont_wait,
+                                          const int          mcode_set_temp_and_wait,
+                                          const bool         include_g10,
+                                          double&            temp_out)
 {
     temp_out = -1;
     if (gcode.empty())
@@ -3939,16 +3942,15 @@ static bool custom_gcode_sets_temperature(
                     // Skip whitespaces.
                     for (; *ptr == ' ' || *ptr == '\t'; ++ptr)
                         ;
-                    if (*ptr == 'S') {
+                    if (*ptr == 'S' || (*ptr == 'R' && mgcode == 190)) {
                         // Skip whitespaces.
                         for (++ptr; *ptr == ' ' || *ptr == '\t'; ++ptr)
                             ;
-                        // Parse an int.
-                        endptr           = nullptr;
-                        long temp_parsed = strtol(ptr, &endptr, 10);
+                        endptr                   = nullptr;
+                        const double temp_parsed = strtod(ptr, &endptr);
                         if (endptr > ptr) {
                             ptr      = endptr;
-                            temp_out = temp_parsed;
+                            temp_out = std::isfinite(temp_parsed) && temp_parsed >= 0 ? temp_parsed : -1;
                             // Let the caller know that the custom G-code sets the temperature
                             // Only do this after successfully parsing temperature since G10
                             // can be used for other reasons
@@ -4032,39 +4034,78 @@ int GCode::get_bed_temperature(const int extruder_id, const bool is_first_layer,
     return bed_temp_opt->get_at(extruder_id);
 }
 
-// BBS
-// Max bed temperature over all used extruders (object/support/wipe tower/brim-introduced extruders),
-// so a compatible mixed print (e.g. PLA 65C + TPU 35C) always runs the highest bed temperature.
+std::vector<unsigned int> GCode::first_layer_extruders(const Print& print)
+{
+    std::vector<unsigned int> extruders;
+    auto collect = [&extruders](const ToolOrdering& ordering) {
+        for (const LayerTools& layer : ordering)
+            if (!layer.extruders.empty()) {
+                append(extruders, layer.extruders);
+                break;
+            }
+    };
+    if (print.config().print_sequence == PrintSequence::ByObject) {
+        ToolOrdering ordering;
+        const PrintObject* previous = nullptr;
+        unsigned int final_extruder = unsigned(-1);
+        bool has_wipe_tower = false;
+        // Match the export loop: current-tool raft/support inherits the previous tool,
+        // including the first object's reordering from its initial final extruder.
+        for (const PrintInstance* instance : sort_object_instances_by_model_order(print)) {
+            const PrintObject& object = *instance->print_object;
+            if (previous == nullptr) {
+                ordering = ToolOrdering(object, unsigned(-1));
+                if (ordering.first_extruder() == unsigned(-1))
+                    continue;
+                final_extruder = ordering.last_extruder();
+                has_wipe_tower = print.has_wipe_tower() && ordering.has_wipe_tower();
+                previous = &object;
+            }
+            if (!has_wipe_tower && (&object != previous || ordering.first_extruder() != final_extruder)) {
+                ordering = ToolOrdering(object, final_extruder);
+                if (ordering.first_extruder() == unsigned(-1))
+                    continue;
+                final_extruder = ordering.last_extruder();
+            }
+            collect(ordering);
+            previous = &object;
+        }
+    } else {
+        collect(print.tool_ordering());
+    }
+
+    // Brim owners may be absent from the first layer's object/support paths.
+    for (const auto& [object_id, extruder] : getObjectExtruderMap(print)) {
+        const auto brim = print.m_brimMap.find(object_id);
+        if (brim != print.m_brimMap.end() && !brim->second.empty() && extruder > 0)
+            extruders.emplace_back(extruder - 1);
+    }
+    sort_remove_duplicates(extruders);
+    if (extruders.empty())
+        extruders = print.extruders();
+    return extruders;
+}
+
+// Keep the first-layer filament set for later layers too: an upper interface does not touch the bed.
 // A value of 0 means the filament does not support the current bed type, and is naturally skipped by max().
 int GCode::get_bed_temperature_max(const Print& print, const bool is_first_layer) const
 {
     int max_bed_temp = 0;
-    for (const unsigned int extruder_id : print.extruders())
+    for (const unsigned int extruder_id : m_bed_temperature_extruders)
         max_bed_temp = std::max(
             max_bed_temp, get_bed_temperature(extruder_id, is_first_layer, print.config().curr_bed_type));
     return max_bed_temp;
 }
 
-// Write 1st layer bed temperatures into the G-code.
-// Only do that if the start G-code does not already contain any M-code controlling an extruder temperature.
-// M140 - Set Extruder Temperature
-// M190 - Set Extruder Temperature and Wait
+// Let custom M140/M190 commands control first-layer bed temperature when present.
 void GCode::_print_first_layer_bed_temperature(
     GCodeOutputStream& file, Print& print, const std::string& gcode, bool wait)
 {
-    // BBS: bed temperature accommodates the highest-temperature filament of the print
-    // (max over all used extruders instead of the first printing extruder only).
-    int bed_temp = get_bed_temperature_max(print, true);
-
-    // Is the bed temperature set by the provided custom G-code?
-    int  temp_by_gcode     = -1;
-    bool temp_set_by_gcode = custom_gcode_sets_temperature(gcode, 140, 190, false, temp_by_gcode);
-
-    // Always call m_writer.set_bed_temperature() so it will set the internal "current" state of the bed temp as if
-    // the custom start G-code emited these.
-    std::string set_temp_gcode = m_writer.set_bed_temperature(bed_temp, wait);
-    if (!temp_set_by_gcode)
-        file.write(set_temp_gcode);
+    double temp_by_gcode = -1;
+    if (custom_gcode_sets_temperature(gcode, 140, 190, false, temp_by_gcode))
+        m_writer.record_custom_bed_temperature(temp_by_gcode);
+    else
+        file.write(m_writer.set_bed_temperature(get_bed_temperature_max(print, true), wait));
 }
 
 // Write 1st layer extruder temperatures into the G-code.
@@ -4076,13 +4117,13 @@ void GCode::_print_first_layer_extruder_temperatures(
     GCodeOutputStream& file, Print& print, const std::string& gcode, unsigned int first_printing_extruder_id, bool wait)
 {
     // Is the bed temperature set by the provided custom G-code?
-    int  temp_by_gcode = -1;
-    bool include_g10   = print.config().gcode_flavor == gcfRepRapFirmware;
+    double temp_by_gcode = -1;
+    bool   include_g10   = print.config().gcode_flavor == gcfRepRapFirmware;
     if (custom_gcode_sets_temperature(gcode, 104, 109, include_g10, temp_by_gcode)) {
         // Set the extruder temperature at m_writer, but throw away the generated G-code as it will be written with the custom G-code.
         int temp = get_value_at(print.config(), print.config().nozzle_temperature_initial_layer, ConfigFlowDomain::Filament, first_printing_extruder_id);
         if (temp_by_gcode >= 0 && temp_by_gcode < 1000)
-            temp = temp_by_gcode;
+            temp = static_cast<int>(temp_by_gcode);
         m_writer.set_temperature(temp, wait, first_printing_extruder_id);
     } else {
         // Custom G-code does not set the extruder temperature. Do it now.
@@ -5486,8 +5527,7 @@ LayerResult GCode::process_layer(const Print& print,
                 gcode += m_writer.set_temperature(temperature, false, extruder.id());
         }
 
-        // BBS: bed temperature accommodates the highest-temperature filament of the print
-        // (max over all used extruders instead of the first extruder of this layer only).
+        // Use regular-layer temperatures of the same tools that printed the first layer.
         int bed_temp = get_bed_temperature_max(print, false);
         gcode += m_writer.set_bed_temperature(bed_temp);
         // Mark the temperature transition from 1st to 2nd layer to be finished.

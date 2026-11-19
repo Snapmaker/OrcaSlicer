@@ -654,8 +654,9 @@ private:
     std::set<unsigned int>                  m_initial_layer_extruders;
     // BBS
     int get_bed_temperature(const int extruder_id, const bool is_first_layer, const BedType bed_type) const;
-    // BBS: max bed temperature over all used extruders, so that the bed temperature always
-    // accommodates the highest-temperature filament of a compatible mixed print (e.g. PLA + TPU).
+    // Bed temperature uses actual first-layer tools, including generated brims.
+    std::vector<unsigned int> m_bed_temperature_extruders;
+    static std::vector<unsigned int> first_layer_extruders(const Print& print);
     int get_bed_temperature_max(const Print& print, const bool is_first_layer) const;
 
     std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);

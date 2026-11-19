@@ -143,6 +143,12 @@ std::string GCodeWriter::set_temperature(unsigned int temperature, bool wait, in
     return set_temperature(temperature, this->config.gcode_flavor, wait, tool);
 }
 
+void GCodeWriter::record_custom_bed_temperature(double temperature)
+{
+    m_last_bed_temperature         = temperature;
+    m_last_bed_temperature_reached = false;
+}
+
 // BBS
 std::string GCodeWriter::set_bed_temperature(int temperature, bool wait)
 {

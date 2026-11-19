@@ -1,0 +1,187 @@
+/*
+ * Release note rendering styles for the update dialog.
+ *
+ * Typography tokens follow OrcaSlicer's web UI (resources/web/guide/css/common.css):
+ * system-ui font stack, 14px base, #262E30 text and #009688 accent. Heading sizes are
+ * kept compact because the dialog content area is only 560px wide.
+ *
+ * The table rules are required by Feishu-exported markdown: GFM tables are split into
+ * plain <table>s by markdown-it and their merged cells are rebuilt by fixFeishuMerges()
+ * in releasenote.html. Do not switch the table to a fixed layout or to flex/grid.
+ */
+body {
+    margin: 0;
+    padding: 10px 12px 12px;
+    color: #262E30;
+    background-color: #F8F8F8;
+    font-family: system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, "Fira Sans", "Droid Sans",
+                 "Helvetica Neue", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+/* The dialog palette is fixed light regardless of OS theme. Declaring it here
+   stops WebView2's dark PreferredColorScheme (WebView.cpp SetUserAgent "dark")
+   from auto-darkening the page, which mutates declared colors and text
+   decorations such as strikethrough lines. */
+:root {
+    color-scheme: light;
+}
+
+#contents > :first-child {
+    margin-top: 0;
+}
+
+#contents > :last-child {
+    margin-bottom: 0;
+}
+
+#contents h1,
+#contents h2,
+#contents h3,
+#contents h4,
+#contents h5,
+#contents h6 {
+    margin: 18px 0 8px;
+    color: #262E30;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+#contents h1 { font-size: 24px; }
+#contents h2 { font-size: 20px; }
+#contents h3 { font-size: 16px; }
+#contents h4 { font-size: 14px; }
+#contents h5,
+#contents h6 { font-size: 14px; color: #555; }
+
+#contents p {
+    margin: 0 0 8px;
+}
+
+#contents ul,
+#contents ol {
+    margin: 0 0 8px;
+    padding-left: 22px;
+}
+
+#contents li {
+    margin: 2px 0;
+}
+
+#contents li > p {
+    margin-bottom: 4px;
+}
+
+#contents a {
+    color: #009688;
+    text-decoration: none;
+}
+
+#contents a:hover {
+    text-decoration: underline;
+}
+
+/* Strikethrough: the bundled markdown-it renders "~~x~~" as <s>; spell out the
+   decoration so no WebView2 dark-mode strategy can drop the line. */
+#contents s,
+#contents del {
+    text-decoration: line-through;
+}
+
+#contents img {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 8px auto;
+}
+
+#contents hr {
+    margin: 12px 0;
+    border: 0;
+    border-top: 1px solid #D9DBDC;
+}
+
+#contents blockquote {
+    margin: 8px 0;
+    padding: 6px 12px;
+    color: #555;
+    background: #F2F4F5;
+    border-left: 3px solid #D9DBDC;
+}
+
+#contents code {
+    padding: 1px 4px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 12px;
+    background: #F2F4F5;
+    border-radius: 3px;
+}
+
+#contents pre {
+    margin: 8px 0;
+    padding: 10px;
+    overflow: auto;
+    background: #F2F4F5;
+    border: 1px solid #D9DBDC;
+    border-radius: 4px;
+}
+
+#contents pre code {
+    padding: 0;
+    font-size: 12px;
+    background: transparent;
+    border-radius: 0;
+}
+
+/* Feishu-exported tables: GFM has no merged cells, so fixFeishuMerges() rebuilds the
+   rowSpans after rendering. Cells must keep border-collapse and wrapping so long
+   parameter descriptions stay inside the 560px dialog. */
+#contents table {
+    max-width: 100%;
+    margin: 8px auto;
+    border-collapse: collapse;
+}
+
+#contents th,
+#contents td {
+    padding: 5px 10px;
+    text-align: center;
+    vertical-align: middle;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    border: 1px solid #D9DBDC;
+}
+
+#contents th {
+    background: #F2F4F5;
+    font-weight: 600;
+}
+
+/* GFM task lists (plugin registered in releasenote.html): hide the bullet on
+   checkbox items and align the control with the first text line. */
+#contents li.task-list-item {
+    list-style-type: none;
+}
+
+/* Completed todos read as done, matching Feishu: struck-through, dimmed text.
+   text-decoration does not paint on the checkbox (replaced element). */
+#contents li.task-done {
+    color: #555555;
+    text-decoration: line-through;
+}
+
+#contents li.task-list-item input[type="checkbox"] {
+    margin: 0 6px 0 -16px;
+    vertical-align: middle;
+}
+
+/* Placeholder swapped in by fixFeishuSheetPlaceholder() where a Feishu-embedded
+   sheet could not be exported; authors must replace it with a native table. */
+#contents blockquote.unsupported-block {
+    background: #FDECEA;
+    border-left: 3px solid #E53935;
+    color: #B71C1C;
+}

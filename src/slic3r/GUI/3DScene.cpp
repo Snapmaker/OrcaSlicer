@@ -743,9 +743,9 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                 }
             }
             if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
-                m.render();
+                m.render(shader);
             else
-                m.render(this->tverts_range);
+                m.render(this->tverts_range, shader);
         }
     } else {
         // Select LOD model based on current LOD level
@@ -760,7 +760,7 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                 const ColorRGBA previousColor = m_modelSmall->get_color();
                 m_modelSmall->set_color(picking ? model.get_color() : render_color);
                 //m_modelSmall->set_color(ColorRGBA::GREEN());
-                m_modelSmall->render();
+                m_modelSmall->render(shader);
                 if (picking)
                     m_modelSmall->set_color(previousColor);
             } else if (m_curLodLevel == LODLevel::Middle && m_modelMiddle && !m_modelMiddle->is_render_disabled() && m_modelMiddle->is_initialized()) {
@@ -769,12 +769,12 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                 const ColorRGBA previousColor = m_modelMiddle->get_color();
                 m_modelMiddle->set_color(picking ? model.get_color() : render_color);
                 //m_modelMiddle->set_color(ColorRGBA::BLUE());
-                m_modelMiddle->render();
+                m_modelMiddle->render(shader);
                 if (picking)
                     m_modelMiddle->set_color(previousColor);
             } else if (picking && color_volume) {
                 // Painted volume: the main pass never uploads the full mesh, so reuse its segment models.
-                RenderMmuSegmentsForPicking();
+                RenderMmuSegmentsForPicking(shader);
             } else {
                 if (lodRenderLogCounter % 180 == 0) {
                     BOOST_LOG_TRIVIAL(debug) << "LOD: HIGH fallback '" << name
@@ -785,9 +785,9 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
                 // model.set_color() already called in render loop line 1301
                 //model.set_color(ColorRGBA::RED());
                 if (tverts_range == std::make_pair<size_t, size_t>(0, -1))
-                    model.render();
+                    model.render(shader);
                 else
-                    model.render(this->tverts_range);
+                    model.render(this->tverts_range, shader);
             }
         }
     }
@@ -795,7 +795,7 @@ void GLVolume::simple_render(GLShaderProgram*        shader,
         glFrontFace(GL_CCW);
 }
 
-void GLVolume::RenderMmuSegmentsForPicking()
+void GLVolume::RenderMmuSegmentsForPicking(GLShaderProgram* shader)
 {
     const ColorRGBA pickingColor = model.get_color();
     const bool fullRange = tverts_range == std::make_pair<size_t, size_t>(0, -1);
@@ -807,9 +807,9 @@ void GLVolume::RenderMmuSegmentsForPicking()
         const ColorRGBA previousColor = segmentModel.get_color();
         segmentModel.set_color(pickingColor);
         if (fullRange)
-            segmentModel.render();
+            segmentModel.render(shader);
         else
-            segmentModel.render(tverts_range);
+            segmentModel.render(tverts_range, shader);
         segmentModel.set_color(previousColor);
     }
 }

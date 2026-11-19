@@ -2472,6 +2472,10 @@ std::map<std::string, std::vector<Preset const *>> PresetCollection::get_filamen
 void PresetCollection::save_current_preset(const std::string &new_name, bool detach, bool save_to_project, Preset* _curr_preset, const Preset* _current_printer)
 {
     Preset curr_preset = _curr_preset ? *_curr_preset : m_edited_preset;
+    // Whether the source preset is a project embedded one
+    const bool curr_is_project_embedded = curr_preset.is_project_embedded;
+    // Old file path if the preset is relocated
+    std::string relocated_old_file;
     //BBS: add lock logic for sync preset in background
     std::string final_inherits;
     lock();
@@ -2493,6 +2497,9 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
         preset.config = std::move(curr_preset.config);
         // The newly saved preset will be activated -> make it visible.
         preset.is_visible = true;
+        // Drop the inherits link carried over from a project embedded preset
+        if (!save_to_project && curr_is_project_embedded && preset.is_user())
+            preset.inherits().clear();
         //TODO: remove the detach logic
         if (detach) {
             // Clear the link to the parent profile.
@@ -2502,6 +2509,15 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
 			preset.renamed_from.clear();
             preset.m_excluded_from.clear();
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach")%new_name;
+        }
+        // Re-evaluate the storage location: root presets belong to the "base" folder
+        if (preset.is_user()) {
+            std::string new_file = this->path_for_preset(preset);
+            if (new_file != preset.file) {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": preset %1% relocated %2% -> %3%")%new_name%preset.file%new_file;
+                relocated_old_file = preset.file;
+                preset.file        = new_file;
+            }
         }
         //BBS: add lock logic for sync preset in background
 
@@ -2530,7 +2546,7 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
         preset.renamed_from.clear();
         preset.m_excluded_from.clear();
         preset.setting_id.clear();
-        if (detach) {
+        if (detach || (!save_to_project && curr_is_project_embedded)) {
         	// Clear the link to the parent profile.
         	inherits.clear();
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": save preset %1% , with detach")%new_name;
@@ -2548,17 +2564,12 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
         preset.is_default  = false;
         preset.is_system   = false;
         preset.is_external = false;
+        preset.is_project_embedded = save_to_project;
         preset.file        = this->path_for_preset(preset);
         // The newly saved preset will be activated -> make it visible.
         preset.is_visible  = true;
         // Just system presets have aliases
         preset.alias.clear();
-        //BBS: add project embedded preset logic
-        if (save_to_project) {
-            preset.is_project_embedded = true;
-        }
-        else
-            preset.is_project_embedded = false;
         if (m_type == Preset::TYPE_PRINT)
             preset.config.option<ConfigOptionString>("print_settings_id", true)->value = new_name;
         else if (m_type == Preset::TYPE_FILAMENT)
@@ -2585,6 +2596,15 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
         this->get_selected_preset().save(&(parent_preset->config));
     else
         this->get_selected_preset().save(nullptr);
+    // Remove the old files only after the new location is written
+    if (!relocated_old_file.empty()) {
+        if (boost::nowide::remove(relocated_old_file.c_str()) != 0)
+            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": failed to remove old preset file %1%") % relocated_old_file;
+        fs::path old_idx_file(relocated_old_file);
+        old_idx_file.replace_extension(".info");
+        if (fs::exists(old_idx_file))
+            boost::nowide::remove(old_idx_file.string().c_str());
+    }
 }
 
 bool PresetCollection::delete_current_preset()

@@ -823,7 +823,7 @@ void GLModel::render_instanced(unsigned int instances_vbo, unsigned int instance
     if (instances_vbo == 0 || instances_count == 0)
         return;
 
-    GLShaderProgram* shader = wxGetApp().get_current_shader();
+    GLShaderProgram* shader = wxTheApp != nullptr ? wxGetApp().get_current_shader() : nullptr;
     if (shader == nullptr || !boost::algorithm::iends_with(shader->get_name(), "_instanced"))
         return;
 

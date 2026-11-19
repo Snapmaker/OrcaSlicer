@@ -1,6 +1,8 @@
 #include "PrivacyUpdateDialog.hpp"
 #include "GUI_App.hpp"
+#include "slic3r/Utils/Http.hpp"
 #include "BitmapCache.hpp"
+#include <boost/log/trivial.hpp>
 #include <wx/dcgraph.h>
 #include <slic3r/GUI/I18N.hpp>
 
@@ -9,27 +11,6 @@ namespace Slic3r { namespace GUI {
 
 wxDEFINE_EVENT(EVT_PRIVACY_UPDATE_CONFIRM, wxCommandEvent);
 wxDEFINE_EVENT(EVT_PRIVACY_UPDATE_CANCEL, wxCommandEvent);
-
-static std::string url_encode(const std::string& value) {
-	std::ostringstream escaped;
-	escaped.fill('0');
-	escaped << std::hex;
-	for (std::string::const_iterator i = value.begin(), n = value.end(); i != n; ++i) {
-		std::string::value_type c = (*i);
-
-		// Keep alphanumeric and other accepted characters intact
-		if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-			escaped << c;
-			continue;
-		}
-
-		// Any other characters are percent-encoded
-		escaped << std::uppercase;
-		escaped << '%' << std::setw(2) << int((unsigned char)c);
-		escaped << std::nouppercase;
-	}
-	return escaped.str();
-}
 
 PrivacyUpdateDialog::PrivacyUpdateDialog(wxWindow* parent, wxWindowID id, const wxString& title, enum ButtonStyle btn_style, const wxPoint& pos, const wxSize& size, long style)
     :DPIDialog(parent, id, title, pos, size, style)
@@ -57,6 +38,12 @@ PrivacyUpdateDialog::PrivacyUpdateDialog(wxWindow* parent, wxWindowID id, const 
     m_vebview_release_note->SetSize(wxSize(FromDIP(540), FromDIP(340)));
     m_vebview_release_note->SetMinSize(wxSize(FromDIP(540), FromDIP(340)));
 
+    // NOTE (dormant dialog): this dialog is never instantiated yet. Before
+    // re-enabling it, mirror UpdateVersionDialog: build the shell URL with
+    // wxFileSystem::FileNameToURL (the manual "file:///" concatenation below
+    // breaks on macOS and on paths with spaces) and port the NAVIGATING gate
+    // from UpdateVersionDialog::is_shell_page_url before binding
+    // wxEVT_WEBVIEW_NAVIGATING again.
     fs::path ph(resources_dir());
     ph /= "tooltip/privacyupdate.html";
     m_host_url = ph.string();
@@ -83,6 +70,10 @@ PrivacyUpdateDialog::PrivacyUpdateDialog(wxWindow* parent, wxWindowID id, const 
          e.Skip();
     });
 
+    // Dormant: do NOT re-enable OnNavigating as-is: it lacks the about:blank
+    // allowance and the file-scheme + file-name gate implemented by
+    // UpdateVersionDialog::is_shell_page_url(); re-binding it as-is would veto
+    // the first navigation and strand the shell page.
     //m_vebview_release_note->Bind(wxEVT_WEBVIEW_NAVIGATING , &PrivacyUpdateDialog::OnNavigating, this);
 
     m_button_ok = new Button(this, _L("Accept"));
@@ -159,7 +150,12 @@ void PrivacyUpdateDialog::OnNavigating(wxWebViewEvent& event)
 
 bool PrivacyUpdateDialog::ShowReleaseNote(std::string content)
 {
-	auto script = "window.showMarkdown('" + url_encode(content) + "', true);";
+	// Http::url_encode escapes quotes and other URL-unsafe characters so the
+	// content cannot terminate the JS string literal. Its fail-open path (curl
+	// cannot initialise, returns the input unchanged) is a pathological case
+	// and does not skip the injection.
+	const std::string encoded = Http::url_encode(content);
+	auto script = "window.showMarkdown('" + encoded + "', true);";
     RunScript(script);
     return true;
 }

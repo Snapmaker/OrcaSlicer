@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
 
@@ -60,7 +60,8 @@ enum class CleanupResult
 {
     InstallationChanged,
     LockBusy,
-    LockUnavailable
+    LockUnavailable,
+    CommandFailed
 };
 
 /**

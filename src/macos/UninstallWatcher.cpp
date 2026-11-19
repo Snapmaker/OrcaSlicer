@@ -1,9 +1,10 @@
-// User-level helper. Launchd keeps a single job alive outside the .app so a
+﻿// User-level helper. Launchd keeps a single job alive outside the .app so a
 // drag-to-Trash still has something that can ask whether to delete leftovers.
 // It does not relaunch Snapmaker Orca, and it does not need an administrator password.
 
-#include "macos/UninstallWatcherLock.hpp"
+#include "macos/UninstallWatcherCommand.hpp"
 #include "macos/UninstallWatcherLifecycle.hpp"
+#include "macos/UninstallWatcherLock.hpp"
 #include "macos/UninstallWatcherState.hpp"
 
 #include <algorithm>
@@ -17,7 +18,6 @@
 #include <fstream>
 #include <iterator>
 #include <optional>
-#include <spawn.h>
 #include <string>
 #include <thread>
 #include <vector>
@@ -26,11 +26,8 @@
 #include <fnmatch.h>
 #include <signal.h>
 #include <sys/event.h>
-#include <sys/wait.h>
 #include <syslog.h>
 #include <unistd.h>
-
-extern char** environ;
 
 namespace {
 
@@ -47,81 +44,12 @@ void terminate_running_child(int)
     _exit(0);
 }
 
-struct CommandResult {
-    int         exit_code = -1;
-    std::string output;
-};
+using SnapmakerUninstall::CommandResult;
 
-CommandResult run_command(const std::vector<std::string>& args, bool capture)
+/** @brief Runs watcher commands while keeping SIGTERM aware of the currently owned child. */
+CommandResult run_command(const std::vector<std::string>& args, bool capture, bool interactive = false)
 {
-    CommandResult result;
-    if (args.empty())
-        return result;
-
-    int pipefd[2] = {-1, -1};
-    if (capture && pipe(pipefd) != 0)
-        return result;
-
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    if (capture) {
-        posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDOUT_FILENO);
-        posix_spawn_file_actions_adddup2(&actions, pipefd[1], STDERR_FILENO);
-        posix_spawn_file_actions_addclose(&actions, pipefd[0]);
-        posix_spawn_file_actions_addclose(&actions, pipefd[1]);
-    } else {
-        posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
-        posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
-    }
-
-    std::vector<char*> argv;
-    argv.reserve(args.size() + 1);
-    for (const auto& arg : args)
-        argv.push_back(const_cast<char*>(arg.c_str()));
-    argv.push_back(nullptr);
-
-    pid_t    pid = 0;
-    sigset_t blocked;
-    sigset_t previous;
-    sigemptyset(&blocked);
-    sigaddset(&blocked, SIGTERM);
-    ::sigprocmask(SIG_BLOCK, &blocked, &previous);
-
-    posix_spawnattr_t attr;
-    posix_spawnattr_init(&attr);
-    posix_spawnattr_setsigmask(&attr, &previous);
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETSIGMASK);
-
-    const int rc = posix_spawn(&pid, argv[0], &actions, &attr, argv.data(), environ);
-    posix_spawnattr_destroy(&attr);
-    posix_spawn_file_actions_destroy(&actions);
-    if (rc == 0)
-        g_running_child = static_cast<sig_atomic_t>(pid);
-    ::sigprocmask(SIG_SETMASK, &previous, nullptr);
-
-    if (capture)
-        close(pipefd[1]);
-    if (rc != 0) {
-        if (capture)
-            close(pipefd[0]);
-        return result;
-    }
-
-    if (capture) {
-        char buf[512];
-        ssize_t n = 0;
-        while ((n = read(pipefd[0], buf, sizeof(buf))) > 0)
-            result.output.append(buf, buf + n);
-        close(pipefd[0]);
-    }
-
-    int         status = 0;
-    const pid_t waited = waitpid(pid, &status, 0);
-    g_running_child    = 0;
-    if (waited < 0)
-        return result;
-    result.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-    return result;
+    return SnapmakerUninstall::run_watcher_command(args, capture, g_running_child, interactive);
 }
 
 void log_line(const std::string& message)
@@ -409,7 +337,7 @@ Choice ask_user()
         "return \"keep\"\n";
     const char* script = prompt_in_chinese() ? script_zh : script_en;
 
-    const auto result = run_command({"/usr/bin/osascript", "-e", script}, true);
+    const auto result = run_command({"/usr/bin/osascript", "-e", script}, true, true);
     const auto end    = result.output.find_last_not_of("\r\n");
     if (result.exit_code == 0 && end != std::string::npos) {
         const auto separator = result.output.find_last_of("\r\n", end);
@@ -482,30 +410,36 @@ void remove_http_cookie_files()
         log_line("failed to enumerate HTTP storage " + dir.string() + ": " + ec.message());
 }
 
-void remove_preferences_plist()
+/** @brief Removes preferences after flushing the domain; a timeout stops this cleanup attempt. */
+bool remove_preferences_plist()
 {
     namespace fs = std::filesystem;
     const auto path = SnapmakerUninstall::preferences_plist_path();
     if (path.empty())
-        return;
+        return true;
 
     // Flush the domain through cfprefsd first: on older systems an unlink
     // alone lets cfprefsd write its cached values back into the file. A
     // missing domain exits non-zero, which is expected; the file itself is
     // still removed below.
-    run_command({"/usr/bin/defaults", "delete", SnapmakerUninstall::kBundleId}, false);
+    const CommandResult flushed = run_command({"/usr/bin/defaults", "delete", SnapmakerUninstall::kBundleId}, false);
+    if (flushed.timed_out || flushed.exit_code < 0)
+    {
+        return false;
+    }
 
     std::error_code ec;
     const auto status = fs::symlink_status(path, ec);
     if (status.type() == fs::file_type::not_found && (!ec || ec == std::errc::no_such_file_or_directory))
-        return;
+        return true;
     if (ec || !fs::is_regular_file(status) || !SnapmakerUninstall::is_unredirected_user_path(path)) {
         log_line("could not safely remove preferences file " + path.string());
-        return;
+        return true;
     }
 
     if (::unlink(path.c_str()) != 0)
         log_line("failed to remove preferences file " + path.string() + ": " + std::strerror(errno));
+    return true;
 }
 
 // Removes the watcher's own files: the copy of the binary, watch.json and the log.
@@ -568,6 +502,22 @@ bool confirmed_installation_missing(const WatchState& expected)
            bundle_missing(expected.bundle);
 }
 
+/** @brief Restores normal watcher termination if a cleanup attempt returns for a retry. */
+struct CleanupSignalGuard
+{
+    using Handler    = void (*)(int);
+    Handler previous = std::signal(SIGTERM, SIG_IGN);
+
+    /** @brief Restores the previous handler before releasing the lifecycle lock. */
+    ~CleanupSignalGuard()
+    {
+        if (previous != SIG_ERR)
+        {
+            std::signal(SIGTERM, previous);
+        }
+    }
+};
+
 /**
  * @brief Attempts cleanup under the lifecycle lock; returns a reason to retry or resume watching.
  * @param expected Installation state observed before showing the uninstall dialog.
@@ -593,16 +543,23 @@ SnapmakerUninstall::CleanupResult try_finish(const WatchState& expected, bool de
         return SnapmakerUninstall::CleanupResult::InstallationChanged;
     }
 
-    std::signal(SIGTERM, SIG_IGN); // bootout delivers SIGTERM; ignore it so cleanup can finish
-    run_command({"/bin/launchctl", "disable", gui_domain() + "/" + SnapmakerUninstall::kLabel}, false);
+    const CleanupSignalGuard signals; // bootout delivers SIGTERM; ignore it so cleanup can finish
+    if (run_command({"/bin/launchctl", "disable", gui_domain() + "/" + SnapmakerUninstall::kLabel}, false).exit_code !=
+        0)
+    {
+        return SnapmakerUninstall::CleanupResult::CommandFailed;
+    }
 
     if (delete_user_data) {
         log_line("removing Snapmaker Orca user data: Application Support, WebKit, caches, HTTP storage, preferences, saved state");
+        if (!remove_preferences_plist())
+        {
+            return SnapmakerUninstall::CleanupResult::CommandFailed;
+        }
         remove_user_data_dir(SnapmakerUninstall::webkit_data_dir());
         remove_user_data_dir(SnapmakerUninstall::caches_dir());
         remove_user_data_dir(SnapmakerUninstall::http_storages_dir());
         remove_http_cookie_files();
-        remove_preferences_plist();
         remove_user_data_dir(SnapmakerUninstall::saved_state_dir());
     }
 
@@ -647,9 +604,11 @@ void finish(const WatchState& expected, bool delete_user_data)
             }
             if (!reported_failure.has_value() || *reported_failure != result)
             {
-                log_line(result == SnapmakerUninstall::CleanupResult::LockBusy
-                             ? "lifecycle lock is busy; retaining confirmation and retrying cleanup"
-                             : "lifecycle lock is unavailable; retaining confirmation and retrying cleanup");
+                log_line(result == SnapmakerUninstall::CleanupResult::CommandFailed ?
+                             "cleanup command failed; retaining confirmation and retrying cleanup" :
+                         result == SnapmakerUninstall::CleanupResult::LockBusy ?
+                             "lifecycle lock is busy; retaining confirmation and retrying cleanup" :
+                             "lifecycle lock is unavailable; retaining confirmation and retrying cleanup");
                 reported_failure = result;
             }
             std::this_thread::sleep_for(std::chrono::seconds(2));

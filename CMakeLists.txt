@@ -983,7 +983,9 @@ if(BUILD_TESTS)
     if(NOT TARGET tests)
         add_custom_target(tests)
     endif()
-    foreach(_t IN ITEMS libnest2d_tests libslic3r_tests slic3rutils_tests fff_print_tests sla_print_tests)
+    foreach(_t IN ITEMS libnest2d_tests libslic3r_tests slic3rutils_tests fff_print_tests sla_print_tests
+                        uninstall_watcher_lifecycle_tests uninstall_watcher_lifecycle_policy_tests
+                        uninstall_watcher_command_tests)
         if(TARGET ${_t})
             add_dependencies(tests ${_t})
         endif()

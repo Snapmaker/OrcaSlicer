@@ -3,9 +3,16 @@ project(GLEW)
 
 find_package(OpenGL REQUIRED)
 
-if(OpenGL_EGL_FOUND)
-    message(STATUS "building GLEW for EGL (hope that wxWidgets agrees, otherwise you won't have any output!)")
+# GLEW has to load its functions through the same backend wxWidgets creates the GL context with
+# (deps/wxWidgets builds wxGLCanvas for GLX, see wxUSE_GLCANVAS_EGL there): the app forces
+# GDK_BACKEND=x11, and NVIDIA's EGL cannot present on the X11 windows of wxGLCanvasEGL.
+option(GLEW_USE_EGL "Load OpenGL functions through EGL instead of GLX" OFF)
+
+if(GLEW_USE_EGL)
+    message(STATUS "building GLEW for EGL (wxWidgets must be built with wxUSE_GLCANVAS_EGL=ON)")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DGLEW_EGL")
+else()
+    message(STATUS "building GLEW for GLX")
 endif()
 
 add_library(GLEW src/glew.c)

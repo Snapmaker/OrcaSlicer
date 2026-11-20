@@ -39,6 +39,10 @@ Snapmaker_Orca_add_cmake_project(
         -DwxUSE_UNICODE=ON
         ${_wx_private_font}
         -DwxUSE_OPENGL=ON
+        # GLX, not EGL. wxGLCanvasEGL takes the first eglChooseConfig() match without checking it against
+        # the X visual of its GTK window; NVIDIA's EGL then refuses the window surface (EGL_BAD_CONFIG)
+        # and the 3D canvas stays blank without any error. Keep deps/GLEW on GLX too.
+        -DwxUSE_GLCANVAS_EGL=OFF
         -DwxUSE_WEBREQUEST=ON
         -DwxUSE_WEBVIEW=ON
         ${_wx_edge}

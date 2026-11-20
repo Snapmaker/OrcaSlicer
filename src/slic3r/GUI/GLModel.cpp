@@ -597,6 +597,14 @@ void GLModel::reset()
     ClearRenderData();
 }
 
+void GLModel::ForgetContext()
+{
+    m_render_data.vao_id = 0;
+    m_render_data.vbo_id = 0;
+    m_render_data.ibo_id = 0;
+    ClearRenderData();
+}
+
 void GLModel::DetachGpuBuffers(std::vector<unsigned int>& bufferIds)
 {
     if (m_render_data.vbo_id != 0)

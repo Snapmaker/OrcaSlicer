@@ -746,6 +746,7 @@ private:
     Selection::IndicesList m_selectionHighlightVolumeIndices;
     bool                   m_sceneCacheValid{false};
     bool                   m_sceneCacheHasAO{false};
+    bool                   m_sceneCacheSoftShadowsVisible{false};
     // AO settings and the shared camera may change while this canvas is hidden.
     Matrix4d    m_sceneCacheViewMatrix{Matrix4d::Identity()};
     Matrix4d    m_sceneCacheProjectionMatrix{Matrix4d::Identity()};
@@ -1417,6 +1418,9 @@ private:
     /** @brief Updates the soft shadow cache, or releases it when soft shadows are turned off. */
     void UpdateSoftShadows(bool shadowsVisible);
 
+    /** @brief Discards the shadow renderer, deleting GL resources only with its context current. */
+    void ReleaseSoftShadows(bool contextCurrent);
+
     void _switch_toolbars_icon_filename();
     bool _init_toolbars();
     bool _init_main_toolbar();
@@ -1465,13 +1469,28 @@ private:
     bool CaptureSceneCache();
     /** @brief Copies cached color and depth into the window framebuffer. */
     bool PresentSceneCache();
-    /** @brief Draws the cacheable View3D scene content directly into the current window framebuffer. */
-    void RenderMainSceneContent(const Camera& camera, const MainSceneRenderParams& params);
-    /**
-     * @brief Shows the hovered plate icon tooltip outside of the cached scene.
-     * @param params Scene params of the current frame.
-     * @param oldPlateHoverId Plate hover id of the previous frame.
-     */
+    /** @brief Selects one AO request/frame-target configuration before cache and drawing decisions. */
+    struct AOFramePlan
+    {
+        AO::AOExecutionRequest request;
+        AO::AOSettings         settings;
+        bool                   owned_target{false};
+        bool                   strict_target{false};
+        bool                   sample_capture{false};
+        // Borrowed GL targets/projection snapshot filled by the canvas while the context is current.
+        AO::AOFrameInput input;
+        // Diagnostic tags (static literal from the canvas; not part of the frame input).
+        const char* scene_view{"external"};
+        float       explosion_ratio{1.0f};
+    };
+    AOFramePlan BuildAOFramePlan(const Camera& camera);
+#if ORCA_RENDER_DIAGNOSTICS
+    /** @brief Stops any AO experiment/capture and schedules one more frame. */
+    void finish_ao_diagnostics(const std::string& reason);
+#endif
+    /** @brief Draws preparation/assembly opaque content in the selected target. */
+    bool RenderMainSceneContent(const Camera& camera, const MainSceneRenderParams& params, const AOFramePlan& plan);
+    /** @brief Shows the hovered plate icon tooltip outside of the cached scene. */
     void RenderPlateIconTooltip(const MainSceneRenderParams& params, int oldPlateHoverId);
     /** @brief Draws the selection box after scene presentation with explicit depth and blend state. */
     void              RenderSelectionBoxWithExplicitState();

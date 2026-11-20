@@ -31,8 +31,11 @@
 #include <string>
 
 class AccentSlider;
+class TextInput;
 
 namespace Slic3r { namespace GUI {
+
+struct GapPreviewState;
 
 wxDECLARE_EVENT(EVT_TEXTURE_COMPUTE_DONE, wxCommandEvent);
 wxDECLARE_EVENT(EVT_TEXTURE_COMPUTE_PROGRESS, wxCommandEvent);
@@ -300,6 +303,8 @@ private:
     void on_smooth_slider_changed(wxCommandEvent& evt);
     void on_smooth_spin_changed(wxCommandEvent& evt);
     void on_smooth_spin_text_changed(wxCommandEvent& evt);
+    void on_gap_slider_changed(wxCommandEvent& evt);
+    void on_gap_spin_commit();
     void on_apply_clicked(wxCommandEvent& evt);
     void on_auto_merge_toggled(wxCommandEvent& evt);
     void highlight_view_button(int view_index);
@@ -308,10 +313,38 @@ private:
 
     void set_color_count_value(int value, bool update_spin);
     void set_smooth_value(int value, bool update_spin);
+    void set_gap_value(double value, bool update_spin);
     void preview_spin_text_value(SpinInput* spin, AccentSlider* slider, int& param,
                                  int min_value, int max_value, const wxString& text,
                                  std::function<void()> on_value_changed = {});
     void update_color_count_preset_buttons();
+
+    // ---- Gap area merge (small-fragment absorption) ----
+    // Distinct colors visible after gap merging: display colors first, the
+    // simplified palette as fallback.
+    int  visible_simplified_color_count() const;
+    // Refresh the "Original N colors / Simplified M colors" caption.
+    void update_color_counts_label();
+    GapPreviewState&       gap_preview();
+    const GapPreviewState& gap_preview() const;
+    // Install the worker-built patch set, then refresh the gap preview at the
+    // current slider value (a recompute keeps the user's gap setting).
+    void install_gap_preview(std::unique_ptr<GapPreviewState> preview);
+    // Preview only: replay or undo region merges so every region below the
+    // gap percent of the mesh is absorbed by its neighbor. Cheap and
+    // history-independent (prefix replay of a precomputed event list).
+    void apply_gap_area();
+    // Fold the current gap-merge preview colors into m_painted (face_colors +
+    // cluster_colors) WITHOUT rebuilding the matches. Used by the computation
+    // completion path so the standard match chain runs on the merged palette.
+    // Returns false when there is no gap state consistent with m_painted.
+    bool fold_gap_into_painted();
+    // Write gap preview colors into m_painted for filament matching. Does not
+    // overwrite the last simplified face colors or reset the gap slider.
+    void commit_gap_area_to_painted();
+    void refresh_gap_preview();
+    // Number of merge events whose absorbed region area is below area_threshold.
+    int  gap_event_count_for_threshold(double area_threshold) const;
 
     bool has_valid_result() const;
     bool is_params_dirty() const;
@@ -348,11 +381,15 @@ private:
     // Unique source-model colors, counted once in the constructor (precomputed
     // face colors or per-face texture sampling, whichever branch runs).
     int                                m_original_color_count = 0;
+    // Gap merge preview state: patch set + precomputed merge events for the
+    // last simplified result. Rebuilt by the worker on every computation.
+    std::unique_ptr<GapPreviewState>   m_gap_preview;
 
     std::unique_ptr<std::thread>       m_worker;
     std::atomic<bool>                  m_cancel_flag{false};
     std::mutex                         m_result_mutex;
     Slic3r::PaintedMesh               m_pending_result;
+    std::unique_ptr<GapPreviewState>   m_pending_gap_preview;
     std::function<bool()>              m_initial_cancel_callback;
     std::function<bool(int)>           m_initial_progress_callback;
     bool                               m_current_computation_initial = false;
@@ -372,6 +409,8 @@ private:
     SpinInput*    m_color_spin     = nullptr;
     AccentSlider* m_smooth_slider  = nullptr;
     SpinInput*    m_smooth_spin    = nullptr;
+    AccentSlider* m_gap_slider     = nullptr;
+    TextInput*    m_gap_spin       = nullptr;
     Button*       m_btn_apply      = nullptr;
 
     wxCheckBox*           m_auto_merge_cb = nullptr;
@@ -399,10 +438,15 @@ private:
 
     int   m_param_color_count = 4;
     int   m_param_smooth      = 5;
+    // Gap merge threshold in percent of total mesh area, 0..5. 0 disables merging.
+    // Stored as double; the slider works in hundredths (0..500), the spin shows %.2f.
+    double m_param_gap_area   = 0.0;
 
     int   m_applied_color_count = -1;
     int   m_applied_smooth      = -1;
-    wxStaticText* m_hint_label  = nullptr;
+    double m_applied_gap_area   = 0.0;
+    wxStaticText* m_hint_label      = nullptr;
+    wxStaticText* m_lbl_color_counts = nullptr;
 
     static const int ID_COLOR_4     = wxID_HIGHEST + 200;
     static const int ID_COLOR_8     = wxID_HIGHEST + 201;

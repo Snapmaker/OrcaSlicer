@@ -273,6 +273,8 @@ if (SLIC3R_GUI)
 #    list(REMOVE_ITEM wxWidgets_LIBRARIES oleacc)
     message(STATUS "wx libs: ${wxWidgets_LIBRARIES}")
 
+
+    add_subdirectory(widgets)
     add_subdirectory(slic3r)
 endif()
 

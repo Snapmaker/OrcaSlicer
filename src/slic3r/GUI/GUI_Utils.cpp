@@ -500,7 +500,6 @@ bool generate_image(const std::string &filename, wxImage &image, wxSize img_size
     return true;
 }
 
-std::deque<wxDialog*> dialogStack;
 
 void abort_all_modal_dialogs()
 {

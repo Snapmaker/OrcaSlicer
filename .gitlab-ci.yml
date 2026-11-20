@@ -1,3 +1,17 @@
+# Minimal pipeline for the widgets extraction: keep src/widgets decoupled
+# from libslic3r_gui. Extend with build/test jobs as needed.
+# Gate logic shared with okr_q4: scripts/check_widgets_deps.py (single source).
+# The only instance runner ("45-docker-shared") has run_untagged=false
+# -> jobs MUST carry tags: [ shared ].
+stages:
+  - test
+
+widgets-deps-check:
+  stage: test
+  image: python:3.12-slim
+  tags: [ shared ]
+  script:
+    - python scripts/check_widgets_deps.py
 # AI harness review job - runs on the local project runner (tag: ai-review).
 # Requires masked CI/CD variables:
 #   AI_REVIEW_GITLAB_TOKEN  - project access token with api scope (Reporter+)

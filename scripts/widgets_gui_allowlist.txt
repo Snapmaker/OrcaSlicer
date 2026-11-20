@@ -1,0 +1,5 @@
+# Transition allowlist: slic3r/GUI/ headers that src/widgets may still
+# include. One path per line, relative to src/. New dependencies
+# on libslic3r_gui are rejected by scripts/check_widgets_deps.py.
+# This list is currently empty: src/widgets has no remaining includes
+# of libslic3r_gui content. Do not add new entries without discussion.

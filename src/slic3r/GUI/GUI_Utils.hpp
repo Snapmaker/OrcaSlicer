@@ -1,6 +1,7 @@
 #ifndef slic3r_GUI_Utils_hpp_
 #define slic3r_GUI_Utils_hpp_
 
+#include "widgets/DpiAware.hpp"
 #include <memory>
 #include <string>
 #include <ostream>
@@ -67,7 +68,6 @@ wxTopLevelWindow* find_toplevel_parent(wxWindow *window);
 
 void on_window_geometry(wxTopLevelWindow *tlw, std::function<void()> callback);
 
-enum { DPI_DEFAULT = 96 };
 
 int get_dpi_for_window(const wxWindow *window);
 wxFont get_default_font_for_dpi(const wxWindow* window, int dpi);
@@ -78,258 +78,6 @@ void update_dark_config();
 #ifdef _WIN32
 void update_dark_ui(wxWindow* window);
 #endif
-
-#if !wxVERSION_EQUAL_OR_GREATER_THAN(3,1,3)
-struct DpiChangedEvent : public wxEvent {
-    int dpi;
-    wxRect rect;
-
-    DpiChangedEvent(wxEventType eventType, int dpi, wxRect rect)
-        : wxEvent(0, eventType), dpi(dpi), rect(rect)
-    {}
-
-    virtual wxEvent *Clone() const
-    {
-        return new DpiChangedEvent(*this);
-    }
-};
-
-wxDECLARE_EVENT(EVT_DPI_CHANGED_SLICER, DpiChangedEvent);
-#endif // !wxVERSION_EQUAL_OR_GREATER_THAN
-
-extern std::deque<wxDialog*> dialogStack;
-
-// End every modal dialog on the stack with wxID_ABORT (Windows session end).
-// Entries are raw pointers: validate against the live top-level window list
-// first, wx may already have deleted a dialog under a running modal loop.
-void abort_all_modal_dialogs();
-
-// True while any modal wxDialog loop is running, in dialogStack or not.
-// GUI thread only: walks wxTopLevelWindows, which is not thread-safe
-// from other threads.
-bool any_modal_dialog_showing();
-
-template<class P> class DPIAware : public P
-{
-public:
-    DPIAware(wxWindow *parent, wxWindowID id, const wxString &title, const wxPoint &pos=wxDefaultPosition,
-        const wxSize &size=wxDefaultSize, long style=wxDEFAULT_FRAME_STYLE, const wxString &name=wxFrameNameStr)
-        : P(parent, id, title, pos, size, style, name)
-    {
-        int dpi = get_dpi_for_window(this);
-        m_scale_factor = (float)dpi / (float)DPI_DEFAULT;
-        m_prev_scale_factor = m_scale_factor;
-		m_normal_font = get_default_font_for_dpi(this, dpi);
-
-        /* Because of default window font is a primary display font,
-         * We should set correct font for window before getting em_unit value.
-         */
-#ifndef __WXOSX__ // Don't call SetFont under OSX to avoid name cutting in ObjectList
-        this->SetFont(m_normal_font);
-#endif
-        this->CenterOnParent();
-#ifdef _WIN32
-        update_dark_ui(this);
-#endif
-
-        // Linux specific issue : get_dpi_for_window(this) still doesn't responce to the Display's scale in new wxWidgets(3.1.3).
-        // So, calculate the m_em_unit value from the font size, as before
-#if !defined(__WXGTK__)
-        m_em_unit = std::max<size_t>(10, 10.0f * m_scale_factor);
-#else
-        // initialize default width_unit according to the width of the one symbol ("m") of the currently active font of this window.
-        m_em_unit = std::max<size_t>(10, this->GetTextExtent("m").x - 1);
-#endif // __WXGTK__
-
-//        recalc_font();
-
-#ifndef __WXOSX__
-#if wxVERSION_EQUAL_OR_GREATER_THAN(3,1,3)
-        this->Bind(wxEVT_DPI_CHANGED, [this](wxDPIChangedEvent& evt) {
-	            m_scale_factor = (float)evt.GetNewDPI().x / (float)DPI_DEFAULT;
-	            m_new_font_point_size = get_default_font_for_dpi(this, evt.GetNewDPI().x).GetPointSize();
-	            if (m_can_rescale && (m_force_rescale || is_new_scale_factor()))
-	                rescale(wxRect());
-            });
-#else
-        this->Bind(EVT_DPI_CHANGED_SLICER, [this](const DpiChangedEvent& evt) {
-            m_scale_factor = (float)evt.dpi / (float)DPI_DEFAULT;
-
-            m_new_font_point_size = get_default_font_for_dpi(this, evt.dpi).GetPointSize();
-
-            if (!m_can_rescale)
-                return;
-
-            if (m_force_rescale || is_new_scale_factor())
-                rescale(evt.rect);
-            });
-#endif // wxVERSION_EQUAL_OR_GREATER_THAN
-#endif // no __WXOSX__
-
-        this->Bind(wxEVT_MOVE_START, [this](wxMoveEvent& event)
-        {
-            event.Skip();
-
-            // Suppress application rescaling, when a MainFrame moving is not ended
-            m_can_rescale = false;
-        });
-
-        this->Bind(wxEVT_MOVE_END, [this](wxMoveEvent& event)
-        {
-            event.Skip();
-
-            m_can_rescale = is_new_scale_factor();
-
-            // If scale factor is different after moving of MainFrame ...
-            if (m_can_rescale)
-                // ... rescale application
-                rescale(event.GetRect());
-            else
-            // set value to _true_ in purpose of possibility of a display dpi changing from System Settings
-                m_can_rescale = true;
-        });
-
-        this->Bind(wxEVT_SYS_COLOUR_CHANGED, [this](wxSysColourChangedEvent& event)
-        {
-#ifndef __WINDOWS__
-                update_dark_config();
-                on_sys_color_changed();
-                event.Skip();
-#endif // __WINDOWS__
-                
-        });
-
-        if (std::is_same<wxDialog, P>::value) {
-            this->Bind(wxEVT_CHAR_HOOK, [this](wxKeyEvent& e) {
-                if (e.GetKeyCode() == WXK_ESCAPE) {
-                    //if (this->IsModal())
-                    //    this->EndModal(wxID_CANCEL);
-                    //else
-                        this->Close();
-                }
-                else
-                    e.Skip();
-                });
-        }
-    }
-
-    virtual ~DPIAware() {}
-
-    float   scale_factor() const        { return m_scale_factor; }
-    float   prev_scale_factor() const   { return m_prev_scale_factor; }
-
-    int     em_unit() const             { return m_em_unit; }
-//    int     font_size() const           { return m_font_size; }
-    const wxFont& normal_font() const   { return m_normal_font; }
-    void enable_force_rescale()         { m_force_rescale = true; }
-
-#ifdef _WIN32
-    void force_color_changed()
-    {
-        update_dark_ui(this);
-        on_sys_color_changed();
-    }
-#endif
-    
-    int ShowModal()
-    {
-        dialogStack.push_front(this);
-        int r = wxDialog::ShowModal();
-        dialogStack.pop_front();
-        return r;
-    }
-
-protected:
-    virtual void on_dpi_changed(const wxRect &suggested_rect) = 0;
-    virtual void on_sys_color_changed() {};
-
-private:
-    float m_scale_factor;
-    int m_em_unit;
-//    int m_font_size;
-
-    wxFont m_normal_font;
-    float m_prev_scale_factor;
-    bool  m_can_rescale{ true };
-    bool m_force_rescale{ false };
-
-    int   m_new_font_point_size;
-
-//    void recalc_font()
-//    {
-//        wxClientDC dc(this);
-//        const auto metrics = dc.GetFontMetrics();
-//        m_font_size = metrics.height;
-//         m_em_unit = metrics.averageWidth;
-//    }
-
-    // check if new scale is differ from previous
-    bool    is_new_scale_factor() const { return fabs(m_scale_factor - m_prev_scale_factor) > 0.001; }
-
-    // function for a font scaling of the window
-    void    scale_win_font(wxWindow *window, const int font_point_size)
-    {
-        wxFont new_font(window->GetFont());
-        new_font.SetPointSize(font_point_size);
-        window->SetFont(new_font);
-    }
-
-    // recursive function for scaling fonts for all controls in Window
-    void    scale_controls_fonts(wxWindow *window, const int font_point_size)
-    {
-        auto children = window->GetChildren();
-
-        for (auto child : children) {
-            scale_controls_fonts(child, font_point_size);
-            scale_win_font(child, font_point_size);
-        }
-
-        window->Layout();
-    }
-
-    void    rescale(const wxRect &suggested_rect)
-    {
-        this->Freeze();
-
-        m_force_rescale = false;
-#if !wxVERSION_EQUAL_OR_GREATER_THAN(3,1,3)
-        // rescale fonts of all controls
-        scale_controls_fonts(this, m_new_font_point_size);
-        // rescale current window font
-        scale_win_font(this, m_new_font_point_size);
-#endif // wxVERSION_EQUAL_OR_GREATER_THAN
-
-        // set normal application font as a current window font
-        m_normal_font = this->GetFont();
-
-        // update em_unit value for new window font
-        m_em_unit = std::max<int>(10, 10.0f * m_scale_factor);
-
-        // rescale missed controls sizes and images
-        on_dpi_changed(suggested_rect);
-
-        this->Layout();
-        this->Thaw();
-
-        // reset previous scale factor from current scale factor value
-        m_prev_scale_factor = m_scale_factor;
-    }
-
-#if 0 //#ifdef _WIN32  // #ysDarkMSW - Allow it when we deside to support the sustem colors for application
-    bool HandleSettingChange(WXWPARAM wParam, WXLPARAM lParam) override
-    {
-        update_dark_ui(this);
-        on_sys_color_changed();
-
-        // let the system handle it
-        return false;
-    }
-#endif
-
-};
-
-typedef DPIAware<wxFrame> DPIFrame;
-typedef DPIAware<wxDialog> DPIDialog;
 
 
 class EventGuard
@@ -505,7 +253,6 @@ int get_dpi_for_window(const wxWindow *window);
 
 #ifdef __WXOSX__
 void dataview_remove_insets(wxDataViewCtrl* dv);
-void staticbox_remove_margin(wxStaticBox* sb);
 #endif
 
 #if defined(__WXOSX__) || defined(__linux__)

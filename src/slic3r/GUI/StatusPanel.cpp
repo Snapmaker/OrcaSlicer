@@ -1219,6 +1219,7 @@ wxBoxSizer *StatusBasePanel::create_temp_control(wxWindow *parent)
     m_tempCtrl_nozzle    = new TempInput(parent, nozzle_id, TEMP_BLANK_STR, TEMP_BLANK_STR, wxString("monitor_nozzle_temp"), wxString("monitor_nozzle_temp_active"),
                                       wxDefaultPosition, wxDefaultSize, wxALIGN_CENTER);
     m_tempCtrl_nozzle->SetMinSize(TEMP_CTRL_MIN_SIZE);
+    m_tempCtrl_nozzle->SetFocusAfterEnter(Slic3r::GUI::wxGetApp().GetMainTopWindow());
     m_tempCtrl_nozzle->SetMinTemp(nozzle_temp_range[0]);
     m_tempCtrl_nozzle->SetMaxTemp(nozzle_temp_range[1]);
     m_tempCtrl_nozzle->SetBorderWidth(FromDIP(2));
@@ -1241,6 +1242,7 @@ wxBoxSizer *StatusBasePanel::create_temp_control(wxWindow *parent)
     m_tempCtrl_bed    = new TempInput(parent, bed_id, TEMP_BLANK_STR, TEMP_BLANK_STR, wxString("monitor_bed_temp"), wxString("monitor_bed_temp_active"), wxDefaultPosition,
                                    wxDefaultSize, wxALIGN_CENTER);
     m_tempCtrl_bed->SetMinTemp(bed_temp_range[0]);
+    m_tempCtrl_bed->SetFocusAfterEnter(Slic3r::GUI::wxGetApp().GetMainTopWindow());
     m_tempCtrl_bed->SetMaxTemp(bed_temp_range[1]);
     m_tempCtrl_bed->SetMinSize(TEMP_CTRL_MIN_SIZE);
     m_tempCtrl_bed->SetBorderWidth(FromDIP(2));
@@ -1256,6 +1258,7 @@ wxBoxSizer *StatusBasePanel::create_temp_control(wxWindow *parent)
     m_tempCtrl_chamber    = new TempInput(parent, frame_id, TEMP_BLANK_STR, TEMP_BLANK_STR, wxString("monitor_frame_temp"), wxString("monitor_frame_temp_active"), wxDefaultPosition,
                                      wxDefaultSize, wxALIGN_CENTER);
     m_tempCtrl_chamber->SetReadOnly(true);
+    m_tempCtrl_chamber->SetFocusAfterEnter(Slic3r::GUI::wxGetApp().GetMainTopWindow());
     m_tempCtrl_chamber->SetMinTemp(nozzle_chamber_range[0]);
     m_tempCtrl_chamber->SetMaxTemp(nozzle_chamber_range[1]);
     m_tempCtrl_chamber->SetMinSize(TEMP_CTRL_MIN_SIZE);

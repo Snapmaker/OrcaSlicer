@@ -2,12 +2,17 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "libslic3r/calib.hpp"
+#include "libslic3r/Print.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/TriangleMesh.hpp"
+#include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "libslic3r/BuildVolume.hpp"
 
 #include <set>
+#include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <sstream>
 
 using namespace Slic3r;
@@ -338,5 +343,127 @@ SCENARIO("Calib PA pattern G1 wall coordinates follow the spacing formula", "[Ca
                 }
             }
         }
+    }
+}
+
+// Regression test for the PA line calibration "A G-code path goes beyond the
+// plate boundaries." false warning. The export writes a role tag before the
+// machine start G-code, so every extrusion print_pa_lines() emits inherits
+// erCustom unless it carries its own role tag. The preview containment filter
+// drops erCustom moves, the paths bounding box stays undefined, and its
+// degenerate {0,0,0} point falls outside beds that do not contain the origin
+// (e.g. Snapmaker U1) -> false error and the print button gets disabled.
+SCENARIO("PA line calibration gcode keeps the toolpath containment check meaningful", "[Calib]")
+{
+    const std::string role = GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role);
+
+    // Mirrors the shape of CalibPressureAdvanceLine::print_pa_lines() output on
+    // the Snapmaker U1 bed [0.5,1]..[270.5,271]: prime line, then the
+    // short/long/short test line, then the number box region. All coordinates
+    // stay inside the bed either way.
+    auto pa_line_gcode = [&role](bool with_role_tags) {
+        std::string g =
+            "G90\n"
+            "M83\n"
+            "G92 E0\n"
+            ";" + role + "Custom\n" // the export writes this before the machine start G-code
+            "G1 Z0.250 F960\n"
+            "G0 X85.5 Y225.250 F30000\n"
+            "G1 X85.5 Y46.750 E12.0 F1800\n"; // prime line, stays Custom in both variants
+        if (with_role_tags) {
+            g +=
+                ";" + role + "Custom\n"
+                "G1 X105.5 Y46.750 E1.0 F1800\n" // short slow segment
+                ";" + role + "Outer wall\n"
+                "G1 X145.5 Y46.750 E4.0 F6000\n" // long fast segment
+                ";" + role + "Custom\n"
+                "G1 X165.5 Y46.750 E1.0 F1800\n" // short slow segment
+                ";" + role + "Bottom surface\n"
+                "G1 X190.100 Y220.000 E30.0 F6000\n"; // number box region
+        } else {
+            g +=
+                "G1 X105.5 Y46.750 E1.0 F1800\n"
+                "G1 X145.5 Y46.750 E4.0 F6000\n"
+                "G1 X165.5 Y46.750 E1.0 F1800\n"
+                "G1 X190.100 Y220.000 E30.0 F6000\n";
+        }
+        return g;
+    };
+
+    // GCodeProcessorResult holds a mutex, so it cannot be returned by value;
+    // run the inspection while the processor is alive.
+    auto process = [](const std::string& gcode, auto&& inspect) {
+        const std::string path = "pa_line_containment_test.gcode";
+        {
+            std::ofstream out(path, std::ios::binary);
+            out << gcode;
+        }
+        Print print;
+        print.set_status_silent();
+        GCodeProcessor processor;
+        PrintConfig config;
+        config.filament_diameter.values = {1.75};
+        config.filament_density.values  = {1.24};
+        processor.reset();
+        processor.set_print(&print);
+        processor.apply_config(config);
+        processor.initialize(path);
+        processor.process_buffer(gcode);
+        processor.finalize(false);
+        std::remove(path.c_str());
+        inspect(processor.get_result());
+    };
+
+    // The filter the preview applies when building the paths bounding box for
+    // the containment warning: only extrusions with a real role and nonzero
+    // width/height count.
+    auto paths_bbox = [](const GCodeProcessorResult& result) {
+        BoundingBoxf3 bbox;
+        for (const GCodeProcessorResult::MoveVertex& move : result.moves)
+            if (move.type == EMoveType::Extrude && move.extrusion_role != erCustom && move.width != 0.0f && move.height != 0.0f)
+                bbox.merge(move.position.cast<double>());
+        return bbox;
+    };
+
+    // Snapmaker U1: the bed rectangle does not contain the origin.
+    const std::vector<Vec2d> u1_area{{0.5, 1.0}, {270.5, 1.0}, {270.5, 271.0}, {0.5, 271.0}};
+    const BuildVolume        u1_volume(u1_area, 270.0);
+    // Origin-anchored bed (A250 class) for comparison.
+    const std::vector<Vec2d> a250_area{{0.0, 0.0}, {230.0, 0.0}, {230.0, 250.0}, {0.0, 250.0}};
+    const BuildVolume        a250_volume(a250_area, 250.0);
+
+    SECTION("without role tags the calibration extrusions all inherit erCustom")
+    {
+        BoundingBoxf3 bbox;
+        bool          contained_u1 = false, contained_a250 = false;
+        process(pa_line_gcode(false), [&](const GCodeProcessorResult& result) {
+            bbox          = paths_bbox(result);
+            contained_u1  = u1_volume.all_paths_inside(result, bbox);
+            contained_a250 = a250_volume.all_paths_inside(result, bbox);
+        });
+        REQUIRE(!bbox.defined);
+        // the reported bug: the undefined bounding box degenerates to {0,0,0},
+        // which lies outside the U1 bed -> false "beyond the plate boundaries"
+        REQUIRE_FALSE(contained_u1);
+        // {0,0,0} happens to sit on the bed corner of origin-anchored printers,
+        // which is why the defect stayed invisible there
+        CHECK(contained_a250);
+    }
+
+    SECTION("with role tags the labeled segments define the bounding box")
+    {
+        BoundingBoxf3 bbox;
+        size_t        outer_wall_moves = 0;
+        bool          contained_u1 = false;
+        process(pa_line_gcode(true), [&](const GCodeProcessorResult& result) {
+            bbox = paths_bbox(result);
+            for (const GCodeProcessorResult::MoveVertex& move : result.moves)
+                if (move.type == EMoveType::Extrude && move.extrusion_role == erExternalPerimeter)
+                    ++outer_wall_moves;
+            contained_u1 = u1_volume.all_paths_inside(result, bbox);
+        });
+        REQUIRE(bbox.defined);
+        CHECK(outer_wall_moves > 0);
+        CHECK(contained_u1);
     }
 }

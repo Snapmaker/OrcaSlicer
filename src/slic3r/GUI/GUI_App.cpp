@@ -92,6 +92,7 @@
 
 #include "GUI.hpp"
 #include "GUI_Utils.hpp"
+#include "widgets/UiAppearance.hpp"
 #include "3DScene.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
@@ -2418,8 +2419,43 @@ void GUI_App::init_single_instance_checker(const std::string &name, const std::s
     m_single_instance_checker = std::make_unique<wxSingleInstanceChecker>(boost::nowide::widen(name), boost::nowide::widen(path));
 }
 
+namespace {
+// Appearance seam for the widgets static library: forwards every query to
+// the existing GUI_App implementation, so the main application behaves
+// exactly as before (see Widgets/UiAppearance.hpp).
+class GuiAppAppearance : public Slic3r::GUI::UiAppearance
+{
+public:
+    int em_unit() const override { return wxGetApp().em_unit(); }
+    int em_unit_of(wxWindow *win) const override
+    {
+        if (!win)
+            return 0;
+        wxTopLevelWindow *toplevel = Slic3r::GUI::find_toplevel_parent(win);
+        if (auto *dlg = dynamic_cast<Slic3r::GUI::DPIDialog *>(toplevel))
+            return dlg->em_unit();
+        if (auto *frame = dynamic_cast<Slic3r::GUI::DPIFrame *>(toplevel))
+            return frame->em_unit();
+        return 0;
+    }
+    bool dark_mode() const override { return wxGetApp().dark_mode(); }
+    bool menu_dark_mode() const override { return Slic3r::GUI::check_dark_mode(); }
+    void update_dark_ui(wxWindow *win, bool highlited) const override { wxGetApp().UpdateDarkUI(win, highlited); }
+    const wxFont &bold_font() const override { return wxGetApp().bold_font(); }
+    const wxFont &normal_font() const override { return wxGetApp().normal_font(); }
+    wxWindow *mainframe() const override { return wxGetApp().mainframe; }
+    int dpi_for_window(wxWindow *win) const override { return Slic3r::GUI::get_dpi_for_window(win); }
+    wxFont default_font_for_dpi(wxWindow *win, int dpi) const override { return Slic3r::GUI::get_default_font_for_dpi(win, dpi); }
+    void update_dark_config() const override { Slic3r::GUI::update_dark_config(); }
+};
+} // namespace
+
 bool GUI_App::OnInit()
 {
+    // Install the appearance seam before any widget is created.
+    static GuiAppAppearance s_ui_appearance;
+    Slic3r::GUI::set_ui_appearance(&s_ui_appearance);
+
     try {
         return on_init_inner();
     } catch (const std::exception& e) {

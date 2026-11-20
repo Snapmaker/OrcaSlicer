@@ -23,7 +23,7 @@
 #include "Project.hpp"
 #include "CalibrationPanel.hpp"
 #include "UnsavedChangesDialog.hpp"
-#include "Widgets/SideButton.hpp"
+#include "widgets/SideButton.hpp"
 #include "Widgets/SideMenuPopup.hpp"
 
 #include <boost/property_tree/ptree_fwd.hpp>
@@ -205,6 +205,7 @@ protected:
 public:
     MainFrame();
     ~MainFrame() = default;
+
 
     //BBS GUI refactor
     enum TabPosition

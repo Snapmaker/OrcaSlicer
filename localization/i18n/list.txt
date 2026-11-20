@@ -67,6 +67,7 @@ src/slic3r/GUI/BedShapeDialog.hpp
 src/slic3r/GUI/ConfigManipulation.cpp
 src/slic3r/GUI/DeviceManager.cpp
 src/slic3r/GUI/ExtraRenderers.cpp
+src/slic3r/GUI/ExtruderColorIcons.cpp
 src/slic3r/GUI/EditGCodeDialog.cpp
 src/slic3r/GUI/Field.cpp
 src/slic3r/GUI/GCodeViewer.cpp
@@ -120,7 +121,6 @@ src/slic3r/GUI/WipeTowerDialog.cpp
 src/slic3r/GUI/wxExtensions.cpp
 src/slic3r/GUI/wxMediaCtrl2.cpp
 src/slic3r/GUI/WebUserLoginDialog.cpp
-src/slic3r/GUI/WebSMUserLoginDialog.cpp
 src/slic3r/GUI/WebGuideDialog.cpp
 src/slic3r/GUI/KBShortcutsDialog.hpp
 src/slic3r/GUI/KBShortcutsDialog.cpp
@@ -182,3 +182,4 @@ src/slic3r/GUI/BackgroundSlicingProcess.cpp
 src/slic3r/GUI/Gizmos/GLGizmoBrimEars.cpp
 src/slic3r/GUI/MixedFilamentBatchDialog.cpp
 src/slic3r/GUI/MixedColorMatchHelpers.cpp
+src/widgets/TempInput.cpp

@@ -3,6 +3,8 @@
 
 #include <wx/panel.h>
 #include <wx/stattext.h>
+#include <wx/sizer.h>
+#include <wx/statbmp.h>
 
 #include <memory>
 #include <string>

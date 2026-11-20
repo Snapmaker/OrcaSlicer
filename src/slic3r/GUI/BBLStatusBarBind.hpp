@@ -4,6 +4,7 @@
 #include <wx/panel.h>
 #include <wx/stattext.h>
 #include <wx/simplebook.h>
+#include <wx/sizer.h>
 
 
 #include <memory>

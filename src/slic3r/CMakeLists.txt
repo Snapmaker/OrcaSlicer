@@ -14,54 +14,54 @@ set(SLIC3R_GUI_SOURCES
     GUI/3DBed.hpp
     GUI/3DScene.cpp
     GUI/3DScene.hpp
-    GUI/AboutDialog.cpp
-    GUI/AboutDialog.hpp
-    GUI/AmsMappingPopup.cpp
-    GUI/AmsMappingPopup.hpp
     GUI/AMSMaterialsSetting.cpp
     GUI/AMSMaterialsSetting.hpp
     GUI/AMSSetting.cpp
     GUI/AMSSetting.hpp
+    GUI/AboutDialog.cpp
+    GUI/AboutDialog.hpp
+    GUI/AmsMappingPopup.cpp
+    GUI/AmsMappingPopup.hpp
     GUI/AmsWidgets.cpp
     GUI/AmsWidgets.hpp
     GUI/Auxiliary.cpp
+    GUI/Auxiliary.hpp
     GUI/AuxiliaryDataViewModel.cpp
     GUI/AuxiliaryDataViewModel.hpp
     GUI/AuxiliaryDialog.cpp
     GUI/AuxiliaryDialog.hpp
-    GUI/Auxiliary.hpp
-    GUI/BackgroundSlicingProcess.cpp
-    GUI/BackgroundSlicingProcess.hpp
-    GUI/BBLStatusBarBind.cpp
-    GUI/BBLStatusBarBind.hpp
     GUI/BBLStatusBar.cpp
     GUI/BBLStatusBar.hpp
+    GUI/BBLStatusBarBind.cpp
+    GUI/BBLStatusBarBind.hpp
     GUI/BBLStatusBarSend.cpp
     GUI/BBLStatusBarSend.hpp
     GUI/BBLTopbar.cpp
     GUI/BBLTopbar.hpp
+    GUI/BackgroundSlicingProcess.cpp
+    GUI/BackgroundSlicingProcess.hpp
     GUI/BedShapeDialog.cpp
     GUI/BedShapeDialog.hpp
     GUI/BindDialog.cpp
     GUI/BindDialog.hpp
-    GUI/BitmapCache.cpp
-    GUI/BitmapCache.hpp
     GUI/BitmapComboBox.cpp
     GUI/BitmapComboBox.hpp
     GUI/BonjourDialog.cpp
     GUI/BonjourDialog.hpp
     GUI/BufferTexture.cpp
     GUI/BufferTexture.hpp
+    GUI/CaliHistoryDialog.cpp
+    GUI/CaliHistoryDialog.hpp
     GUI/calib_dlg.cpp
     GUI/calib_dlg.hpp
     GUI/Calibration.cpp
     GUI/Calibration.hpp
     GUI/CalibrationPanel.cpp
     GUI/CalibrationPanel.hpp
-    GUI/CalibrationWizardCaliPage.cpp
-    GUI/CalibrationWizardCaliPage.hpp
     GUI/CalibrationWizard.cpp
     GUI/CalibrationWizard.hpp
+    GUI/CalibrationWizardCaliPage.cpp
+    GUI/CalibrationWizardCaliPage.hpp
     GUI/CalibrationWizardPage.cpp
     GUI/CalibrationWizardPage.hpp
     GUI/CalibrationWizardPresetPage.cpp
@@ -70,8 +70,6 @@ set(SLIC3R_GUI_SOURCES
     GUI/CalibrationWizardSavePage.hpp
     GUI/CalibrationWizardStartPage.cpp
     GUI/CalibrationWizardStartPage.hpp
-    GUI/CaliHistoryDialog.cpp
-    GUI/CaliHistoryDialog.hpp
     GUI/Camera.cpp
     GUI/Camera.hpp
     GUI/CameraPopup.cpp
@@ -95,22 +93,27 @@ set(SLIC3R_GUI_SOURCES
     GUI/DesktopIntegrationDialog.hpp
     GUI/DeviceManager.cpp
     GUI/DeviceManager.hpp
-    GUI/Downloader.cpp
-    GUI/DownloaderFileGet.cpp
-    GUI/DownloaderFileGet.hpp
-    GUI/Downloader.hpp
+    GUI/DownloadManager.cpp
+    GUI/DownloadManager.hpp
     GUI/DownloadProgressDialog.cpp
     GUI/DownloadProgressDialog.hpp
+    GUI/Downloader.cpp
+    GUI/Downloader.hpp
+    GUI/DownloaderFileGet.cpp
+    GUI/DownloaderFileGet.hpp
     GUI/DragCanvas.cpp
     GUI/DragCanvas.hpp
     GUI/EditGCodeDialog.cpp
     GUI/EditGCodeDialog.hpp
     GUI/ExtraRenderers.cpp
     GUI/ExtraRenderers.hpp
+    GUI/ExtruderColorIcons.cpp
     GUI/ExtrusionCalibration.cpp
     GUI/ExtrusionCalibration.hpp
     GUI/Field.cpp
     GUI/Field.hpp
+    GUI/FilamentColorDialog.cpp
+    GUI/FilamentColorDialog.hpp
     GUI/FilamentColorUtils.cpp
     GUI/FilamentColorUtils.hpp
     GUI/FilamentGroupDialog.cpp
@@ -119,78 +122,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/FileArchiveDialog.hpp
     GUI/FlowTypeHelper.cpp
     GUI/FlowTypeHelper.hpp
-    GUI/HighFlowCompat.cpp
-    GUI/HighFlowCompat.hpp
-    GUI/filamentsync/FilamentColorMapBox.cpp
-    GUI/filamentsync/FilamentColorMapBox.hpp
-    GUI/filamentsync/FilamentColorMapBoxGroup.cpp
-    GUI/filamentsync/FilamentColorMapBoxGroup.hpp
-    GUI/filamentsync/FilamentData.hpp
-    GUI/filamentsync/FilamentScrollBar.cpp
-    GUI/filamentsync/FilamentScrollBar.hpp
-    GUI/filamentsync/FilamentSyncAlgorithm.cpp
-    GUI/filamentsync/FilamentSyncAlgorithm.hpp
-    GUI/filamentsync/MachineFilamentPicker.cpp
-    GUI/filamentsync/MachineFilamentPicker.hpp
-    GUI/filamentsync/PlaterPreview.cpp
-    GUI/filamentsync/PlaterPreview.hpp
-    GUI/filamentsync/SyncConfirmDialog.cpp
-    GUI/filamentsync/SyncConfirmDialog.hpp
-    GUI/filamentsync/SyncFilamentColorDialog.cpp
-    GUI/filamentsync/SyncFilamentColorDialog.hpp
-    GUI/format.hpp
     GUI/GCodeViewer.cpp
     GUI/GCodeViewer.hpp
-    GUI/Gizmos/GizmoObjectManipulation.cpp
-    GUI/Gizmos/GizmoObjectManipulation.hpp
-    GUI/Gizmos/GLGizmoAssembly.cpp
-    GUI/Gizmos/GLGizmoAssembly.hpp
-    GUI/Gizmos/GLGizmoBase.cpp
-    GUI/Gizmos/GLGizmoBase.hpp
-    GUI/Gizmos/GLGizmoBrimEars.cpp
-    GUI/Gizmos/GLGizmoBrimEars.hpp
-    GUI/Gizmos/GLGizmoCut.cpp
-    GUI/Gizmos/GLGizmoCut.hpp
-    GUI/Gizmos/GLGizmoEmboss.cpp
-    GUI/Gizmos/GLGizmoEmboss.hpp
-    #GUI/Gizmos/GLGizmoFaceDetector.cpp
-    #GUI/Gizmos/GLGizmoFaceDetector.hpp
-    GUI/Gizmos/GLGizmoFdmSupports.cpp
-    GUI/Gizmos/GLGizmoFdmSupports.hpp
-    GUI/Gizmos/GLGizmoFlatten.cpp
-    GUI/Gizmos/GLGizmoFlatten.hpp
-    GUI/Gizmos/GLGizmoFuzzySkin.cpp
-    GUI/Gizmos/GLGizmoFuzzySkin.hpp
-    #GUI/Gizmos/GLGizmoHollow.cpp
-    #GUI/Gizmos/GLGizmoHollow.hpp
-    GUI/Gizmos/GLGizmoMeasure.cpp
-    GUI/Gizmos/GLGizmoMeasure.hpp
-    GUI/Gizmos/GLGizmoMeshBoolean.cpp
-    GUI/Gizmos/GLGizmoMeshBoolean.hpp
-    GUI/Gizmos/GLGizmoMmuSegmentation.cpp
-    GUI/Gizmos/GLGizmoMmuSegmentation.hpp
-    GUI/Gizmos/GLGizmoMove.cpp
-    GUI/Gizmos/GLGizmoMove.hpp
-    GUI/Gizmos/GLGizmoPainterBase.cpp
-    GUI/Gizmos/GLGizmoPainterBase.hpp
-    GUI/Gizmos/GLGizmoRotate.cpp
-    GUI/Gizmos/GLGizmoRotate.hpp
-    GUI/Gizmos/GLGizmoScale.cpp
-    GUI/Gizmos/GLGizmoScale.hpp
-    GUI/Gizmos/GLGizmosCommon.cpp
-    GUI/Gizmos/GLGizmosCommon.hpp
-    GUI/Gizmos/GLGizmoSeam.cpp
-    GUI/Gizmos/GLGizmoSeam.hpp
-    GUI/Gizmos/GLGizmoSimplify.cpp
-    GUI/Gizmos/GLGizmoSimplify.hpp
-    #GUI/Gizmos/GLGizmoSlaSupports.cpp
-    #GUI/Gizmos/GLGizmoSlaSupports.hpp
-    GUI/Gizmos/GLGizmosManager.cpp
-    GUI/Gizmos/GLGizmosManager.hpp
-    GUI/Gizmos/GLGizmoSVG.cpp
-    GUI/Gizmos/GLGizmoSVG.hpp
-    #GUI/Gizmos/GLGizmoText.cpp
-    #GUI/Gizmos/GLGizmoText.hpp
     GUI/GLCanvas3D.cpp
     GUI/GLCanvas3D.hpp
     GUI/GLPickingBuffer.cpp
@@ -213,18 +146,18 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLToolbarBackgroundTextureCache.hpp
     GUI/GLToolbar.cpp
     GUI/GLToolbar.hpp
+    GUI/GUI.cpp
+    GUI/GUI.hpp
     GUI/GUI_App.cpp
     GUI/GUI_App.hpp
     GUI/GUI_AuxiliaryList.cpp
     GUI/GUI_AuxiliaryList.hpp
     GUI/GUI_Colors.cpp
     GUI/GUI_Colors.hpp
-    GUI/GUI.cpp
     GUI/GUI_Factories.cpp
     GUI/GUI_Factories.hpp
     GUI/GUI_Geometry.cpp
     GUI/GUI_Geometry.hpp
-    GUI/GUI.hpp
     GUI/GUI_Init.cpp
     GUI/GUI_Init.hpp
     GUI/GUI_ObjectLayers.cpp
@@ -241,26 +174,70 @@ set(SLIC3R_GUI_SOURCES
     GUI/GUI_Preview.hpp
     GUI/GUI_Utils.cpp
     GUI/GUI_Utils.hpp
-    GUI/HintNotification.cpp
-    GUI/HintNotification.hpp
+    GUI/GenericDownloadDialog.cpp
+    GUI/GenericDownloadDialog.hpp
+    GUI/Gizmos/GLGizmoAssembly.cpp
+    GUI/Gizmos/GLGizmoAssembly.hpp
+    GUI/Gizmos/GLGizmoBase.cpp
+    GUI/Gizmos/GLGizmoBase.hpp
+    GUI/Gizmos/GLGizmoBrimEars.cpp
+    GUI/Gizmos/GLGizmoBrimEars.hpp
+    GUI/Gizmos/GLGizmoCut.cpp
+    GUI/Gizmos/GLGizmoCut.hpp
+    GUI/Gizmos/GLGizmoEmboss.cpp
+    GUI/Gizmos/GLGizmoEmboss.hpp
+    GUI/Gizmos/GLGizmoFdmSupports.cpp
+    GUI/Gizmos/GLGizmoFdmSupports.hpp
+    GUI/Gizmos/GLGizmoFlatten.cpp
+    GUI/Gizmos/GLGizmoFlatten.hpp
+    GUI/Gizmos/GLGizmoFuzzySkin.cpp
+    GUI/Gizmos/GLGizmoFuzzySkin.hpp
+    GUI/Gizmos/GLGizmoMeasure.cpp
+    GUI/Gizmos/GLGizmoMeasure.hpp
+    GUI/Gizmos/GLGizmoMeshBoolean.cpp
+    GUI/Gizmos/GLGizmoMeshBoolean.hpp
+    GUI/Gizmos/GLGizmoMmuSegmentation.cpp
+    GUI/Gizmos/GLGizmoMmuSegmentation.hpp
+    GUI/Gizmos/GLGizmoMove.cpp
+    GUI/Gizmos/GLGizmoMove.hpp
+    GUI/Gizmos/GLGizmoPainterBase.cpp
+    GUI/Gizmos/GLGizmoPainterBase.hpp
+    GUI/Gizmos/GLGizmoRotate.cpp
+    GUI/Gizmos/GLGizmoRotate.hpp
+    GUI/Gizmos/GLGizmoSVG.cpp
+    GUI/Gizmos/GLGizmoSVG.hpp
+    GUI/Gizmos/GLGizmoScale.cpp
+    GUI/Gizmos/GLGizmoScale.hpp
+    GUI/Gizmos/GLGizmoSeam.cpp
+    GUI/Gizmos/GLGizmoSeam.hpp
+    GUI/Gizmos/GLGizmoSimplify.cpp
+    GUI/Gizmos/GLGizmoSimplify.hpp
+    GUI/Gizmos/GLGizmosCommon.cpp
+    GUI/Gizmos/GLGizmosCommon.hpp
+    GUI/Gizmos/GLGizmosManager.cpp
+    GUI/Gizmos/GLGizmosManager.hpp
+    GUI/Gizmos/GizmoObjectManipulation.cpp
+    GUI/Gizmos/GizmoObjectManipulation.hpp
     GUI/HMS.cpp
     GUI/HMS.hpp
     GUI/HMSPanel.cpp
     GUI/HMSPanel.hpp
+    GUI/HighFlowCompat.cpp
+    GUI/HighFlowCompat.hpp
+    GUI/HintNotification.cpp
+    GUI/HintNotification.hpp
     GUI/HttpServer.cpp
     GUI/HttpServer.hpp
-    GUI/I18N.cpp
-    GUI/I18N.hpp
-    GUI/IconManager.cpp
-    GUI/IconManager.hpp
-    GUI/ImageGrid.cpp
-    GUI/ImageGrid.h
-    GUI/ImGuiWrapper.cpp
-    GUI/ImGuiWrapper.hpp
     GUI/IMSlider.cpp
     GUI/IMSlider.hpp
     GUI/IMToolbar.cpp
     GUI/IMToolbar.hpp
+    GUI/IconManager.cpp
+    GUI/IconManager.hpp
+    GUI/ImGuiWrapper.cpp
+    GUI/ImGuiWrapper.hpp
+    GUI/ImageGrid.cpp
+    GUI/ImageGrid.h
     GUI/InstanceCheck.cpp
     GUI/InstanceCheck.hpp
     GUI/Jobs/ArrangeJob.cpp
@@ -291,11 +268,11 @@ set(SLIC3R_GUI_SOURCES
     GUI/Jobs/ProgressIndicator.hpp
     GUI/Jobs/RotoptimizeJob.cpp
     GUI/Jobs/RotoptimizeJob.hpp
-    GUI/Jobs/SendJob.cpp
-    GUI/Jobs/SendJob.hpp
     GUI/Jobs/SLAImportDialog.hpp
     GUI/Jobs/SLAImportJob.cpp
     GUI/Jobs/SLAImportJob.hpp
+    GUI/Jobs/SendJob.cpp
+    GUI/Jobs/SendJob.hpp
     GUI/Jobs/ThreadSafeQueue.hpp
     GUI/Jobs/UpgradeNetworkJob.cpp
     GUI/Jobs/UpgradeNetworkJob.hpp
@@ -312,12 +289,26 @@ set(SLIC3R_GUI_SOURCES
     GUI/MediaPlayCtrl.h
     GUI/MeshUtils.cpp
     GUI/MeshUtils.hpp
+    GUI/MixedColorMatchHelpers.cpp
+    GUI/MixedColorMatchHelpers.hpp
+    GUI/MixedColorMatchPanel.cpp
+    GUI/MixedColorMatchPanel.hpp
+    GUI/MixedFilamentBadge.cpp
+    GUI/MixedFilamentBadge.hpp
+    GUI/MixedFilamentBatchDialog.cpp
+    GUI/MixedFilamentBatchDialog.hpp
+    GUI/MixedFilamentColorMapPanel.cpp
+    GUI/MixedFilamentColorMapPanel.hpp
+    GUI/MixedFilamentDialog.cpp
+    GUI/MixedFilamentDialog.hpp
+    GUI/MixedGradientSelector.cpp
+    GUI/MixedGradientSelector.hpp
     GUI/ModelMall.cpp
     GUI/ModelMall.hpp
-    GUI/MonitorBasePanel.cpp
-    GUI/MonitorBasePanel.h
     GUI/Monitor.cpp
     GUI/Monitor.hpp
+    GUI/MonitorBasePanel.cpp
+    GUI/MonitorBasePanel.h
     GUI/MonitorPage.cpp
     GUI/MonitorPage.hpp
     GUI/Mouse3DController.cpp
@@ -346,28 +337,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/NotificationManager.hpp
     GUI/OAuthDialog.cpp
     GUI/OAuthDialog.hpp
-    GUI/MixedFilamentDialog.cpp
-    GUI/MixedFilamentDialog.hpp
-    GUI/MixedFilamentBatchDialog.cpp
-    GUI/MixedFilamentBatchDialog.hpp
-    GUI/MixedGradientSelector.hpp
-    GUI/MixedGradientSelector.cpp
-    GUI/MixedColorMatchPanel.cpp
-    GUI/MixedColorMatchPanel.hpp
-    GUI/MixedColorMatchHelpers.hpp
-    GUI/MixedColorMatchHelpers.cpp
-    GUI/MixedFilamentColorMapPanel.hpp
-    GUI/MixedFilamentColorMapPanel.cpp
-    GUI/MixedFilamentBadge.cpp
-    GUI/MixedFilamentBadge.hpp
-    GUI/ObjColorDialog.cpp
-    GUI/ObjColorDialog.hpp
-    GUI/FilamentColorDialog.cpp
-    GUI/FilamentColorDialog.hpp
-    GUI/ObjectDataViewModel.cpp
-    GUI/ObjectDataViewModel.hpp
     GUI/OG_CustomCtrl.cpp
     GUI/OG_CustomCtrl.hpp
+    GUI/ObjColorDialog.cpp
+    GUI/ObjColorDialog.hpp
+    GUI/ObjectDataViewModel.cpp
+    GUI/ObjectDataViewModel.hpp
     GUI/OpenGLManager.cpp
     GUI/OpenGLManager.hpp
     GUI/OptionsGroup.cpp
@@ -384,10 +359,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/PathRenderer.hpp
     GUI/PhysicalPrinterDialog.cpp
     GUI/PhysicalPrinterDialog.hpp
-    GUI/Plater.cpp
-    GUI/Plater.hpp
     GUI/PlateSettingsDialog.cpp
     GUI/PlateSettingsDialog.hpp
+    GUI/Plater.cpp
+    GUI/Plater.hpp
     GUI/Preferences.cpp
     GUI/Preferences.hpp
     GUI/PresetComboBoxes.cpp
@@ -400,24 +375,24 @@ set(SLIC3R_GUI_SOURCES
     GUI/PlaterFilamentComboBox.hpp
     GUI/PresetHints.cpp
     GUI/PresetHints.hpp
-    GUI/PrinterCloudAuthDialog.cpp
-    GUI/PrinterCloudAuthDialog.hpp
-    GUI/Printer/PrinterFileSystem.cpp
-    GUI/Printer/PrinterFileSystem.h
-    GUI/PrinterWebView.cpp
-    GUI/PrinterWebView.hpp
     GUI/PrintHostDialogs.cpp
     GUI/PrintHostDialogs.hpp
     GUI/PrintOptionsDialog.cpp
     GUI/PrintOptionsDialog.hpp
+    GUI/Printer/PrinterFileSystem.cpp
+    GUI/Printer/PrinterFileSystem.h
+    GUI/PrinterCloudAuthDialog.cpp
+    GUI/PrinterCloudAuthDialog.hpp
+    GUI/PrinterWebView.cpp
+    GUI/PrinterWebView.hpp
     GUI/PrivacyUpdateDialog.cpp
     GUI/PrivacyUpdateDialog.hpp
     GUI/ProgressStatusBar.cpp
     GUI/ProgressStatusBar.hpp
     GUI/Project.cpp
+    GUI/Project.hpp
     GUI/ProjectDirtyStateManager.cpp
     GUI/ProjectDirtyStateManager.hpp
-    GUI/Project.hpp
     GUI/PublishDialog.cpp
     GUI/PublishDialog.hpp
     GUI/RammingChart.cpp
@@ -428,18 +403,22 @@ set(SLIC3R_GUI_SOURCES
     GUI/ReleaseNote.hpp
     GUI/RemovableDriveManager.cpp
     GUI/RemovableDriveManager.hpp
+    GUI/SMPhysicalPrinterDialog.cpp
+    GUI/SMPhysicalPrinterDialog.hpp
+    GUI/SSWCP.cpp
+    GUI/SSWCP.hpp
     GUI/SavePresetDialog.cpp
     GUI/SavePresetDialog.hpp
     GUI/SceneRaycaster.cpp
     GUI/SceneRaycaster.hpp
     GUI/Search.cpp
     GUI/Search.hpp
-    GUI/Selection.cpp
-    GUI/Selection.hpp
     GUI/SelectMachine.cpp
     GUI/SelectMachine.hpp
     GUI/SelectMachinePop.cpp
     GUI/SelectMachinePop.hpp
+    GUI/Selection.cpp
+    GUI/Selection.hpp
     GUI/SendMultiMachinePage.cpp
     GUI/SendMultiMachinePage.hpp
     GUI/SendSystemInfoDialog.cpp
@@ -460,12 +439,12 @@ set(SLIC3R_GUI_SOURCES
     GUI/StepMeshDialog.hpp
     GUI/SurfaceDrag.cpp
     GUI/SurfaceDrag.hpp
-    GUI/Tabbook.cpp
-    GUI/Tabbook.hpp
-    GUI/TabButton.cpp
-    GUI/TabButton.hpp
     GUI/Tab.cpp
     GUI/Tab.hpp
+    GUI/TabButton.cpp
+    GUI/TabButton.hpp
+    GUI/Tabbook.cpp
+    GUI/Tabbook.hpp
     GUI/TaskManager.cpp
     GUI/TaskManager.hpp
     GUI/TextLines.cpp
@@ -473,6 +452,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/ThumbnailView.hpp
     GUI/TickCode.cpp
     GUI/TickCode.hpp
+    GUI/Timelapse/TimelapseDownloadPopup.cpp
+    GUI/Timelapse/TimelapseDownloadPopup.hpp
     GUI/UnsavedChangesDialog.cpp
     GUI/UnsavedChangesDialog.hpp
     GUI/UpdateDialogs.cpp
@@ -483,10 +464,18 @@ set(SLIC3R_GUI_SOURCES
     GUI/UserManager.hpp
     GUI/UserNotification.cpp
     GUI/UserNotification.hpp
+    GUI/WebDeviceDialog.cpp
+    GUI/WebDeviceDialog.hpp
     GUI/WebDownPluginDlg.cpp
     GUI/WebDownPluginDlg.hpp
     GUI/WebGuideDialog.cpp
     GUI/WebGuideDialog.hpp
+    GUI/WebPreprintDialog.cpp
+    GUI/WebPreprintDialog.hpp
+    GUI/WebPresetDialog.cpp
+    GUI/WebPresetDialog.hpp
+    GUI/WebUrlDialog.cpp
+    GUI/WebUrlDialog.hpp
     GUI/WebUserLoginDialog.cpp
     GUI/WebUserLoginDialog.hpp
     GUI/WebViewDialog.cpp
@@ -495,126 +484,67 @@ set(SLIC3R_GUI_SOURCES
     GUI/Widgets/AMSControl.hpp
     GUI/Widgets/AMSItem.cpp
     GUI/Widgets/AMSItem.hpp
-    GUI/Widgets/AxisCtrlButton.cpp
-    GUI/Widgets/AxisCtrlButton.hpp
-    GUI/Widgets/Button.cpp
-    GUI/Widgets/Button.hpp
-    GUI/Widgets/CheckBox.cpp
-    GUI/Widgets/CheckBox.hpp
-    GUI/Widgets/ComboBox.cpp
-    GUI/Widgets/ComboBox.hpp
-    GUI/Widgets/DialogButtons.cpp
-    GUI/Widgets/DialogButtons.hpp
-    GUI/Widgets/DropDown.cpp
-    GUI/Widgets/DropDown.hpp
-    GUI/Widgets/ErrorMsgStaticText.cpp
-    GUI/Widgets/ErrorMsgStaticText.hpp
     GUI/Widgets/FanControl.cpp
     GUI/Widgets/FanControl.hpp
-    GUI/Widgets/ImageSwitchButton.cpp
-    GUI/Widgets/ImageSwitchButton.hpp
-    GUI/Widgets/Label.cpp
-    GUI/Widgets/LabeledStaticBox.cpp
-    GUI/Widgets/LabeledStaticBox.hpp
-    GUI/Widgets/Label.hpp
-    GUI/Widgets/PopupWindow.cpp
-    GUI/Widgets/PopupWindow.hpp
-    GUI/Widgets/ProgressBar.cpp
-    GUI/Widgets/ProgressBar.hpp
     GUI/Widgets/ProgressDialog.cpp
     GUI/Widgets/ProgressDialog.hpp
-    GUI/Widgets/RadioBox.cpp
-    GUI/Widgets/RadioBox.hpp
-    GUI/Widgets/RadioGroup.cpp
-    GUI/Widgets/RadioGroup.hpp
-    GUI/Widgets/RoundedRectangle.cpp
-    GUI/Widgets/RoundedRectangle.hpp
-    GUI/Widgets/Scrollbar.cpp
-    GUI/Widgets/Scrollbar.hpp
-    GUI/Widgets/ScrolledWindow.cpp
-    GUI/Widgets/ScrolledWindow.hpp
-    GUI/Widgets/SegmentedToggle.cpp
-    GUI/Widgets/SegmentedToggle.hpp
-    GUI/Widgets/SideButton.cpp
-    GUI/Widgets/SideButton.hpp
     GUI/Widgets/SideMenuPopup.cpp
     GUI/Widgets/SideMenuPopup.hpp
     GUI/Widgets/SideTools.cpp
     GUI/Widgets/SideTools.hpp
-    GUI/Widgets/SpinInput.cpp
-    GUI/Widgets/SpinInput.hpp
-    GUI/Widgets/StateColor.cpp
-    GUI/Widgets/StateColor.hpp
-    GUI/Widgets/StateHandler.cpp
-    GUI/Widgets/StateHandler.hpp
-    GUI/Widgets/StaticBox.cpp
-    GUI/Widgets/StaticBox.hpp
-    GUI/Widgets/StaticLine.cpp
-    GUI/Widgets/StaticLine.hpp
-    GUI/Widgets/StepCtrl.cpp
-    GUI/Widgets/StepCtrl.hpp
-    GUI/Widgets/SwitchButton.cpp
-    GUI/Widgets/SwitchButton.hpp
-    GUI/Widgets/TabCtrl.cpp
-    GUI/Widgets/TabCtrl.hpp
-    GUI/Widgets/TempInput.cpp
-    GUI/Widgets/TempInput.hpp
-    GUI/Widgets/TextInput.cpp
-    GUI/Widgets/TextInput.hpp
     GUI/Widgets/WebView.cpp
     GUI/Widgets/WebView.hpp
     GUI/WipeTowerDialog.cpp
+    GUI/filamentsync/FilamentColorMapBox.cpp
+    GUI/filamentsync/FilamentColorMapBox.hpp
+    GUI/filamentsync/FilamentColorMapBoxGroup.cpp
+    GUI/filamentsync/FilamentColorMapBoxGroup.hpp
+    GUI/filamentsync/FilamentData.hpp
+    GUI/filamentsync/FilamentScrollBar.cpp
+    GUI/filamentsync/FilamentScrollBar.hpp
+    GUI/filamentsync/FilamentSyncAlgorithm.cpp
+    GUI/filamentsync/FilamentSyncAlgorithm.hpp
+    GUI/filamentsync/MachineFilamentPicker.cpp
+    GUI/filamentsync/MachineFilamentPicker.hpp
+    GUI/filamentsync/PlaterPreview.cpp
+    GUI/filamentsync/PlaterPreview.hpp
+    GUI/filamentsync/SyncConfirmDialog.cpp
+    GUI/filamentsync/SyncConfirmDialog.hpp
+    GUI/filamentsync/SyncFilamentColorDialog.cpp
+    GUI/filamentsync/SyncFilamentColorDialog.hpp
+    GUI/format.hpp
     GUI/wxExtensions.cpp
     GUI/wxExtensions.hpp
-    GUI/SMPhysicalPrinterDialog.hpp
-    GUI/SMPhysicalPrinterDialog.cpp
-    GUI/SSWCP.cpp
-    GUI/SSWCP.hpp
-    GUI/DownloadManager.cpp
-    GUI/DownloadManager.hpp
-    GUI/GenericDownloadDialog.cpp
-    GUI/GenericDownloadDialog.hpp
-    GUI/Timelapse/TimelapseDownloadPopup.cpp
-    GUI/Timelapse/TimelapseDownloadPopup.hpp
-    GUI/WebPresetDialog.hpp
-    GUI/WebPresetDialog.cpp
-    GUI/WebDeviceDialog.cpp
-    GUI/WebDeviceDialog.hpp
-    GUI/WebPreprintDialog.hpp
-    GUI/WebPreprintDialog.cpp
-    GUI/WebUrlDialog.cpp
-    GUI/WebUrlDialog.hpp
     pchheader.cpp
     pchheader.hpp
     Utils/ASCIIFolding.cpp
     Utils/ASCIIFolding.hpp
     Utils/AstroBox.cpp
     Utils/AstroBox.hpp
-    Utils/bambu_networking.hpp
     Utils/Bonjour.cpp
     Utils/Bonjour.hpp
-    Utils/CpuMemory.cpp
-    Utils/CpuMemory.hpp
     Utils/CalibUtils.cpp
     Utils/CalibUtils.hpp
     Utils/ColorSpaceConvert.cpp
     Utils/ColorSpaceConvert.hpp
     Utils/ConnectionProcessManager.cpp
     Utils/ConnectionProcessManager.hpp
+    Utils/CpuMemory.cpp
+    Utils/CpuMemory.hpp
     Utils/CrealityPrint.cpp
     Utils/CrealityPrint.hpp
     Utils/Duet.cpp
     Utils/Duet.hpp
+    Utils/ESP3D.cpp
+    Utils/ESP3D.hpp
     Utils/ElegooLink.cpp
     Utils/ElegooLink.hpp
     Utils/EmbossStyleManager.cpp
     Utils/EmbossStyleManager.hpp
-    Utils/ESP3D.cpp
-    Utils/ESP3D.hpp
-    Utils/FileHelp.cpp
-    Utils/FileHelp.hpp
     Utils/FileDecrypt.cpp
     Utils/FileDecrypt.hpp
+    Utils/FileHelp.cpp
+    Utils/FileHelp.hpp
     Utils/FixModelByWin10.cpp
     Utils/FixModelByWin10.hpp
     Utils/FlashAir.cpp
@@ -639,16 +569,14 @@ set(SLIC3R_GUI_SOURCES
     Utils/Http.hpp
     Utils/InstanceID.cpp
     Utils/InstanceID.hpp
-    Utils/json_diff.cpp
-    Utils/json_diff.hpp
-    Utils/minilzo_extension.cpp
-    Utils/minilzo_extension.hpp
     Utils/MKS.cpp
     Utils/MKS.hpp
+    Utils/MQTT.cpp
+    Utils/MQTT.hpp
+    Utils/MoonRaker.cpp
+    Utils/MoonRaker.hpp
     Utils/NetworkAgent.cpp
     Utils/NetworkAgent.hpp
-    Utils/SnapLogClient.cpp
-    Utils/SnapLogClient.hpp
     Utils/Obico.cpp
     Utils/Obico.hpp
     Utils/OctoPrint.cpp
@@ -659,8 +587,8 @@ set(SLIC3R_GUI_SOURCES
     Utils/PrintHost.hpp
     Utils/Process.cpp
     Utils/Process.hpp
-    Utils/ProfileDescription.hpp
     Utils/Profile.hpp
+    Utils/ProfileDescription.hpp
     Utils/RaycastManager.cpp
     Utils/RaycastManager.hpp
     Utils/Repetier.cpp
@@ -671,20 +599,23 @@ set(SLIC3R_GUI_SOURCES
     Utils/SerialMessageType.hpp
     Utils/SimplyPrint.cpp
     Utils/SimplyPrint.hpp
+    Utils/SnapLogClient.cpp
+    Utils/SnapLogClient.hpp
     Utils/TCPConsole.cpp
     Utils/TCPConsole.hpp
+    Utils/TimeSyncManager.cpp
+    Utils/TimeSyncManager.hpp
+    Utils/TimeoutMap.hpp
     Utils/UndoRedo.cpp
     Utils/UndoRedo.hpp
     Utils/WebSocketClient.hpp
     Utils/WxFontUtils.cpp
     Utils/WxFontUtils.hpp
-    Utils/MQTT.hpp
-    Utils/MQTT.cpp
-    Utils/MoonRaker.cpp
-    Utils/MoonRaker.hpp
-    Utils/TimeSyncManager.cpp
-    Utils/TimeSyncManager.hpp
-    Utils/TimeoutMap.hpp
+    Utils/bambu_networking.hpp
+    Utils/json_diff.cpp
+    Utils/json_diff.hpp
+    Utils/minilzo_extension.cpp
+    Utils/minilzo_extension.hpp
 )
 
 add_subdirectory(GUI/DeviceTab)
@@ -748,6 +679,15 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/GeneratedConfig.hpp.in
                ${CMAKE_CURRENT_BINARY_DIR}/GeneratedConfig.hpp
                @ONLY)
 
+# Widget layer static library: the widgets the inspector covers plus their
+# bitmap/color/i18n infrastructure. This is the enforced dependency boundary -
+# files in this list must not include ../GUI_App.hpp, ../GUI.hpp,
+# ../MainFrame.hpp or ../DeviceManager.hpp (guard command:
+#   grep -l "include .. GUI_App.hpp>" <files in SLIC3R_WIDGETS_SOURCES>
+#   must stay empty); the application exposes global
+# look-and-feel state to the widgets through Widgets/UiAppearance.hpp
+# instead. The standalone widget lab links this target.
+
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
 if(WIN32 AND SLIC3R_WIDGET_INSPECTOR)
     target_compile_definitions(libslic3r_gui PRIVATE ORCA_WIDGET_INSPECTOR)
@@ -785,6 +725,7 @@ target_link_libraries(libslic3r_gui libslic3r cereal::cereal imgui imguizmo mini
 # own compilation and to downstream consumers, satisfying resolution of the
 # "app_common/..." headers.
 target_link_libraries(libslic3r_gui app_common)
+target_link_libraries(libslic3r_gui libslic3r_widgets)
 
 if (MSVC)
     target_link_libraries(libslic3r_gui Setupapi.lib)
@@ -809,6 +750,7 @@ if (SLIC3R_STATIC)
     # FIXME: This was previously exported by wx-config but the wxWidgets
     # cmake build forgets this and the build fails in debug mode (or on raspberry release)
     target_compile_definitions(libslic3r_gui PUBLIC -DwxDEBUG_LEVEL=0)
+    target_compile_definitions(libslic3r_widgets PUBLIC -DwxDEBUG_LEVEL=0)
 endif()
 
 if (SPNAV_LIB)

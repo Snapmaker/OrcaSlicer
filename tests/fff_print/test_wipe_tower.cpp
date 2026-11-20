@@ -54,12 +54,12 @@ static void init_degenerate_raft_print(Print& print)
 
 // Two cubes on extruders 2 and 3 of a 3-extruder machine with the wipe tower enabled.
 // "filament_adhesiveness_category" is deliberately shorter than the extruder count (the
-// default single-entry value behaves the same way on a multi-extruder machine), so
-// extruder 3 resolves to a wrapped category that never takes part in a tool change.
-// Wipe tower blocks are only created for categories of tools that change, therefore
-// extruder 3 has no block of its own category and WipeTower2::finish_layer_new used to
-// dereference a null block when finishing a layer with the wall filament (Sentry:
-// EXC_BAD_ACCESS / KERN_INVALID_ADDRESS / 0x58).
+// default single-entry value behaves the same way on a multi-extruder machine).
+// WipeTower2::finish_layer_new used to dereference a null block when the wall filament's
+// category had no block of its own (Sentry: EXC_BAD_ACCESS / KERN_INVALID_ADDRESS / 0x58).
+// Print::_make_wipe_tower now pads the categories to the extruder count with the first
+// entry, as WipeTower2::set_extruder does, so extruder 3 shares extruder 1's category and
+// this print no longer reaches that path; it still guards slicing with a short list.
 static void init_multi_extruder_print(Print& print, const std::string& adhesiveness_categories, int wall_filament)
 {
     DynamicPrintConfig config = Test::default_print_config();
@@ -159,6 +159,26 @@ SCENARIO("Wipe tower with fully defined adhesiveness categories", "[WipeTower]")
                 const std::string gcode = Test::gcode(print);
                 REQUIRE(gcode.find("WIPE_TOWER_START") != std::string::npos);
                 REQUIRE(gcode.find("CP TOOLCHANGE START") != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Wipe tower with a single adhesiveness category for all extruders", "[WipeTower]")
+{
+    GIVEN("3 extruders, objects on extruders 2/3, the single-entry category of pre-2.4.1 presets")
+    {
+        Print print;
+        Test::init_multi_extruder_print(print, "100", 2);
+
+        WHEN("the print is sliced")
+        {
+            THEN("the tool changes between extruders 2 and 3 are kept")
+            {
+                const std::string gcode = Test::gcode(print);
+                REQUIRE(gcode.find("CP TOOLCHANGE START") != std::string::npos);
+                REQUIRE(gcode.find("\nT1") != std::string::npos);
+                REQUIRE(gcode.find("\nT2") != std::string::npos);
             }
         }
     }

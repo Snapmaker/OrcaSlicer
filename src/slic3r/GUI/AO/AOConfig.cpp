@@ -19,9 +19,9 @@ AOSettings::Quality resolve_quality(const std::string& value, const std::string&
             return AOSettings::Quality::Off;
     if (value == "low")
         return AOSettings::Quality::Low;
-    if (value == "medium" || value == "auto")
+    if (value == "medium")
         return AOSettings::Quality::Medium;
-    if (value == "high")
+    if (value == "high" || value == "auto")
         return AOSettings::Quality::High;
     return AOSettings::Quality::Off;
 }

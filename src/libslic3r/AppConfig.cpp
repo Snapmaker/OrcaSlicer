@@ -199,7 +199,7 @@ void AppConfig::set_defaults()
         set_bool("use_free_camera", false);
 
     if (get("render_ao_quality").empty())
-        set("render_ao_quality", "off");
+        set("render_ao_quality", "auto");
     if (get("camera_navigation_style").empty())
         set("camera_navigation_style", "0");
 

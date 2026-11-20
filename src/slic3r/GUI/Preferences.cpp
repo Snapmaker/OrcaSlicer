@@ -1245,9 +1245,10 @@ wxWindow* PreferencesDialog::create_general_page()
 
     const std::vector<std::string> ao_values = {"off", "auto", "low", "medium", "high"};
     auto ao_it = std::find(ao_values.begin(), ao_values.end(), app_config->get("render_ao_quality"));
-    auto [ao_sizer, ao_combo] = create_item_combobox_base(_L("Ambient occlusion"), page,
-        _L("Adds contact shading in the Prepare and Assemble views. Auto uses Medium quality. Strength is fixed at 50%. "
-           "Clipping and specialized editing modes use the original rendering."),
+    auto [ao_sizer, ao_combo]                = create_item_combobox_base(
+        _L("Ambient occlusion"), page,
+        _L("Adds contact shading in the Prepare and Assemble views. Auto uses High quality. Strength is fixed at 50%. "
+                                         "Clipping and specialized editing modes use the original rendering."),
         "render_ao_quality", {_L("Off"), _L("Auto"), _L("Low"), _L("Medium"), _L("High")},
         ao_it == ao_values.end() ? 0 : static_cast<unsigned int>(ao_it - ao_values.begin()));
     ao_combo->GetDropDown().Bind(wxEVT_COMBOBOX, [this, ao_values](wxCommandEvent& e) {

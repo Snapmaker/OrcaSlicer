@@ -139,7 +139,9 @@ int ssl_options::on_error(const char* str, size_t len, void* context)
             if (errHandler)
                 errHandler(errMsg);
 
-            return MQTTASYNC_SUCCESS;
+            // ERR_print_errors_cb() stops reporting at a result <= 0, so success must be positive
+            // for the entries after the first one to be delivered.
+            return 1;
         }
     }
     catch (...) {

@@ -122,6 +122,8 @@ MqttClient::MqttClient(const std::string& server_address,
         mqtt::ssl_options ssl_opts;                
         ssl_opts.set_verify(false);
         ssl_opts.set_enable_server_cert_auth(true);
+        // OpenSSL error queue text (for example when no TLS context can be created) goes to the app log
+        ssl_opts.set_error_handler([](const std::string& err) { BOOST_LOG_TRIVIAL(error) << "[MQTT_INFO] OpenSSL: " << err; });
                 
         if (!ca_content.empty()) {
             ssl_opts.set_trust_store(ca_path.string());

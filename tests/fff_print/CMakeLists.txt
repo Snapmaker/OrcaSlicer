@@ -24,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
 	test_cooling_buffer.cpp
 	test_gcode_processor.cpp
 	test_adaptive_pa.cpp
+	test_tool_ordering.cpp
 	test_wipe_tower.cpp
 	test_triangle_mesh_slicer.cpp
 	)

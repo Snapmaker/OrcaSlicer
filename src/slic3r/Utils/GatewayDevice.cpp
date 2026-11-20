@@ -320,4 +320,20 @@ bool GatewayDevice::machine_slots_equal(const std::vector<ConnectMachineInfo>& l
     return true;
 }
 
+std::vector<GatewayDevice::NozzleFlowMismatch> GatewayDevice::nozzle_flow_mismatches(const std::vector<ConnectMachineInfo>& slots,
+                                                                                      const std::vector<std::string>&        sliced_types,
+                                                                                      const std::vector<int>&                used_nozzles)
+{
+    std::vector<NozzleFlowMismatch> mismatches;
+    for (const ConnectMachineInfo& slot : slots) {
+        if (slot.index < 0 || static_cast<size_t>(slot.index) >= sliced_types.size() || slot.nozzle_volume_type.empty() ||
+            std::find(used_nozzles.begin(), used_nozzles.end(), slot.index) == used_nozzles.end())
+            continue;
+        const std::string& sliced = sliced_types[slot.index];
+        if (slot.nozzle_volume_type != sliced)
+            mismatches.push_back({slot.index, slot.nozzle_volume_type, sliced});
+    }
+    return mismatches;
+}
+
 }} // namespace Slic3r::Gateway

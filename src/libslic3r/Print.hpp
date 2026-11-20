@@ -906,8 +906,10 @@ public:
     Flow                skirt_flow() const;
 
     std::vector<unsigned int> object_extruders() const;
-    std::vector<unsigned int> support_material_extruders() const;
-    std::vector<unsigned int> extruders(bool conside_custom_gcode = false) const;
+    // only_generated: count an object's support filaments only if support extrusions were generated for it.
+    std::vector<unsigned int> support_material_extruders(bool only_generated = false) const;
+    // only_generated_support: see support_material_extruders(). Requires the support to be generated already.
+    std::vector<unsigned int> extruders(bool conside_custom_gcode = false, bool only_generated_support = false) const;
     // On-demand evaluation vs filament_hot_bed_nozzles.json (calls extruders(true) once internally).
     void                filament_rule_mismatch_flags(NozzleFilamentRuleMismatch& out_nozzle_mismatch,
                                                      bool& out_gesp,

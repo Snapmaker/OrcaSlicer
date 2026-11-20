@@ -3846,7 +3846,7 @@ void SSWCP_MachineConnect_Instance::sw_test_connect() {
             // todo : add cin-type
             //            
             p_config->option<ConfigOptionEnum<PrintHostType>>("host_type")->value = type;            
-            p_config->set("print_host", ip + (port == -1 ? "" : std::to_string(port)));
+            p_config->set("print_host", ip + (port == -1 ? "" : ":" + std::to_string(port)));
             std::shared_ptr<PrintHost> host(PrintHost::get_print_host(&wxGetApp().preset_bundle->printers.get_edited_preset().config));
 
             if (!host) {                

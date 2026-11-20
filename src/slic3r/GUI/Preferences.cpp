@@ -1,5 +1,7 @@
 #include "Preferences.hpp"
+#include "AO/AOConfig.hpp"
 #include "OptionsGroup.hpp"
+#include "OpenGLManager.hpp"
 #include "GUI_App.hpp"
 #include "GLCanvas3D.hpp"
 #include "MainFrame.hpp"
@@ -8,6 +10,7 @@
 #include "MsgDialog.hpp"
 #include "I18N.hpp"
 #include "libslic3r/AppConfig.hpp"
+#include <GL/glew.h>
 #include <wx/language.h>
 #include <wx/notebook.h>
 #include "Notebook.hpp"
@@ -21,6 +24,7 @@
 #include <wx/display.h>
 #include <map>
 #include <memory>
+#include <tuple>
 
 #include "app_common/SentryWrapper.hpp"
 #include "SSWCP.hpp"
@@ -1245,31 +1249,57 @@ wxWindow* PreferencesDialog::create_general_page()
 
     const std::vector<std::string> ao_values = {"off", "auto", "low", "medium", "high"};
     auto ao_it = std::find(ao_values.begin(), ao_values.end(), app_config->get("render_ao_quality"));
-    auto [ao_sizer, ao_combo]                = create_item_combobox_base(
+    const auto                     ao_item   = create_item_combobox_base(
         _L("Ambient occlusion"), page,
         _L("Adds contact shading in the Prepare and Assemble views. Auto uses Medium quality. Strength is fixed at 50%. "
-                                         "Clipping and specialized editing modes use the original rendering."),
+                                                       "Clipping and specialized editing modes use the original rendering."),
         "render_ao_quality", {_L("Off"), _L("Auto"), _L("Low"), _L("Medium"), _L("High")},
         ao_it == ao_values.end() ? 0 : static_cast<unsigned int>(ao_it - ao_values.begin()));
-    ao_combo->GetDropDown().Bind(wxEVT_COMBOBOX, [this, ao_values](wxCommandEvent& e) {
+    auto* ao_sizer = std::get<0>(ao_item);
+    auto* ao_combo = std::get<1>(ao_item);
+    ao_combo->Bind(wxEVT_COMBOBOX, [this, ao_combo, ao_values](wxCommandEvent& e) {
         const int index = e.GetSelection();
-        if (index >= 0 && index < static_cast<int>(ao_values.size())) {
+        if (ao_combo->IsEnabled() && index >= 0 && index < static_cast<int>(ao_values.size())) {
             app_config->set("render_ao_quality", ao_values[index]);
             app_config->save();
-            if (auto* canvas = wxGetApp().plater()->get_current_canvas3D()) canvas->set_as_dirty();
+            if (auto* plater = wxGetApp().plater())
+                if (auto* canvas = plater->get_current_canvas3D())
+                    canvas->set_as_dirty();
         }
         e.Skip();
     });
     auto* ao_status = new wxStaticText(page, wxID_ANY, wxEmptyString);
-    ao_status->Bind(wxEVT_UPDATE_UI, [ao_status](wxUpdateUIEvent&) {
-        auto* canvas = wxGetApp().plater()->get_current_canvas3D();
-        const std::string reason = canvas ? canvas->get_ao_failure_reason() : std::string();
-        const wxString label = reason.empty() ? wxString() : _L("Ambient occlusion unavailable") + ": " + wxString::FromUTF8(reason.c_str());
+    const auto update_ao_controls = [ao_combo, ao_status] {
+        wxString label;
+        // GLInfo caches its first query. GLEW's version flags are populated once a GL context is initialized.
+        if (GLEW_VERSION_1_1) {
+            const auto& gl_info = OpenGLManager::get_gl_info();
+            const auto& version = gl_info.get_version();
+            if (AO::is_software_renderer(gl_info.get_renderer()))
+                label = _L("Ambient occlusion is unavailable with software rendering.");
+            else if (!version.empty() && version != "N/A" && !gl_info.is_version_greater_or_equal_to(3, 1))
+                label = _L("Ambient occlusion requires OpenGL 3.1 or later.");
+        }
+
+        const bool device_allows_ao = label.empty();
+        if (ao_combo->IsThisEnabled() != device_allows_ao) {
+            ao_combo->Enable(device_allows_ao);
+            ao_combo->GetDropDown().Enable(device_allows_ao);
+        }
+
+        if (device_allows_ao) {
+            auto* plater = wxGetApp().plater();
+            auto* canvas = plater ? plater->get_current_canvas3D() : nullptr;
+            if (canvas && !canvas->get_ao_failure_reason().empty())
+                label = _L("Ambient occlusion unavailable") + ": " + wxString::FromUTF8(canvas->get_ao_failure_reason().c_str());
+        }
         if (ao_status->GetLabel() != label) {
             ao_status->SetLabel(label);
             ao_status->GetParent()->Layout();
         }
-    });
+    };
+    update_ao_controls();
+    ao_status->Bind(wxEVT_UPDATE_UI, [update_ao_controls](wxUpdateUIEvent&) { update_ao_controls(); });
 
     auto item_mouse_zoom_settings = create_item_checkbox(_L("Zoom to mouse position"), page, _L("Zoom in towards the mouse pointer's position in the 3D view, rather than the 2D window center."), 50, "zoom_to_mouse");
     auto item_use_free_camera_settings = create_item_checkbox(_L("Use free camera"), page, _L("If enabled, use free camera. If not enabled, use constrained camera."), 50, "use_free_camera");

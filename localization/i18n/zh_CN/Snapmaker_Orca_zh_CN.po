@@ -15820,5 +15820,13 @@ msgid "Ambient occlusion unavailable"
 msgstr "环境光遮蔽不可用"
 
 #: src/slic3r/GUI/Preferences.cpp
+msgid "Ambient occlusion is unavailable with software rendering."
+msgstr "软件渲染不支持环境光遮蔽。"
+
+#: src/slic3r/GUI/Preferences.cpp
+msgid "Ambient occlusion requires OpenGL 3.1 or later."
+msgstr "环境光遮蔽需要 OpenGL 3.1 或更高版本。"
+
+#: src/slic3r/GUI/Preferences.cpp
 msgid "Adds contact shading in the Prepare and Assemble views. Auto uses Medium quality. Strength is fixed at 50%. Clipping and specialized editing modes use the original rendering."
 msgstr "在准备和装配视图中添加接触阴影。自动模式采用中等画质，强度固定为 50%。裁剪和特殊编辑模式保持原有渲染。"

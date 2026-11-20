@@ -1399,16 +1399,27 @@ void GLVolumeCollection::render_sinking_contours(ERenderType type, const GUI::Ca
 {
     GLShaderProgram* shader = GUI::wxGetApp().get_shader("flat");
     if (shader == nullptr) return;
+    // Classify the candidates after the opaque pass updates the volume colors.
+    // Most scenes have no contours, so avoid allocating or sorting the opaque list again.
+    GLVolumePtrs candidates;
+    for (GLVolume* volume : volumes) {
+        if (volume->is_sinking() && !volume->is_below_printbed() && camera.GetFrustum().Intersects(volume->transformed_bounding_box()))
+            candidates.push_back(volume);
+    }
+    if (candidates.empty())
+        return;
+    const auto to_render = volumes_to_render(candidates, type, camera.get_view_matrix(), filter_func);
+    if (to_render.empty())
+        return;
+
     GLint program = 0, depth_func = 0;
     glGetIntegerv(GL_CURRENT_PROGRAM, &program);
     glGetIntegerv(GL_DEPTH_FUNC, &depth_func);
     const GLboolean depth_enabled = glIsEnabled(GL_DEPTH_TEST);
     glEnable(GL_DEPTH_TEST);
     shader->start_using();
-    for (const auto& entry : volumes_to_render(volumes, type, camera.get_view_matrix(), filter_func)) {
+    for (const auto& entry : to_render) {
         GLVolume& volume = *entry.first;
-        if (!camera.GetFrustum().Intersects(volume.transformed_bounding_box()) ||
-            !volume.is_sinking() || volume.is_below_printbed()) continue;
         glDepthFunc(volume.hover != GLVolume::HS_None || volume.force_sinking_contours ? GL_ALWAYS : GL_LESS);
         volume.render_sinking_contours();
     }

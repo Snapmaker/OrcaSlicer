@@ -10,13 +10,22 @@
 
 namespace Slic3r { namespace GUI { namespace AO {
 
-AOSettings::Quality resolve_quality(const std::string& value, const std::string& renderer)
+bool is_software_renderer(const std::string& renderer)
 {
     std::string name = renderer;
     std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return char(std::tolower(c)); });
     for (const char* software : {"llvmpipe", "softpipe", "swiftshader", "gdi generic", "software"})
         if (name.find(software) != std::string::npos)
-            return AOSettings::Quality::Off;
+            return true;
+
+    // OpenSWR identifies itself as "SWR (LLVM ...)".
+    return name.compare(0, 5, "swr (") == 0;
+}
+
+AOSettings::Quality resolve_quality(const std::string& value, const std::string& renderer)
+{
+    if (is_software_renderer(renderer))
+        return AOSettings::Quality::Off;
     if (value == "low")
         return AOSettings::Quality::Low;
     if (value == "medium" || value == "auto")

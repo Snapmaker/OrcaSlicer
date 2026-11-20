@@ -3,6 +3,7 @@
 #include <chrono>
 #include "libslic3r/libslic3r.h"
 #include "GLCanvas3D.hpp"
+#include "AO/AOGLUtils.hpp"
 #include "AO/AOShaderNames.hpp"
 
 #include <igl/unproject.h>
@@ -161,6 +162,61 @@ void LogPreExistingOpenGlErrors(const char* operation)
     GLenum error = GL_NO_ERROR;
     while ((error = ::glGetError()) != GL_NO_ERROR)
         BOOST_LOG_TRIVIAL(error) << "Pre-existing OpenGL error before " << operation << ": " << error;
+}
+
+bool QueryDefaultAOFrameTargetLayout(GLAOFrameTarget::Description& description)
+{
+    glGetIntegerv(GL_SAMPLES, &description.samples);
+    if (description.samples <= 1)
+        return false;
+
+    GLint draw_buffer = GL_NONE;
+    glGetIntegerv(GL_DRAW_BUFFER0, &draw_buffer);
+    GLenum color_attachment = static_cast<GLenum>(draw_buffer);
+    switch (color_attachment) {
+    case GL_BACK: color_attachment = GL_BACK_LEFT; break;
+    case GL_FRONT: color_attachment = GL_FRONT_LEFT; break;
+    case GL_BACK_LEFT:
+    case GL_BACK_RIGHT:
+    case GL_FRONT_LEFT:
+    case GL_FRONT_RIGHT: break;
+    default: return false;
+    }
+
+    const auto has_attachment = [](GLenum attachment) {
+        GLint type = GL_NONE;
+        glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
+        return type == GL_FRAMEBUFFER_DEFAULT;
+    };
+    if (!has_attachment(color_attachment) || !has_attachment(GL_DEPTH))
+        return false;
+
+    GLint red = 0, green = 0, blue = 0, encoding = GL_NONE, depth = 0, depth_type = GL_NONE, stencil = 0;
+    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, color_attachment, GL_FRAMEBUFFER_ATTACHMENT_RED_SIZE, &red);
+    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, color_attachment, GL_FRAMEBUFFER_ATTACHMENT_GREEN_SIZE, &green);
+    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, color_attachment, GL_FRAMEBUFFER_ATTACHMENT_BLUE_SIZE, &blue);
+    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, color_attachment, GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING, &encoding);
+    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &depth);
+    glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE, &depth_type);
+    if (red != 8 || green != 8 || blue != 8 || encoding != GL_LINEAR || depth <= 0)
+        return false;
+
+    if (has_attachment(GL_STENCIL))
+        glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencil);
+    if (stencil != 0 && stencil != 8)
+        return false;
+
+    description.color_format = GL_RGBA8;
+    description.stencil      = stencil == 8;
+    if (depth_type == GL_FLOAT && depth == 32)
+        description.depth_format = description.stencil ? GL_DEPTH32F_STENCIL8 : GL_DEPTH_COMPONENT32F;
+    else if (depth_type == GL_UNSIGNED_NORMALIZED && depth == 24)
+        description.depth_format = description.stencil ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT24;
+    else if (depth_type == GL_UNSIGNED_NORMALIZED && !description.stencil && (depth == 16 || depth == 32))
+        description.depth_format = depth == 16 ? GL_DEPTH_COMPONENT16 : GL_DEPTH_COMPONENT32;
+    else
+        return false;
+    return true;
 }
 
 bool HoverAffectsSinkingContour(const GLVolumeCollection& volumes, const GLVolume& volume)
@@ -3462,37 +3518,22 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         m_ao_frame_target.release();
     bool owned_target_active = false;
     if (owned_target_requested) {
-        GLint       samples = 0, red = 0, green = 0, blue = 0, depth = 0, stencil = 0;
-        GLint       encoding = GL_LINEAR, color_buffer = 0;
         std::string unavailable = "full-frame MSAA requires a linear RGB8 window and OpenGL 4";
         // Sample paths need a canvas-owned MSAA target; strict pixel comparisons must not degrade.
         const bool composite_available = m_ao_catalog.composite_sample_ready(ao_plan.request.composite, true);
         if (targetDrawFramebuffer == 0 && wxGetApp().is_gl_version_greater_or_equal_to(4, 0) && composite_available) {
-            glGetIntegerv(GL_SAMPLES, &samples);
-            glGetIntegerv(GL_RED_BITS, &red);
-            glGetIntegerv(GL_GREEN_BITS, &green);
-            glGetIntegerv(GL_BLUE_BITS, &blue);
-            glGetIntegerv(GL_DEPTH_BITS, &depth);
-            glGetIntegerv(GL_STENCIL_BITS, &stencil);
-            glGetIntegerv(GL_DRAW_BUFFER0, &color_buffer);
-            const GLenum attachment = color_buffer == GL_BACK  ? GL_BACK_LEFT :
-                                      color_buffer == GL_FRONT ? GL_FRONT_LEFT :
-                                                                 GLenum(color_buffer);
-            glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, attachment, GL_FRAMEBUFFER_ATTACHMENT_COLOR_ENCODING, &encoding);
-            if (samples > 1 && red == 8 && green == 8 && blue == 8 && encoding == GL_LINEAR && depth > 0) {
-                GLAOFrameTarget::Description description;
-                description.context      = m_context;
-                description.width        = viewport[2];
-                description.height       = viewport[3];
-                description.samples      = samples;
-                description.color_format = GL_RGBA8;
-                description.stencil      = stencil > 0;
-                description.depth_format = stencil     ? (depth == 32 ? GL_DEPTH32F_STENCIL8 : GL_DEPTH24_STENCIL8) :
-                                           depth == 32 ? GL_DEPTH_COMPONENT32F :
-                                           depth == 16 ? GL_DEPTH_COMPONENT16 :
-                                                         GL_DEPTH_COMPONENT24;
-                owned_target_active      = m_ao_frame_target.prepare(description);
-                unavailable              = m_ao_frame_target.failure_reason();
+            GLAOFrameTarget::Description description;
+            description.context = m_context;
+            description.width   = viewport[2];
+            description.height  = viewport[3];
+            if (QueryDefaultAOFrameTargetLayout(description)) {
+                owned_target_active = m_ao_frame_target.prepare(description);
+                unavailable         = m_ao_frame_target.failure_reason();
+            } else {
+                bool context_lost = false;
+                AO::consume_errors(&context_lost);
+                if (context_lost)
+                    unavailable = "OpenGL context lost";
             }
         }
         if (!owned_target_active) {
@@ -9244,7 +9285,10 @@ GLCanvas3D::AOFramePlan GLCanvas3D::BuildAOFramePlan(const Camera& camera)
     request.require_sample_composite = requirements.strict_layout && requirements.owned_msaa_target &&
                                        request.composite != AO::CompositeVariant::Pixel && settings.debug_view == 0;
 
-    // Program catalog refresh from the shader manager (ownership stays there).
+    if (settings.quality == AO::AOSettings::Quality::Off)
+        return plan;
+
+    // Refresh the catalog on eligible frames so program revisions invalidate the scene cache.
     AO::GLAOProgramCatalog::Refs refs;
     refs.normal           = wxGetApp().get_shader(AO::ShaderNames::normal);
     refs.evaluate         = wxGetApp().get_shader(AO::ShaderNames::evaluate_fs);

@@ -6,6 +6,30 @@
 
 namespace Slic3r { namespace GUI { namespace AO {
 
+namespace {
+constexpr int depth_mip_levels = 5;
+constexpr int depth_tile_size  = 1 << (depth_mip_levels - 1);
+
+int padded_extent(int extent) { return (extent + depth_tile_size - 1) / depth_tile_size * depth_tile_size; }
+
+bool fits_viewport(const GLAOComputeBackend::Capabilities& caps, int width, int height)
+{
+    const int max_extent = caps.max_texture_size - (depth_tile_size - 1);
+    return GLAOComputeBackend::valid_dispatch(caps, width, height) && width <= max_extent && height <= max_extent;
+}
+
+double texture_storage_bytes(int width, int height, int denoise_passes)
+{
+    // Each work texture is one byte per pixel. Linear depth uses four bytes per texel
+    // and has five mip levels at dimensions padded to a full reduction tile.
+    double    bytes = double(width) * height * (GLAOComputeBackend::texture_count(denoise_passes) - 1);
+    const int pw = padded_extent(width), ph = padded_extent(height);
+    for (int level = 0; level < depth_mip_levels; ++level)
+        bytes += 4.0 * (pw >> level) * (ph >> level);
+    return bytes;
+}
+} // namespace
+
 void GLAOComputeBackend::release()
 {
     if (!m_textures[0])
@@ -23,6 +47,7 @@ void GLAOComputeBackend::forget_context()
     m_programs = {};
     m_width = m_height = m_pw = m_ph = 0;
     m_failure.clear();
+    m_failed_storage_bytes = 0;
     m_probed       = false;
     m_capabilities = {};
 }
@@ -30,21 +55,46 @@ void GLAOComputeBackend::forget_context()
 void GLAOComputeBackend::disable(const std::string& reason)
 {
     release();
+    m_failed_storage_bytes = 0;
     m_failure = reason;
+}
+
+void GLAOComputeBackend::reset_health()
+{
+    if (m_failure == "OpenGL context lost")
+        return;
+    m_failure.clear();
+    m_failed_storage_bytes = 0;
+}
+
+bool GLAOComputeBackend::can_retry_resource_failure(int width, int height, int denoise_passes) const
+{
+    if (denoise_passes < 1 || denoise_passes > 3 || !fits_viewport(m_capabilities, width, height))
+        return false;
+    return m_failure == "CS viewport exceeds resource limits" ||
+           (m_failed_storage_bytes > 0 && texture_storage_bytes(width, height, denoise_passes) < m_failed_storage_bytes);
+}
+
+std::string GLAOComputeBackend::failure_reason_for(int width, int height, int denoise_passes) const
+{
+    return can_retry_resource_failure(width, height, denoise_passes) ? std::string{} : m_failure;
 }
 
 bool GLAOComputeBackend::prepare(int width, int height, const std::array<unsigned int, 3>& programs, int denoise_passes)
 {
     if (denoise_passes < 1 || denoise_passes > 3)
         return false;
-    if (!m_failure.empty())
-        return false;
+    if (!m_failure.empty()) {
+        if (!can_retry_resource_failure(width, height, denoise_passes))
+            return false;
+        reset_health();
+    }
     const auto& caps = capabilities();
     if (!caps.supported) {
         m_failure = caps.reason;
         return false;
     }
-    if (!valid_dispatch(caps, width, height) || width > caps.max_texture_size - 15 || height > caps.max_texture_size - 15) {
+    if (!fits_viewport(caps, width, height)) {
         m_failure = "CS viewport exceeds resource limits";
         return false;
     }
@@ -62,17 +112,17 @@ bool GLAOComputeBackend::prepare(int width, int height, const std::array<unsigne
     m_width  = width;
     m_height = height;
     // Pad by edge replication to 16: all five MIPs have complete reduction tiles, including odd viewports.
-    m_pw                    = ((width + 15) / 16) * 16;
-    m_ph                    = ((height + 15) / 16) * 16;
-    const int texture_count = denoise_passes == 3 ? 6 : 5;
-    glGenTextures(texture_count, m_textures.data());
+    m_pw            = padded_extent(width);
+    m_ph            = padded_extent(height);
+    const int count = texture_count(denoise_passes);
+    glGenTextures(count, m_textures.data());
     const GLenum formats[] = {GL_R32F, GL_R8UI, GL_R8UI, GL_R8UI, GL_R8, GL_R8UI};
     const char*  labels[]  = {"XeGTAO.LinearDepthMips",     "XeGTAO.RawEncoded", "XeGTAO.Edges",
                               "XeGTAO.DenoiseIntermediate", "XeGTAO.Visibility", "XeGTAO.DenoiseSecondIntermediate"};
     glActiveTexture(GL_TEXTURE0);
-    for (int i = 0; i < texture_count; ++i) {
+    for (int i = 0; i < count; ++i) {
         glBindTexture(GL_TEXTURE_2D, m_textures[i]);
-        glTexStorage2D(GL_TEXTURE_2D, i == 0 ? 5 : 1, formats[i], i == 0 ? m_pw : width, i == 0 ? m_ph : height);
+        glTexStorage2D(GL_TEXTURE_2D, i == 0 ? depth_mip_levels : 1, formats[i], i == 0 ? m_pw : width, i == 0 ? m_ph : height);
         if (glObjectLabel)
             glObjectLabel(GL_TEXTURE, m_textures[i], -1, labels[i]);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, i == 0 ? GL_NEAREST_MIPMAP_NEAREST : GL_NEAREST);
@@ -80,15 +130,22 @@ bool GLAOComputeBackend::prepare(int width, int height, const std::array<unsigne
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
-    const GLenum allocation_error = glGetError();
-    if (allocation_error != GL_NO_ERROR) {
-        if (allocation_error == GL_CONTEXT_LOST) {
-            state.forget_context();
-            forget_context();
-            m_failure = "OpenGL context lost";
-            return false;
-        }
+    bool allocation_failed = false, out_of_memory = false, context_lost = false;
+    for (GLenum error = glGetError(); error != GL_NO_ERROR; error = glGetError()) {
+        allocation_failed = true;
+        out_of_memory |= error == GL_OUT_OF_MEMORY;
+        context_lost |= error == GL_CONTEXT_LOST;
+    }
+    if (context_lost) {
+        state.forget_context();
+        forget_context();
+        m_failure = "OpenGL context lost";
+        return false;
+    }
+    if (allocation_failed) {
         disable("CS texture allocation failed");
+        if (out_of_memory)
+            m_failed_storage_bytes = texture_storage_bytes(width, height, denoise_passes);
         return false;
     }
     return true;
@@ -252,7 +309,7 @@ GLAOComputeBackend::State::State()
     for (GLuint i = 0; i < m_images.size(); ++i) {
         glActiveTexture(GL_TEXTURE0 + i);
         glGetIntegerv(GL_TEXTURE_BINDING_2D, &m_textures[i]);
-        glGetIntegeri_v(GL_SAMPLER_BINDING, i, &m_samplers[i]);
+        glGetIntegerv(GL_SAMPLER_BINDING, &m_samplers[i]);
         auto& image = m_images[i];
         glGetIntegeri_v(GL_IMAGE_BINDING_NAME, i, &image.name);
         glGetIntegeri_v(GL_IMAGE_BINDING_LEVEL, i, &image.level);

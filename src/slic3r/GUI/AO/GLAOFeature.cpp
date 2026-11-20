@@ -101,6 +101,13 @@ AOBackendAvailability GLAOFeature::compute_availability(const AOExecutionRequest
         availability.cs_unavailable_reason = caps.reason;
         availability.cs_programs_ready     = catalog.cs_ready(request.cs_low_reference && settings.quality == AOSettings::Quality::Low);
         availability.cs_health_reason      = m_compute.failure_reason();
+        if (!availability.cs_health_reason.empty() && availability.cs_supported && availability.cs_programs_ready) {
+            // Resolve the requested CS storage before applying the health latch to backend selection.
+            availability.cs_health_reason.clear();
+            const auto  requested         = make_plan(request, settings, input.viewport[2], input.viewport[3], availability);
+            const auto& cs                = requested.plan.cs();
+            availability.cs_health_reason = m_compute.failure_reason_for(cs.width, cs.height, cs.denoise_passes);
+        }
     }
     return availability;
 }
@@ -134,13 +141,12 @@ GLAOFeature::Preparation GLAOFeature::prepare(const AOExecutionRequest& request,
         m_fragment.reset_health();
         m_inputs.reset_health();
         m_compositor.reset_health();
-        m_compute.retry_resource_failure();
         if (m_failure_scope == FailureScope::DepthAllocation || m_failure_scope == FailureScope::Plan)
             m_failure.clear();
     }
     if (!(m_program_identity == catalog.identity())) {
         m_program_identity = catalog.identity();
-        if (m_failure_scope != FailureScope::DepthAllocation)
+        if (m_failure_scope != FailureScope::DepthAllocation && m_failure_scope != FailureScope::DepthSource)
             m_failure.clear();
         m_compute.reset_health();
         m_fragment.reset_health();
@@ -154,7 +160,8 @@ GLAOFeature::Preparation GLAOFeature::prepare(const AOExecutionRequest& request,
         if (settings.quality != failed_quality)
             m_failure.clear();
     }
-    if (!m_failure.empty() && m_failure_scope != FailureScope::Plan)
+    const bool depth_source_failed = !m_failure.empty() && m_failure_scope == FailureScope::DepthSource;
+    if (!m_failure.empty() && m_failure_scope != FailureScope::Plan && !depth_source_failed)
         return Preparation::Failed;
     if (!GLEW_VERSION_3_1) {
         fail("OpenGL 3.1 is required", FailureScope::Common);
@@ -163,20 +170,26 @@ GLAOFeature::Preparation GLAOFeature::prepare(const AOExecutionRequest& request,
     const int w = input.viewport[2], h = input.viewport[3];
     if (w <= 0 || h <= 0)
         return Preparation::Failed;
-    if (!catalog.common_ready()) {
-        fail("a required common AO shader is unavailable", FailureScope::Common);
-        return Preparation::Failed;
-    }
     // Keep the caller's scene target and bindings intact through every allocation path.
     AOGLStateGuard state;
     bool           pending_loss = false;
     consume_errors(&pending_loss);
+    const bool depth_source_changed = depth_source_failed && !pending_loss && m_inputs.depth_source_changed(input.source, pending_loss);
     if (pending_loss) {
         state.forget_context();
         fail("OpenGL context lost");
         if (observer)
             observer->stage_failed(AOStage::AOBegin, m_failure, AOStatus::ContextLost);
         return Preparation::ContextLost;
+    }
+    if (depth_source_failed) {
+        if (!depth_source_changed)
+            return Preparation::Failed;
+        m_failure.clear();
+    }
+    if (!catalog.common_ready()) {
+        fail("a required common AO shader is unavailable", FailureScope::Common);
+        return Preparation::Failed;
     }
     const auto& refs = catalog.refs();
     // Reference comparisons abort rather than silently changing their MSAA path.

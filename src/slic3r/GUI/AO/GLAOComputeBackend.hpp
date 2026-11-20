@@ -45,14 +45,11 @@ public:
     void release();
     void forget_context();
     void disable(const std::string& reason);
-    void reset_health() { m_failure.clear(); }
-    void retry_resource_failure()
-    {
-        if (m_failure == "CS viewport exceeds resource limits" || m_failure == "CS texture allocation failed")
-            m_failure.clear();
-    }
+    void reset_health();
 
     const std::string& failure_reason() const { return m_failure; }
+    // Health of the requested storage configuration, without consuming a pending retry.
+    std::string        failure_reason_for(int width, int height, int denoise_passes) const;
     unsigned int       evaluation_program() const { return m_programs[1]; }
     unsigned int       output() const { return m_textures[4]; }
     unsigned int       texture(int index) const { return m_textures[index]; }
@@ -92,11 +89,14 @@ public:
     };
 
 private:
+    bool can_retry_resource_failure(int width, int height, int denoise_passes) const;
+
     // The second intermediate is allocated only for three-pass presets (including static High).
     std::array<unsigned int, 6> m_textures{}; // depth MIPs, raw, edges, first intermediate, normalized final, second intermediate
     std::array<unsigned int, 3> m_programs{};
     int                         m_width{}, m_height{}, m_pw{}, m_ph{};
     std::string                 m_failure;
+    double                      m_failed_storage_bytes{0};
     Capabilities                m_capabilities;
     bool                        m_probed{false};
 };

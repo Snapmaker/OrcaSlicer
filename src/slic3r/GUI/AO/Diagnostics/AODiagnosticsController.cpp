@@ -59,8 +59,6 @@ void AODiagnosticsController::mark(AOStage stage)
                 }
             }
         }
-        if (m_execution.ready && m_profiler.benchmark_active())
-            m_profiler.benchmark_pipeline(pipeline_description());
         if (m_capture_path.empty() && (m_diagnostics.frame_timing_requested || m_profiler.benchmark_active()))
             m_profiler.begin_frame_timing(); // Marks AOBegin on both rings.
         else
@@ -70,8 +68,12 @@ void AODiagnosticsController::mark(AOStage stage)
     case AOStage::AOEnd: m_profiler.end_frame_timing(); break;
     default: m_profiler.mark(stage); break;
     }
-    if (stage == AOStage::ColorBeforeComposite)
+    if (stage == AOStage::ColorBeforeComposite) {
+        // The feature has published the selected composite route, including any fallback.
+        if (m_execution.ready && m_profiler.benchmark_active())
+            m_profiler.benchmark_pipeline(pipeline_description());
         capture_precomposite_products();
+    }
     if (stage == AOStage::ColorCompositeComplete)
         capture_postcomposite_products();
 }

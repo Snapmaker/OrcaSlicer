@@ -25,6 +25,8 @@ struct AOSettings
     int debug_view{0};
 };
 
+bool is_software_renderer(const std::string& renderer);
+
 // Resolves a stored AppConfig string ("off"/"auto"/"low"/"medium"/"high") to a quality level.
 // Software rasterizers always disable AO regardless of the stored value.
 AOSettings::Quality resolve_quality(const std::string& value, const std::string& renderer);

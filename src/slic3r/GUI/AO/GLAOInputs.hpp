@@ -27,6 +27,8 @@ public:
     bool prepare(int width, int height, bool with_confidence);
     // Resolved depth: blits the scene depth and validates/copies the format once per source.
     bool capture_depth(const AOFrameInput& input);
+    // Compares the actual source with the one used by the last depth capture attempt.
+    bool depth_source_changed(unsigned int source, bool& context_lost) const;
     // Multisampled depth copy for per-sample evaluation; consults the plan's sample path.
     bool capture_sample_depth(const AOFrameInput& input, bool sample_path_allowed);
     void release_sample_depth();

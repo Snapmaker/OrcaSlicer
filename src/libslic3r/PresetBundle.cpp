@@ -6,12 +6,14 @@
 #include "libslic3r.h"
 #include "Utils.hpp"
 #include "Model.hpp"
+#include "Slicing.hpp"
 #include "format.hpp"
 #include "common_func/common_func.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <set>
 #include <fstream>
@@ -198,11 +200,13 @@ void EnsureFilamentVolumeTypesAligned(DynamicPrintConfig &config, size_t num_fil
 
 } // namespace
 
-static std::vector<std::string> s_project_options {
+static std::vector<std::string> s_project_options{
     "flush_volumes_vector",
     "flush_volumes_matrix",
     // BBS
     "filament_colour",
+    "filament_transmission_distance",
+    "filament_full_spectrum_material_id",
     "filament_multi_colors",
     "filament_colour_mode",
     "wipe_tower_x",
@@ -216,8 +220,6 @@ static std::vector<std::string> s_project_options {
     "flush_multiplier",
     // Mixed filament / local-Z settings
     "mixed_filament_gradient_mode",
-    "mixed_filament_height_lower_bound",
-    "mixed_filament_height_upper_bound",
     "mixed_filament_advanced_dithering",
     "mixed_filament_component_bias_enabled",
     "mixed_filament_surface_indentation",
@@ -230,6 +232,10 @@ static std::vector<std::string> s_project_options {
     "dithering_local_z_whole_objects",
     "dithering_local_z_infill",
     "dithering_local_z_direct_multicolor",
+    "dithering_local_z_preserve_first_layer",
+    "dithering_local_z_independent_layer_height",
+    "dithering_local_z_gradient_layer_height",
+    "dithering_local_z_gradient_middle_filament_window",
     "dithering_step_painted_zones_only",
 };
 
@@ -3781,7 +3787,7 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
     const size_t old_num_filaments = (old_num_filaments_arg != size_t(-1))
         ? old_num_filaments_arg
         : (deleting_filament ? (num_filaments + 1) : num_filaments);
-    const std::vector<MixedFilament> old_mixed = this->mixed_filaments.mixed_filaments();
+    const std::vector<MixedFilament> old_mixed         = this->mixed_filaments.mixed_filament_legacy_rows();
     m_last_filament_id_remap.clear();
 
     // Now verify if flush_volumes_matrix has proper size (it is used to deduce number of extruders in wipe tower generator):
@@ -3877,24 +3883,109 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
             };
 
             color_opt->values.resize(num_filaments, "#26A69A");
-            // filament_colour was just resized to the physical count; multi_colors / colour_mode
-            // must follow
+
+            const Preset*     edited_filament_preset = &this->filaments.get_edited_preset();
+            const std::string edited_filament_name   = edited_filament_preset != nullptr ?
+                                                           Preset::remove_suffix_modified(edited_filament_preset->name) :
+                                                           std::string();
+
+            // Project TD values are the per-slot fallback for projects whose
+            // selected filament preset predates this setting (or is missing).
+            // Keep the fallback vector aligned when a physical filament is
+            // deleted before applying any values supplied by selected presets.
+            const ConfigOptionFloats* project_td_opt = this->project_config.option<ConfigOptionFloats>("filament_transmission_distance");
+            std::vector<double>       physical_tds   = project_td_opt != nullptr ? project_td_opt->values : std::vector<double>();
+            if (deleting_filament && to_delete_filament_id < physical_tds.size())
+                physical_tds.erase(physical_tds.begin() + ptrdiff_t(to_delete_filament_id));
+            physical_tds.resize(num_filaments, 0.0);
+            for (double& td : physical_tds) {
+                if (!std::isfinite(td) || td <= 0.0)
+                    td = 0.0;
+            }
+
+            const ConfigOptionStrings* project_material_id_opt = this->project_config.option<ConfigOptionStrings>(
+                "filament_full_spectrum_material_id");
+            std::vector<std::string> physical_material_ids = project_material_id_opt != nullptr ? project_material_id_opt->values :
+                                                                                                  std::vector<std::string>();
+            if (deleting_filament && to_delete_filament_id < physical_material_ids.size())
+                physical_material_ids.erase(physical_material_ids.begin() + ptrdiff_t(to_delete_filament_id));
+            physical_material_ids.resize(num_filaments);
+
+            for (size_t i = 0; i < num_filaments && i < this->filament_presets.size(); ++i) {
+                const std::string selected_filament_name = Preset::remove_suffix_modified(this->filament_presets[i]);
+                const Preset*     filament_preset = (!edited_filament_name.empty() && selected_filament_name == edited_filament_name) ?
+                                                        edited_filament_preset :
+                                                        this->filaments.find_preset(selected_filament_name, false);
+                // A loaded preset/color is authoritative. Do not carry calibration
+                // from the previous material in this slot to an unrelated filament.
+                if (filament_preset != nullptr) {
+                    physical_tds[i] = 0.0;
+                    physical_material_ids[i].clear();
+                    FilamentColorInfo library_filament;
+                    if (FilamentColorLibrary::Instance().FindFilamentByName(selected_filament_name, library_filament)) {
+                        for (const auto& item : library_filament.colors) {
+                            if (item.colorData.colors.size() == 1 &&
+                                (item.colorData.PrimaryColor() == NormalizeFilamentHexColor(color_opt->values[i]) ||
+                                 (!item.legacyPrimaryColor.empty() && item.legacyPrimaryColor == NormalizeFilamentHexColor(color_opt->values[i])))) {
+                                if (!item.fullSpectrumMaterialId.empty())
+                                    color_opt->values[i] = item.colorData.PrimaryColor();
+                                physical_tds[i]          = item.tdValue;
+                                physical_material_ids[i] = item.fullSpectrumMaterialId;
+                                break;
+                            }
+                        }
+                    }
+                }
+                const ConfigOptionStrings* material_id_opt = filament_preset != nullptr ?
+                                                                 filament_preset->config.option<ConfigOptionStrings>(
+                                                                     "filament_full_spectrum_material_id") :
+                                                                 nullptr;
+                if (material_id_opt != nullptr && !material_id_opt->values.empty()) {
+                    const std::string& material_id = material_id_opt->get_at(0);
+                    if (!material_id.empty())
+                        physical_material_ids[i] = material_id;
+                }
+            }
             EnsureFilamentColorFieldsAligned(this->project_config);
-            this->mixed_filaments.auto_generate(color_opt->values);
+            if (ConfigOptionFloats* td_opt = this->project_config.option<ConfigOptionFloats>("filament_transmission_distance"))
+                td_opt->values = physical_tds;
+            else
+                this->project_config.set_key_value("filament_transmission_distance", new ConfigOptionFloats(physical_tds));
+            if (ConfigOptionStrings* material_id_opt = this->project_config.option<ConfigOptionStrings>(
+                    "filament_full_spectrum_material_id"))
+                material_id_opt->values = physical_material_ids;
+            else
+                this->project_config.set_key_value("filament_full_spectrum_material_id", new ConfigOptionStrings(physical_material_ids));
 
             int   gradient_mode = get_mixed_mode(false) ? 1 : 0;
-            float lower_bound = get_mixed_float("mixed_filament_height_lower_bound", 0.04f);
-            float upper_bound = get_mixed_float("mixed_filament_height_upper_bound", 0.16f);
             bool advanced_dithering = get_mixed_bool("mixed_filament_advanced_dithering", false);
             gradient_mode = std::clamp(gradient_mode, 0, 1);
-            lower_bound = std::max(0.01f, lower_bound);
-            upper_bound = std::max(lower_bound, upper_bound);
+
+            MixedFilamentDisplayContext context;
+            context.num_physical                       = num_filaments;
+            context.physical_colors                    = color_opt->values;
+            context.physical_tds                       = physical_tds;
+            context.physical_material_ids              = physical_material_ids;
+            if (const DynamicPrintConfig& printer_config = this->printers.get_edited_preset().config;
+                printer_config.has("min_layer_height") && printer_config.has("max_layer_height") && printer_config.has("nozzle_diameter")) {
+                context.preview_settings.nozzle_min_layer_heights.resize(num_filaments);
+                context.preview_settings.nozzle_max_layer_heights.resize(num_filaments);
+                for (size_t i = 0; i < num_filaments; ++i) {
+                    context.preview_settings.nozzle_min_layer_heights[i] = Slicing::min_layer_height_from_nozzle(printer_config, int(i + 1));
+                    context.preview_settings.nozzle_max_layer_heights[i] = Slicing::max_layer_height_from_nozzle(printer_config, int(i + 1));
+                }
+            }
+            context.component_bias_enabled             = get_mixed_bool("mixed_filament_component_bias_enabled", false);
+            MixedFilamentManager::set_color_engine(MixedFilamentColorEngine::FullSpectrumKSPairResidual);
+            context.color_engine = MixedFilamentColorEngine::FullSpectrumKSPairResidual;
+            this->mixed_filaments.set_display_context(context);
+            this->mixed_filaments.auto_generate(color_opt->values);
 
             this->mixed_filaments.clear_custom_entries();
             this->mixed_filaments.load_custom_entries(
                 deleting_filament ? post_delete_mixed_defs : get_mixed_string("mixed_filament_definitions"),
                 color_opt->values);
-            this->mixed_filaments.apply_gradient_settings(gradient_mode, lower_bound, upper_bound, advanced_dithering);
+            this->mixed_filaments.apply_gradient_settings(gradient_mode, advanced_dithering);
 
             const std::string serialized = this->mixed_filaments.serialize_custom_entries();
             set_mixed_string("mixed_filament_definitions", serialized);
@@ -3904,7 +3995,7 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
     // Build old->new filament ID remap for painted facet data normalization.
     // This is needed for both deletion and addition of physical filaments so
     // painted mixed states keep pointing at the same virtual mixed entries.
-    if (old_num_filaments != num_filaments || deleting_filament || old_mixed != this->mixed_filaments.mixed_filaments())
+    if (old_num_filaments != num_filaments || deleting_filament || old_mixed != this->mixed_filaments.mixed_filament_legacy_rows())
         build_filament_id_remap(old_mixed, old_num_filaments, num_filaments, deleting_filament,
                                 deleting_filament ? unsigned(to_delete_filament_id + 1) : 0u);
 }
@@ -4010,7 +4101,7 @@ void PresetBundle::build_filament_id_remap(const std::vector<MixedFilament> &old
     std::unordered_map<uint64_t, unsigned int> new_stable_id_to_virtual_id;
     std::map<std::pair<unsigned int, unsigned int>, std::vector<unsigned int>> new_pair_to_ids;
     unsigned int next_virtual_id = unsigned(new_num_filaments + 1);
-    for (const auto &mf : this->mixed_filaments.mixed_filaments()) {
+    for (const auto& mf : this->mixed_filaments.mixed_filament_legacy_rows()) {
         if (!mf.enabled)
             continue;
         if (mf.stable_id != 0)

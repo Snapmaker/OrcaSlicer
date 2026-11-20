@@ -59,3 +59,7 @@ sentry-native/
 CLAUDE.md
 # snapmaker_connection CLI binaries are placed into resources/ locally per platform/architecture and are not tracked
 /resources/snapmaker_connection*
+/resources/snapmaker_control*
+# Python bytecode
+__pycache__/
+*.pyc

@@ -1842,6 +1842,8 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 
         if (local_z_enabled) {
             set_print_bool("dithering_local_z_infill", true);
+            set_print_bool("dithering_local_z_direct_multicolor", true);
+            set_project_bool("dithering_local_z_direct_multicolor", true);
         } else {
             set_print_bool("dithering_local_z_whole_objects", false);
             set_print_bool("dithering_local_z_infill", false);
@@ -2283,32 +2285,23 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         return;
     }
 
-    const bool refresh_mixed_filament_panel =
-        (m_type == Preset::TYPE_PRINT && opt_key == "mixed_filament_component_bias_enabled") ||
-        (m_type == Preset::TYPE_FILAMENT && opt_key == "filament_type");
+    const bool refresh_mixed_filament_panel = (m_type == Preset::TYPE_PRINT && opt_key == "mixed_filament_component_bias_enabled") ||
+                                              (m_type == Preset::TYPE_FILAMENT && opt_key == "filament_type");
 
     // Keep Mixed Filaments global settings in sync with project_config. In
     // full_fff_config(), project_config is applied last and would otherwise
     // override the edited print preset value from the Others panel.
     if (m_type == Preset::TYPE_PRINT &&
         (opt_key == "mixed_filament_gradient_mode" ||
-         opt_key == "mixed_filament_height_lower_bound" ||
-         opt_key == "mixed_filament_height_upper_bound" ||
-         opt_key == "mixed_color_layer_height_a" ||
-         opt_key == "mixed_color_layer_height_b" ||
-         opt_key == "mixed_filament_advanced_dithering" ||
-         opt_key == "mixed_filament_pointillism_pixel_size" ||
-         opt_key == "mixed_filament_pointillism_line_gap" ||
-         opt_key == "mixed_filament_component_bias_enabled" ||
-         opt_key == "mixed_filament_surface_indentation" ||
-         opt_key == "mixed_filament_region_collapse" ||
-         opt_key == "dithering_z_step_size" ||
-         opt_key == "dithering_local_z_mode" ||
-         opt_key == "dithering_local_z_whole_objects" ||
-         opt_key == "dithering_local_z_infill" ||
-         opt_key == "dithering_local_z_direct_multicolor" ||
-         opt_key == "dithering_step_painted_zones_only" ||
-         opt_key == "mixed_filament_definitions")) {
+         opt_key == "mixed_color_layer_height_a" || opt_key == "mixed_color_layer_height_b" ||
+         opt_key == "mixed_filament_advanced_dithering" || opt_key == "mixed_filament_pointillism_pixel_size" ||
+         opt_key == "mixed_filament_pointillism_line_gap" || opt_key == "mixed_filament_component_bias_enabled" ||
+         opt_key == "mixed_filament_surface_indentation" || opt_key == "mixed_filament_region_collapse" ||
+         opt_key == "dithering_z_step_size" || opt_key == "dithering_local_z_mode" || opt_key == "dithering_local_z_whole_objects" ||
+         opt_key == "dithering_local_z_infill" || opt_key == "dithering_local_z_direct_multicolor" ||
+         opt_key == "dithering_local_z_preserve_first_layer" || opt_key == "dithering_local_z_independent_layer_height" ||
+         opt_key == "dithering_local_z_gradient_layer_height" || opt_key == "dithering_local_z_gradient_middle_filament_window" ||
+         opt_key == "dithering_step_painted_zones_only" || opt_key == "mixed_filament_definitions")) {
         DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
         if (const ConfigOption *opt = m_config->option(opt_key))
             project_cfg.set_key_value(opt_key, opt->clone());
@@ -3044,10 +3037,12 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Color Mixing (Experimental)"), L"param_mixed_color");
         optgroup->append_single_option_line("dithering_local_z_mode");
-        optgroup->append_single_option_line("dithering_local_z_whole_objects");
         optgroup->append_single_option_line("dithering_local_z_infill");
+        optgroup->append_single_option_line("fs_surface_paint_only");
+        optgroup->append_single_option_line("fs_painted_zone_extra_perimeters");
+        optgroup->append_single_option_line("dithering_local_z_gradient_layer_height");
 
-    page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
+        page     = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Skirt"), L"param_skirt");
 optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops");
         optgroup->append_single_option_line("skirt_type", "others_settings_skirt#type");

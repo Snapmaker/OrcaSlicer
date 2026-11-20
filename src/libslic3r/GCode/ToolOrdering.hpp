@@ -225,6 +225,7 @@ private:
     // BBS
     std::vector<unsigned int> generate_first_layer_tool_order(const Print& print);
     std::vector<unsigned int> generate_first_layer_tool_order(const PrintObject& object);
+    unsigned int              first_layer_wall_extruder(const PrintObject& object, const Layer& layer, const LayerRegion& layerm) const;
     void                      update_mixed_layer_height_settings();
 
     // Resolve a 1-based filament ID through the mixed-filament manager.

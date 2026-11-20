@@ -9,7 +9,8 @@
 
 namespace Slic3r {
 enum class FilamentColorMode;
-struct MixedFilament;
+struct MixedFilamentLegacyRow;
+using MixedFilament = MixedFilamentLegacyRow;
 struct MixedFilamentDisplayContext;
 }
 

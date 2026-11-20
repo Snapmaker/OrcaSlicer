@@ -1052,6 +1052,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Orca: internal use only
     ((ConfigOptionBool,  calib_flowrate_topinfill_special_order)) // ORCA: special flag for flow rate calibration
 
+    // Painted-shell controls
+    ((ConfigOptionBool,               fs_surface_paint_only))
+    ((ConfigOptionInt,                fs_painted_zone_extra_perimeters))
 
 )
 
@@ -1460,6 +1463,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionStrings,            filament_colour))
     ((ConfigOptionStrings,            filament_multi_colors))
     ((ConfigOptionInts,               filament_colour_mode))
+    ((ConfigOptionFloats,             filament_transmission_distance))
+    ((ConfigOptionStrings,            filament_full_spectrum_material_id))
     ((ConfigOptionBools,              activate_air_filtration))
     ((ConfigOptionInts,               during_print_exhaust_fan_speed))
     ((ConfigOptionInts,               complete_print_exhaust_fan_speed))
@@ -1486,8 +1491,6 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              mixed_color_layer_height_a))
     ((ConfigOptionFloat,              mixed_color_layer_height_b))
     ((ConfigOptionBool,               mixed_filament_gradient_mode))
-    ((ConfigOptionFloat,              mixed_filament_height_lower_bound))
-    ((ConfigOptionFloat,              mixed_filament_height_upper_bound))
     ((ConfigOptionBool,               mixed_filament_advanced_dithering))
     ((ConfigOptionFloat,              mixed_filament_pointillism_pixel_size))
     ((ConfigOptionFloat,              mixed_filament_pointillism_line_gap))
@@ -1500,6 +1503,10 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionBool,               dithering_local_z_whole_objects))
     ((ConfigOptionBool,               dithering_local_z_infill))
     ((ConfigOptionBool,               dithering_local_z_direct_multicolor))
+    ((ConfigOptionBool,               dithering_local_z_preserve_first_layer))
+    ((ConfigOptionBool,               dithering_local_z_independent_layer_height))
+    ((ConfigOptionFloat,              dithering_local_z_gradient_layer_height))
+    ((ConfigOptionPercent,            dithering_local_z_gradient_middle_filament_window))
     ((ConfigOptionBool,               dithering_step_painted_zones_only))
     ((ConfigOptionString,             printer_model))
     ((ConfigOptionFloat,              resolution))

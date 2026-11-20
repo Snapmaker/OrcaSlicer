@@ -1,3 +1,4 @@
+#include "MixedColorMatchHelpers.hpp"
 #include "wxExtensions.hpp"
 
 #include <stdexcept>
@@ -580,12 +581,12 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
             const size_t mixed_idx = color_idx - num_physical;
             const auto* pb = Slic3r::GUI::wxGetApp().preset_bundle;
             if (pb != nullptr) {
-                const auto &mfs = pb->mixed_filaments.mixed_filaments();
+                const auto& mfs     = pb->mixed_filaments.mixed_filament_legacy_rows();
                 size_t visible = 0;
                 for (const auto &mf : mfs) {
                     if (mf.deleted || !mf.enabled) continue;
                     if (visible == mixed_idx) {
-                        const bool is_gradient = is_simple_gradient(mf);
+                        const bool is_gradient = is_layer_gradient(mf);
                         if (is_gradient) {
                             auto get_c = [&](unsigned fid) -> wxColour {
                                 if (fid == 0 || fid > physical_colors.size())
@@ -602,8 +603,9 @@ std::vector<wxBitmap*> get_extruder_color_icons(bool thin_icon/* = false*/)
                             params.width  = icon_width;
                             params.height = icon_height;
                             params.label  = label;
-                            params.gradient_colors.push_back(a_to_b ? ca : cb);
-                            params.gradient_colors.push_back(a_to_b ? cb : ca);
+                            const auto context = Slic3r::GUI::build_mixed_filament_display_context(physical_colors);
+                            for (int i = 0; i <= 32; ++i)
+                                params.gradient_colors.emplace_back(mixed_gradient_display_color(mf, context, double(i) / 32.0));
 
                             bmps.push_back(Slic3r::GUI::get_color_block_bitmap_cached(params));
                         }

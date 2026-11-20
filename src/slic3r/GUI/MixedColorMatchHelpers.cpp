@@ -1,4 +1,5 @@
 #include "MixedColorMatchHelpers.hpp"
+#include "libslic3r/MixedFilamentColorPrediction.hpp"
 #include "MixedGradientSelector.hpp"
 #include <unordered_map>
 #include <unordered_set>
@@ -10,19 +11,87 @@
 #include <atomic>
 #include <cctype>
 #include <fstream>
+#include <iomanip>
 #include <set>
 #include <queue>
 #include <sstream>
 #include <mutex>
+#include <limits>
 #include <boost/log/trivial.hpp>
 #include "nlohmann/json.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/Slicing.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp" // GetFilamentMatchName (family preset scan)
 
 namespace Slic3r { namespace GUI {
+namespace {
+std::shared_ptr<const MixedFilamentDisplayContext> preview_color_context;
+
+// What the preview blends for one color: its hex, plus the material and transmission
+// distance of the palette slot that has this color when the palette agrees on one.
+MixedFilamentColorInput preview_color_input(const MixedFilamentDisplayContext* context, const wxColour& requested, int percent)
+{
+    const wxColour          color = requested.IsOk() ? requested : wxColour("#26A69A");
+    MixedFilamentColorInput input{color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString(), percent};
+    if (context) {
+        bool found = false, ambiguous = false;
+        for (size_t slot = 0; slot < context->physical_colors.size(); ++slot) {
+            if (wxColour(context->physical_colors[slot]) != color)
+                continue;
+            const std::string id = slot < context->physical_material_ids.size() ? context->physical_material_ids[slot] : std::string();
+            const double      td = slot < context->physical_tds.size() ? context->physical_tds[slot] : 0.0;
+            if (found && (input.material_id.value_or("") != id || input.td_mm.value_or(0.0) != td)) {
+                ambiguous = true;
+                break;
+            }
+            found = true;
+            if (!id.empty())
+                input.material_id = id;
+            if (td > 0.0)
+                input.td_mm = td;
+        }
+        // Equal RGB does not establish identity when two active materials disagree.
+        if (ambiguous) {
+            input.material_id = "uncalibrated:ambiguous";
+            input.td_mm.reset();
+        }
+    }
+    return input;
+}
+
+MixedFilamentColorEngine preview_color_engine(const MixedFilamentDisplayContext* context)
+{
+    return context && context->color_engine ? *context->color_engine : MixedFilamentManager::color_engine();
+}
+} // namespace
+
+wxColour blend_preview_colors(const std::vector<wxColour>& colors, const std::vector<double>& weights)
+{
+    const auto                           context = std::atomic_load(&preview_color_context);
+    std::vector<MixedFilamentColorInput> inputs;
+    for (size_t i = 0; i < colors.size() && i < weights.size(); ++i) {
+        if (!std::isfinite(weights[i]) || weights[i] <= 0)
+            continue;
+        inputs.push_back(preview_color_input(context.get(), colors[i], int(std::lround(weights[i] * 10000))));
+    }
+    return wxColour(blend_mixed_color_inputs_auto(inputs, preview_color_engine(context.get())));
+}
+
+std::string blend_preview_key(const std::vector<wxColour>& colors)
+{
+    const auto         context = std::atomic_load(&preview_color_context);
+    std::ostringstream key;
+    key << std::setprecision(17) << int(preview_color_engine(context.get()));
+    for (const wxColour& color : colors) {
+        const MixedFilamentColorInput input = preview_color_input(context.get(), color, 0);
+        key << '|' << input.color_hex << ';' << input.material_id.value_or("") << ';' << input.td_mm.value_or(0.0);
+    }
+    return key.str();
+}
+
 wxColour parse_mixed_color(const std::string& value)
 {
     wxColour color(value);
@@ -403,7 +472,7 @@ double delta_e_lab(const CIELab& a, const CIELab& b)
                            float(b.L), float(b.a), float(b.b)));
 }
 
-BlendLUT build_blend_lut(const std::vector<wxColour>& palette)
+BlendLUT build_blend_lut(const std::vector<wxColour>& palette, const MixedFilamentDisplayContext* context)
 {
     const size_t n = palette.size();
     BlendLUT lut(n);
@@ -412,7 +481,9 @@ BlendLUT build_blend_lut(const std::vector<wxColour>& palette)
     for (size_t a = 0; a < n; ++a) {
         for (size_t b = a; b < n; ++b) {
             for (int pct = 0; pct <= 100; ++pct) {
-                wxColour blended = blend_pair_filament_mixer(palette[a], palette[b], float(pct) / 100.f);
+                wxColour blended          = context ?
+                                                wxColour(blend_mixed_components({unsigned(a + 1), unsigned(b + 1)}, {100 - pct, pct}, *context)) :
+                                                blend_pair_filament_mixer(palette[a], palette[b], float(pct) / 100.f);
                 lut.m_pair[a][b - a][pct] = sRGB_to_CIELab(blended);
             }
         }
@@ -420,10 +491,13 @@ BlendLUT build_blend_lut(const std::vector<wxColour>& palette)
     return lut;
 }
 
-CIELab blend_weighted_lab_accurate(const std::vector<wxColour>& palette,
-                                    const std::vector<unsigned int>& ids,
-                                    const std::vector<int>& weights)
+CIELab blend_weighted_lab_accurate(const std::vector<wxColour>&       palette,
+                                   const std::vector<unsigned int>&   ids,
+                                   const std::vector<int>&            weights,
+                                   const MixedFilamentDisplayContext* context)
 {
+    if (context)
+        return sRGB_to_CIELab(wxColour(blend_mixed_components(ids, weights, *context)));
     if (ids.size() != weights.size() || ids.empty())
         return { 50.0, 0.0, 0.0 };
 
@@ -461,11 +535,12 @@ double color_delta_e00(const wxColour& lhs, const wxColour& rhs)
     return double(DeltaE00(lhs_l, lhs_a, lhs_b, rhs_l, rhs_a, rhs_b));
 }
 
-MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std::string>& physical_colors,
-                                                          const wxColour&                 target_color,
-                                                          int                             min_component_percent,
-                                                          int                             max_component_percent,
-                                                          bool                            check_compatible)
+MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std::string>&    physical_colors,
+                                                          const wxColour&                    target_color,
+                                                          int                                min_component_percent,
+                                                          int                                max_component_percent,
+                                                          bool                               check_compatible,
+                                                          const MixedFilamentDisplayContext* context)
 {
     MixedColorMatchRecipeResult best;
     if (!target_color.IsOk() || physical_colors.size() < 2)
@@ -507,7 +582,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     // an all-true matrix makes them no-ops.
     std::vector<std::vector<bool>> compat;
     if (check_compatible) {
-        compat = build_compatibility_matrix(n);
+        compat = context && context->compatible_filaments.size() == n ? context->compatible_filaments : build_compatibility_matrix(n);
     } else {
         compat.assign(n, std::vector<bool>(n, true));
     }
@@ -530,7 +605,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
     };
 
     // ---- Step 2: build pair Blend LUT (polynomial mixing → Lab) ----
-    const BlendLUT lut = build_blend_lut(palette);
+    const BlendLUT lut = build_blend_lut(palette, context);
     if (lut.empty()) return best;
 
     // ---- helper: update best from a pair candidate ----
@@ -540,7 +615,8 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
             best.component_a   = a;
             best.component_b   = b;
             best.mix_b_percent = pct;
-            best.preview_color = blend_pair_filament_mixer(palette[a - 1], palette[b - 1], float(pct) / 100.f);
+            best.preview_color = context ? wxColour(blend_mixed_components({a, b}, {100 - pct, pct}, *context)) :
+                                           blend_pair_filament_mixer(palette[a - 1], palette[b - 1], float(pct) / 100.f);
             best.delta_e       = de;
             best.gradient_component_ids.clear();
             best.gradient_component_weights.clear();
@@ -638,7 +714,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                     for (int wb = loop_min_weight; wb <= std::min(100 - wa - loop_min_weight, max_component_percent); wb += k_triple_coarse_step) {
                         int wc = 100 - wa - wb;
                         if (wc < loop_min_weight || wc > max_component_percent) continue;
-                        CIELab blended = blend_weighted_lab_accurate(palette, {a, b, c}, {wa, wb, wc});
+                        CIELab  blended = blend_weighted_lab_accurate(palette, {a, b, c}, {wa, wb, wc}, context);
                         double  de      = delta_e_lab(target_lab, blended);
                         // Update best triple
                         if (!best.valid || de + 1e-6 < best.delta_e) {
@@ -648,9 +724,9 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                             best.mix_b_percent = wa + wb > 0 ? int(std::lround(100.0 * double(wb) / double(wa + wb))) : 50;
                             best.gradient_component_ids     = encode_gradient_ids({a, b, c});
                             best.gradient_component_weights = encode_gradient_weights({wa, wb, wc});
-                            best.preview_color = blend_multi_filament_mixer(
-                                {palette[a - 1], palette[b - 1], palette[c - 1]},
-                                {double(wa), double(wb), double(wc)});
+                            best.preview_color = context ? wxColour(blend_mixed_components({a, b, c}, {wa, wb, wc}, *context)) :
+                                                           blend_multi_filament_mixer({palette[a - 1], palette[b - 1], palette[c - 1]},
+                                                                                      {double(wa), double(wb), double(wc)});
                             best.delta_e = de;
                             best.manual_pattern.clear();
                         }
@@ -680,7 +756,7 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                 if ((wb - loop_min_weight) % k_triple_coarse_step == 0) continue;
                 int wc = 100 - wa - wb;
                 if (wc < loop_min_weight || wc > max_component_percent) continue;
-                CIELab blended = blend_weighted_lab_accurate(palette, {te.a, te.b, te.c}, {wa, wb, wc});
+                CIELab  blended = blend_weighted_lab_accurate(palette, {te.a, te.b, te.c}, {wa, wb, wc}, context);
                 double  de2    = delta_e_lab(target_lab, blended);
                 if (!best.valid || de2 + 1e-6 < best.delta_e) {
                     best.valid     = true;
@@ -689,9 +765,9 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
                     best.mix_b_percent = wa + wb > 0 ? int(std::lround(100.0 * double(wb) / double(wa + wb))) : 50;
                     best.gradient_component_ids     = encode_gradient_ids({te.a, te.b, te.c});
                     best.gradient_component_weights = encode_gradient_weights({wa, wb, wc});
-                    best.preview_color = blend_multi_filament_mixer(
-                        {palette[te.a - 1], palette[te.b - 1], palette[te.c - 1]},
-                        {double(wa), double(wb), double(wc)});
+                    best.preview_color = context ? wxColour(blend_mixed_components({te.a, te.b, te.c}, {wa, wb, wc}, *context)) :
+                                                   blend_multi_filament_mixer({palette[te.a - 1], palette[te.b - 1], palette[te.c - 1]},
+                                                                              {double(wa), double(wb), double(wc)});
                     best.delta_e = de2;
                     best.manual_pattern.clear();
                 }
@@ -714,6 +790,61 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(const std::vector<std:
         else if (!best.gradient_component_ids.empty() &&
                  best_pair.delta_e <= best.delta_e + 0.5)
             best = std::move(best_pair);
+    }
+
+    // Search four-component recipes with the same calibrated evaluator used
+    // for cards. A coarse simplex scan followed by local refinement keeps the
+    // dialog responsive without treating nonlinear KM mixtures as RGB averages.
+    if (n >= 4 && context) {
+        std::vector<unsigned int> quad_ids;
+        std::vector<int>          quad_weights;
+        double                    quad_error    = std::numeric_limits<double>::max();
+        auto                      consider_quad = [&](const std::vector<unsigned int>& ids, const std::vector<int>& weights) {
+            for (int weight : weights)
+                if (weight < loop_min_weight || weight > max_component_percent)
+                    return;
+            const wxColour predicted(blend_mixed_components(ids, weights, *context));
+            const double   error = color_delta_e00(target_color, predicted);
+            if (error < quad_error) {
+                quad_error   = error;
+                quad_ids     = ids;
+                quad_weights = weights;
+            }
+            const bool best_is_quad = MixedFilamentManager::decode_gradient_component_ids(best.gradient_component_ids).size() == 4;
+            if (best.valid && error + (best_is_quad ? 1e-9 : 0.5) >= best.delta_e)
+                return;
+            best.valid                      = true;
+            best.component_a                = ids[0];
+            best.component_b                = ids[1];
+            best.mix_b_percent              = 50;
+            best.gradient_component_ids     = encode_gradient_ids(ids);
+            best.gradient_component_weights = encode_gradient_weights(weights);
+            best.manual_pattern.clear();
+            best.preview_color = predicted;
+            best.delta_e       = error;
+        };
+        for (unsigned int a = 1; a <= n; ++a)
+            for (unsigned int b = a + 1; b <= n; ++b)
+                for (unsigned int c = b + 1; c <= n; ++c)
+                    for (unsigned int d = c + 1; d <= n; ++d) {
+                        if (!compat[a - 1][b - 1] || !compat[a - 1][c - 1] || !compat[a - 1][d - 1] || !compat[b - 1][c - 1] ||
+                            !compat[b - 1][d - 1] || !compat[c - 1][d - 1])
+                            continue;
+                        for (int wa = loop_min_weight; wa <= 100 - 3 * loop_min_weight; wa += 10)
+                            for (int wb = loop_min_weight; wb <= 100 - wa - 2 * loop_min_weight; wb += 10)
+                                for (int wc = loop_min_weight; wc <= 100 - wa - wb - loop_min_weight; wc += 10)
+                                    consider_quad({a, b, c, d}, {wa, wb, wc, 100 - wa - wb - wc});
+                    }
+        for (const auto [radius, step] : {std::pair<int, int>{9, 3}, {2, 1}}) {
+            if (quad_weights.size() != 4)
+                break;
+            const auto ids    = quad_ids;
+            const auto center = quad_weights;
+            for (int wa = center[0] - radius; wa <= center[0] + radius; wa += step)
+                for (int wb = center[1] - radius; wb <= center[1] + radius; wb += step)
+                    for (int wc = center[2] - radius; wc <= center[2] + radius; wc += step)
+                        consider_quad(ids, {wa, wb, wc, 100 - wa - wb - wc});
+        }
     }
 
     return best;
@@ -875,30 +1006,51 @@ MixedFilamentDisplayContext build_mixed_filament_display_context(const std::vect
         }
         return fallback;
     };
-    auto get_mixed_float = [preset_bundle, print_cfg](const std::string& key, float fallback) {
-        if (preset_bundle->project_config.has(key))
-            return float(preset_bundle->project_config.opt_float(key));
-        if (print_cfg != nullptr && print_cfg->has(key))
-            return float(print_cfg->opt_float(key));
-        return fallback;
-    };
-
-    context.preview_settings.mixed_lower_bound    = std::max(0.01, double(get_mixed_float("mixed_filament_height_lower_bound", 0.04f)));
-    context.preview_settings.mixed_upper_bound    = std::max(context.preview_settings.mixed_lower_bound,
-                                                             double(get_mixed_float("mixed_filament_height_upper_bound", 0.16f)));
-    context.preview_settings.preferred_a_height   = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_a", 0.f)));
-    context.preview_settings.preferred_b_height   = std::max(0.0, double(get_mixed_float("mixed_color_layer_height_b", 0.f)));
-    context.preview_settings.nominal_layer_height = 0.2;
-    if (print_cfg != nullptr && print_cfg->has("layer_height"))
-        context.preview_settings.nominal_layer_height = std::max(0.01, print_cfg->opt_float("layer_height"));
-    if (print_cfg != nullptr && print_cfg->has("wall_loops"))
-        context.preview_settings.wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
-    context.preview_settings.local_z_mode              = get_mixed_bool("dithering_local_z_mode", false);
-    context.preview_settings.local_z_direct_multicolor = get_mixed_bool("dithering_local_z_direct_multicolor", true) &&
-                                                         context.preview_settings.preferred_a_height <= EPSILON &&
-                                                         context.preview_settings.preferred_b_height <= EPSILON;
+    context.preview_settings       = mixed_filament_preview_settings(preset_bundle->project_config, print_cfg);
+    const auto& printer_config     = preset_bundle->printers.get_edited_preset().config;
+    context.preview_settings.nozzle_min_layer_heights.resize(context.num_physical);
+    context.preview_settings.nozzle_max_layer_heights.resize(context.num_physical);
+    for (size_t i = 0; i < context.num_physical; ++i) {
+        context.preview_settings.nozzle_min_layer_heights[i] = Slicing::min_layer_height_from_nozzle(printer_config, int(i + 1));
+        context.preview_settings.nozzle_max_layer_heights[i] = Slicing::max_layer_height_from_nozzle(printer_config, int(i + 1));
+    }
     context.component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
+    if (const auto* opt = preset_bundle->project_config.option<ConfigOptionFloats>("filament_transmission_distance"))
+        context.physical_tds = opt->values;
+    if (const auto* opt = preset_bundle->project_config.option<ConfigOptionStrings>("filament_full_spectrum_material_id"))
+        context.physical_material_ids = opt->values;
+    MixedFilamentManager::set_color_engine(MixedFilamentColorEngine::FullSpectrumKSPairResidual);
 
+    // A subset or a reordered palette must not inherit per-slot identities by index.
+    if (const auto* project_colors = preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour")) {
+        if (project_colors->values != physical_colors) {
+            const auto tds          = context.physical_tds;
+            const auto material_ids = context.physical_material_ids;
+            context.physical_tds.assign(physical_colors.size(), 0.0);
+            context.physical_material_ids.assign(physical_colors.size(), "");
+            for (size_t i = 0; i < physical_colors.size(); ++i) {
+                bool matched = false;
+                for (size_t j = 0; j < project_colors->values.size(); ++j) {
+                    if (NormalizeFilamentHexColor(physical_colors[i]) != NormalizeFilamentHexColor(project_colors->values[j]))
+                        continue;
+                    const double td = j < tds.size() ? tds[j] : 0.0;
+                    const std::string id = j < material_ids.size() ? material_ids[j] : std::string();
+                    if (matched && (context.physical_tds[i] != td || context.physical_material_ids[i] != id)) {
+                        // RGB alone cannot distinguish these materials. Avoid borrowing a calibration.
+                        context.physical_tds[i] = 0.0;
+                        context.physical_material_ids[i] = "unrecognized:ambiguous";
+                        break;
+                    }
+                    context.physical_tds[i] = td;
+                    context.physical_material_ids[i] = id;
+                    matched = true;
+                }
+            }
+        }
+    }
+    context.compatible_filaments                              = build_compatibility_matrix(context.num_physical);
+    context.color_engine                                      = MixedFilamentManager::color_engine();
+    std::atomic_store(&preview_color_context, std::make_shared<const MixedFilamentDisplayContext>(context));
     return context;
 }
 
@@ -1555,7 +1707,9 @@ std::string summarize_cycle_pattern_text(const std::string& normalized_pattern,
 std::vector<ModelColorEntry> extract_model_colors(const Print& print)
 {
     std::vector<ModelColorEntry> colors;
-    static constexpr int MAX_EXTRUDER_ID = int(MAXIMUM_EXTRUDER_NUMBER);
+    // Volume extruder ids cover physical slots and virtual mixed recipes.
+    static constexpr int    MAX_EXTRUDER_ID = int(MAXIMUM_FILAMENT_NUMBER);
+    static constexpr size_t MAX_COLORS      = MAXIMUM_FILAMENT_NUMBER;
 
     auto& filament_colours = print.config().filament_colour.values;
 
@@ -1638,10 +1792,10 @@ std::vector<ModelColorEntry> extract_model_colors(const Print& print)
         }
     }
 
-    if (colors.size() > 64) {
+    if (colors.size() > MAX_COLORS) {
         BOOST_LOG_TRIVIAL(warning)
-            << "extract_model_colors: truncating " << colors.size() << " colors to 64";
-        colors.resize(64);
+            << "extract_model_colors: truncating " << colors.size() << " colors to " << MAX_COLORS;
+        colors.resize(MAX_COLORS);
     }
 
     BOOST_LOG_TRIVIAL(info)
@@ -1798,14 +1952,14 @@ std::vector<ColorMappingEntry> merge_duplicate_recipe_mappings(
     return result;
 }
 
-BatchMatchResult batch_match_model_colors(
-    const std::vector<ModelColorEntry>&          model_colors,
-    const std::vector<std::string>&             physical_colors,
-    int                                          min_component_percent,
-    int                                          max_component_percent,
-    std::shared_ptr<std::atomic<bool>>           cancel_token,
-    std::function<void(int,int)>                 progress_callback,
-    bool                                         check_compatible)
+BatchMatchResult batch_match_model_colors(const std::vector<ModelColorEntry>& model_colors,
+                                          const std::vector<std::string>&     physical_colors,
+                                          int                                 min_component_percent,
+                                          int                                 max_component_percent,
+                                          std::shared_ptr<std::atomic<bool>>  cancel_token,
+                                          std::function<void(int, int)>       progress_callback,
+                                          bool                                check_compatible,
+                                          const MixedFilamentDisplayContext*  context)
 {
     BatchMatchResult result;
     result.success = true;
@@ -1847,9 +2001,8 @@ BatchMatchResult batch_match_model_colors(
         }
 
         const auto& entry = model_colors[i];
-        MixedColorMatchRecipeResult recipe =
-            build_best_color_match_recipe(physical_colors, entry.color, min_component_percent, max_component_percent,
-                                          check_compatible);
+        MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, entry.color, min_component_percent,
+                                                                           max_component_percent, check_compatible, context);
 
         if (!recipe.valid) {
             BOOST_LOG_TRIVIAL(warning)
@@ -2090,4 +2243,3 @@ void apply_batch_match_to_model(const BatchMatchResult& result)
 }
 
 }} // namespace Slic3r::GUI
-

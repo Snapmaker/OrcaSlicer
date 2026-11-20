@@ -15984,3 +15984,92 @@ msgid ""
 msgstr ""
 "检测到悬空部分未加支撑。\n"
 "模型\"%1%\"有 %2% 处悬空区域未能生成支撑。可尝试调整支撑参数或模型朝向。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Manage"
+msgstr "管理"
+
+# Mixed filament management (PRD 2.0).
+msgid "Manage Mixed Filaments"
+msgstr "混色耗材管理"
+
+# Mixed filament management (PRD 2.0).
+msgid "Saved Mixed Filaments"
+msgstr "已创建混色"
+
+# Mixed filament management.
+msgctxt "MixedFilaments"
+msgid "Remove all"
+msgstr "全部移除"
+
+# Mixed filament management.
+msgid "Mark all saved mixed filaments for removal. Changes are applied when you click Confirm."
+msgstr "标记所有已保存的混色耗材以供移除。点击“确认”后应用更改。"
+
+# Mixed filament management (PRD 2.0).
+msgid "No mixed filaments"
+msgstr "暂无混色耗材"
+
+# Mixed filament management (PRD 2.0).
+msgid "Current physical filaments"
+msgstr "当前主耗材"
+
+# Mixed filament management (PRD 2.0).
+msgid "Click to mark for removal."
+msgstr "单击标记移除，确认后生效。"
+
+# Mixed filament management (PRD 2.0).
+msgid "The current physical filament types are incompatible. Use the same or compatible types to generate recommendations."
+msgstr "当前主耗材类型不兼容，无法生成混色推荐，请更换为相同或兼容类型的耗材。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Some filament types are incompatible. Combinations that cannot be mixed have been excluded."
+msgstr "部分耗材类型不兼容，已排除不可混色组合。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Select all recommendations"
+msgstr "全选推荐混色"
+
+# Mixed filament management (PRD 2.0).
+msgid "Two-color Mixing"
+msgstr "两颜色混合"
+
+# Mixed filament management (PRD 2.0).
+msgid "Three-color Mixing"
+msgstr "三颜色混合"
+
+# Mixed filament management (PRD 2.0).
+msgid "Registered. Remove from Saved Mixed Filaments."
+msgstr "已登记。如需移除，请在“已创建混色”区域操作。"
+
+# Mixed filament management (PRD 2.0).
+msgid "No mixing recommendations"
+msgstr "暂无混色推荐"
+
+# Mixed filament management (PRD 2.0).
+msgid "The limit is 256 mixed filaments. Deselect some recommendations before confirming."
+msgstr "超过256个混色耗材的上限，请取消选择部分混色卡后再确认。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Registration failed. Please try again."
+msgstr "登记失败，请重试。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Please configure at least two filaments first."
+msgstr "请先配置至少两种耗材。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Too many physical filaments. Reduce the list to 16 or fewer to use this feature."
+msgstr "主耗材列表数量过多，请将主耗材减少至16个及以下再使用该功能。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Mixed filament loading failed. Please try again."
+msgstr "混色加载失败，请重试。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Browse mixed colors made from the current filaments and choose combinations to add."
+msgstr "自动展示当前耗材色卡的混色素材库，便捷挑选适配的混色组合。"
+
+# Mixed filament management (PRD 2.0).
+msgid "Mixed filament limit reached (256 recipes). Excess mixed colors will be removed."
+msgstr "达到混色耗材数量上限（256个配方）。超出的混色将被移除。"

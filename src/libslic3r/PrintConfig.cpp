@@ -2263,6 +2263,22 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionStrings{ "#F2754E" });
 
+    def           = this->add("filament_transmission_distance", coFloats);
+    def->label    = L("Transmission distance");
+    def->tooltip  = L("Measured optical transmission distance for color calibration, in millimeters. "
+                       "Use 0 when unknown.");
+    def->sidetext = "mm";
+    def->min      = 0;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloats{0.0});
+
+    def          = this->add("filament_full_spectrum_material_id", coStrings);
+    def->label   = L("FullSpectrum material ID");
+    def->tooltip = L("Stable material identifier from the FullSpectrum calibration database. "
+                     "Leave empty for uncalibrated filaments; color-only matching is used as a limited legacy fallback.");
+    def->mode    = comAdvanced;
+    def->set_default_value(new ConfigOptionStrings{""});
+
     def = this->add("filament_multi_colors", coStrings);
     def->label = L("Filament multi colors");
     def->tooltip = L("Serialized filament color sequence. Multiple colors are separated by '|'.");
@@ -3797,6 +3813,24 @@ void PrintConfigDef::init_fff_params()
     def->mode     = comAdvanced;
     def->set_default_value(new ConfigOptionFloat(0.));
 
+    def          = this->add("fs_surface_paint_only", coBool);
+    def->label   = L("Surface paint only");
+    def->tooltip = L(
+        "Restricts color-painted regions to the object's wall shell instead of filling the painted area through solid infill.");
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
+    def           = this->add("fs_painted_zone_extra_perimeters", coInt);
+    def->label    = L("Extra perimeters in painted zones");
+    def->tooltip  = L("Adds this many perimeter walls to color-painted regions, on top of the object's normal perimeter count. "
+                       "The rest of the object keeps its normal perimeter count.");
+    def->min      = 0;
+    def->max      = 8;
+    def->category = L("Advanced");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionInt(0));
+
     def           = this->add("mmu_segmented_region_interlocking_depth", coFloat);
     def->label    = L("Interlocking depth of a segmented region");
     def->tooltip  = L("Interlocking depth of a segmented region. It will be ignored if "
@@ -4629,28 +4663,6 @@ void PrintConfigDef::init_fff_params()
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
-    def = this->add("mixed_filament_height_lower_bound", coFloat);
-    def->label = L("Local-Z lower height bound");
-    def->category = L("Others");
-    def->tooltip = L("Lower bound used when Local-Z mixed-filament dithering chooses per-color sublayer heights.\n\n"
-                     "Smaller values let Local-Z use thinner sublayers for a color when needed.\n\n"
-                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
-    def->sidetext = "mm";
-    def->min = 0.01;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(0.04));
-
-    def = this->add("mixed_filament_height_upper_bound", coFloat);
-    def->label = L("Local-Z upper height bound");
-    def->category = L("Others");
-    def->tooltip = L("Upper bound used when Local-Z mixed-filament dithering chooses per-color sublayer heights.\n\n"
-                     "Larger values let Local-Z use thicker sublayers for a color when needed.\n\n"
-                     "Detailed mixed filament setting explanations will be published once the project wiki is available.");
-    def->sidetext = "mm";
-    def->min = 0.01;
-    def->mode = comAdvanced;
-    def->set_default_value(new ConfigOptionFloat(0.16));
-
     def = this->add("mixed_filament_advanced_dithering", coBool);
     def->label = L("Advanced dithering");
     def->category = L("Others");
@@ -4734,17 +4746,24 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionFloat(0.0));
 
     def = this->add("dithering_local_z_mode", coBool);
-    def->label = L("Subdivide Mix Layer");
-    def->category = L("Material");
-    def->tooltip  = L("Enable \"Subdivide Mix Layer\" for mixing areas. Layer height will be subdivided for better color mixing results.");
+    def->label    = L("Subdivide all mix layers");
+    def->category = L("Others");
+    def->tooltip  = L(
+        "Gradients automatically subdivide their mixed layers. Enable this override to also subdivide non-gradient mixed filaments.\n\n"
+         "Subdivision blends colors by varying layer heights instead of using a fixed ratio of equal-height layers. This only affects "
+         "blended color zones; non-blended areas keep their nominal layer height and cadence when possible.\n\n"
+         "The minimum sublayer height limits the achievable ratio. For example, at 0.20 mm cycle height with a 0.06 mm minimum, a "
+         "requested 75/25 blend uses 0.14 mm and 0.06 mm passes.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
     def = this->add("dithering_local_z_whole_objects", coBool);
-    def->label = L("Full domain");
+    def->label    = L("Full domain for all mixes");
     def->category = L("Others");
-    def->tooltip = L("Experimental. Apply Local-Z thinning across whole mixed-color regions instead of limiting the effect strictly to painted mixed masks.\n\n"
-                     "Only available when Subdivide Mix Layer is enabled.");
+    def->tooltip  = L("A mixed filament assigned to an entire object or volume automatically uses the full domain when it uses layer "
+                       "subdivision. Enable this override to extend full-domain subdivision to all eligible mixed wall regions.\n\n"
+                       "This also lets subdivision continue through default mixed walls around painted areas instead of limiting the effect "
+                       "strictly to painted masks.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
@@ -4760,10 +4779,61 @@ void PrintConfigDef::init_fff_params()
     def = this->add("dithering_local_z_direct_multicolor", coBool);
     def->label = L("Use direct multicolor Local-Z solver");
     def->category = L("Others");
-    def->tooltip = L("Experimental. For mixed rows with 3 or more physical filaments, allocate Local-Z sublayers directly across all components with carry-over error between layers instead of collapsing them into pair cadence.\n\n"
-                     "This can reduce visible banding in multicolor Local-Z blends at the cost of more toolchanges. It is ignored when explicit Local-Z A/B heights are set.");
+    def->tooltip = L("For non-gradient mixed rows with 3 or more physical filaments, allocate Local-Z sublayers directly across all active "
+                     "components instead of collapsing them into pair cadence.\n\n"
+                     "Multi-stop gradients use Local-Z pair cadence.\n\n"
+                     "This can reduce visible banding in multicolor Local-Z blends at the cost of more toolchanges. It is ignored when "
+                     "explicit Local-Z A/B heights are set.");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(true));
+
+    def           = this->add("dithering_local_z_preserve_first_layer", coBool);
+    def->label    = L("Keep first layer unsplit");
+    def->category = L("Others");
+    def->tooltip  = L("Keep the first object layer at its initial layer height when gradients or SML subdivide mixed layers.\n\n"
+                       "This prevents the first layer from being divided into very thin sublayers that may not adhere reliably.");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def           = this->add("dithering_local_z_independent_layer_height", coBool);
+    def->label    = L("Use independent Local-Z layer heights");
+    def->category = L("Others");
+    def->tooltip  = L("Experimental. Decouple direct multicolor Local-Z pass heights from the nominal layer height. "
+                       "The smallest active component uses the Local-Z minimum sublayer height and the other component heights "
+                       "are scaled to preserve the exact blend ratio. The resulting cadence may span multiple nominal layers.\n\n"
+                       "For example, a 1/1/3 blend with a 0.04 mm Local-Z minimum uses a repeating "
+                       "0.04/0.04/0.12 mm cadence even when the normal layer height is 0.08 mm.\n\n"
+                       "Every pass is capped to the printer profile's maximum layer height. If a component's ratio requires "
+                       "more thickness, it is divided into multiple equal passes while preserving the total ratio.");
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(true));
+
+    def           = this->add("dithering_local_z_gradient_layer_height", coFloat);
+    def->label    = L("Gradient mix subdivision layer height");
+    def->category = L("Others");
+    def->tooltip  = L("Independent nominal height used to build gradient Local-Z A/B cycles. "
+                       "This does not change the object's normal slicing layer height. Gradient passes may span multiple normal layers, "
+                       "so gradients continue to work even when the normal layer height is too small to contain two Local-Z passes.\n\n"
+                       "The effective value is automatically raised when necessary so two active components can each satisfy the "
+                       "Local-Z minimum sublayer height.");
+    def->sidetext = "mm";
+    def->min      = 0.01;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionFloat(0.20));
+
+    def           = this->add("dithering_local_z_gradient_middle_filament_window", coPercent);
+    def->label    = L("Middle filament window");
+    def->category = L("Others");
+    def->tooltip  = L("Sets the portion of a multi-filament Local-Z gradient occupied only by each internal filament. "
+                       "The window is centered on that filament's gradient stop, with the adjacent two-filament transitions "
+                       "ending and starting at the window edges. The requested width is capped at the neighboring transition stops "
+                       "so transition regions never overlap.\n\n"
+                       "For example, 22% gives the middle filament a centered window covering 22% of the gradient whenever "
+                       "the surrounding stops leave enough room.");
+    def->min      = 0;
+    def->max      = 100;
+    def->mode     = comAdvanced;
+    def->set_default_value(new ConfigOptionPercent(3));
 
     def = this->add("dithering_step_painted_zones_only", coBool);
     def->label = L("Use step size in painted zones only");
@@ -6966,6 +7036,7 @@ void PrintConfigDef::init_filament_option_keys()
         "retraction_length", "z_hop", "z_hop_types", "retract_lift_above", "retract_lift_below", "retract_lift_enforce", "retraction_speed", "deretraction_speed",
         "retract_before_wipe", "retract_restart_extra", "retraction_minimum_travel", "wipe", "wipe_distance",
         "retract_when_changing_layer", "retract_length_toolchange", "retract_restart_extra_toolchange", "filament_colour",
+        "filament_transmission_distance", "filament_full_spectrum_material_id",
         "filament_multi_colors", "filament_colour_mode",
         "default_filament_profile","retraction_distances_when_cut","long_retractions_when_cut"/*,"filament_seam_gap"*/
     };
@@ -8017,6 +8088,10 @@ void PrintConfigDef::handle_legacy(t_config_option_key &opt_key, std::string &va
         "extruder_type",
         "internal_bridge_support_thickness","extruder_clearance_max_radius", "top_area_threshold", "reduce_wall_solid_infill","filament_load_time","filament_unload_time",
         "smooth_coefficient", "overhang_totally_speed", "silent_mode",
+        // Removed hidden toggle: calibrated color prediction is always used.
+        "mixed_filament_calibrated_colors",
+        // Removed: the nozzles' minimum and maximum layer heights bound mixed sublayers.
+        "mixed_filament_height_lower_bound", "mixed_filament_height_upper_bound",
     };
 
     if (ignore.find(opt_key) != ignore.end()) {

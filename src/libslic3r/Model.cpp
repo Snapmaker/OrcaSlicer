@@ -45,9 +45,6 @@
 #define _L(s) Slic3r::I18N::translate(s)
 
 namespace Slic3r {
-const std::vector<std::string> CONST_FILAMENTS = {
-    "", "4", "8", "0C", "1C", "2C", "3C", "4C", "5C", "6C", "7C", "8C", "9C", "AC", "BC", "CC", "DC",
-}; // 5                           10                            15    16
     // BBS initialization of static variables
     std::map<size_t, ExtruderParams> Model::extruderParamsMap = { {0,{"",0,0}}};
     GlobalSpeedMap Model::printSpeedMap{};
@@ -270,9 +267,9 @@ Model Model::read_from_file(const std::string&                                  
         ObjInfo                 obj_info;
         result = load_obj(input_file.c_str(), &model, obj_info, message);
         if (result){
-            unsigned char first_extruder_id;
+            unsigned int first_extruder_id;
             if (obj_info.vertex_colors.size() > 0) {
-                std::vector<unsigned char> vertex_filament_ids;
+                std::vector<unsigned int> vertex_filament_ids;
                 if (objFn) { // 1.result is ok and pop up a dialog
                     objFn(obj_info.vertex_colors, false, vertex_filament_ids, first_extruder_id);
                     if (vertex_filament_ids.size() > 0) {
@@ -280,7 +277,7 @@ Model Model::read_from_file(const std::string&                                  
                     }
                 }
             } else if (obj_info.face_colors.size() > 0 && obj_info.has_uv_png == false) { // mtl file
-                std::vector<unsigned char> face_filament_ids;
+                std::vector<unsigned int> face_filament_ids;
                 if (objFn) { // 1.result is ok and pop up a dialog
                     objFn(obj_info.face_colors, obj_info.is_single_mtl, face_filament_ids, first_extruder_id);
                     if (face_filament_ids.size() > 0) {
@@ -3399,15 +3396,21 @@ void Model::setExtruderParams(const DynamicPrintConfig& config, int extruders_co
     }
 }
 
-static void get_real_filament_id(const unsigned char &id, std::string &result) {
-    if (id < CONST_FILAMENTS.size()) {
-        result = CONST_FILAMENTS[id];
-    } else {
-        result = "";//error
-    }
+static void get_real_filament_id(const unsigned int& id, std::string& result)
+{
+    static constexpr char HEX[] = "0123456789ABCDEF";
+    if (id == 0 || id > MAXIMUM_FILAMENT_NUMBER)
+        result.clear();
+    else if (id < 3)
+        result.assign(1, HEX[id * 4]);
+    else
+        // Same extension-nibble encoding as TriangleSelector::serialize().
+        result = std::string(1, HEX[(id - 3) % 15]) + std::string((id - 3) / 15, 'F') + "C";
 };
 
-bool Model::obj_import_vertex_color_deal(const std::vector<unsigned char> &vertex_filament_ids, const unsigned char &first_extruder_id, Model *model)
+bool Model::obj_import_vertex_color_deal(const std::vector<unsigned int>& vertex_filament_ids,
+                                         const unsigned int&              first_extruder_id,
+                                         Model*                           model)
 {
     if (vertex_filament_ids.size() == 0) {
         return false;
@@ -3415,15 +3418,15 @@ bool Model::obj_import_vertex_color_deal(const std::vector<unsigned char> &verte
     // 2.generate mmu_segmentation_facets
     if (model->objects.size() == 1 ) {
         auto obj = model->objects[0];
-        obj->config.set("extruder", first_extruder_id);
+        obj->config.set("extruder", int(first_extruder_id));
         if (obj->volumes.size() == 1) {
             enum VertexColorCase {
                 _3_SAME_COLOR,
                 _3_DIFF_COLOR,
                 _2_SAME_1_DIFF_COLOR,
             };
-            auto calc_vertex_color_case = [](const unsigned char &c0, const unsigned char &c1, const unsigned char &c2, VertexColorCase &vertex_color_case,
-                                             unsigned char &iso_index) {
+            auto calc_vertex_color_case = [](const unsigned int& c0, const unsigned int& c1, const unsigned int& c2,
+                                             VertexColorCase& vertex_color_case, unsigned char& iso_index) {
                 if (c0 == c1 && c1 == c2) {
                     vertex_color_case = VertexColorCase::_3_SAME_COLOR;
                 } else if (c0 != c1 && c1 != c2 && c0 != c2) {
@@ -3445,7 +3448,7 @@ bool Model::obj_import_vertex_color_deal(const std::vector<unsigned char> &verte
                 return std::abs((v0 - v1).cross(v0 - v2).norm()) / 2;
             };
             auto volume = obj->volumes[0];
-            volume->config.set("extruder", first_extruder_id);
+            volume->config.set("extruder", int(first_extruder_id));
             auto face_count = volume->mesh().its.indices.size();
             volume->mmu_segmentation_facets.reset();
             volume->mmu_segmentation_facets.reserve(face_count);
@@ -3530,16 +3533,18 @@ bool Model::obj_import_vertex_color_deal(const std::vector<unsigned char> &verte
     return false;
 }
 
-bool Model::obj_import_face_color_deal(const std::vector<unsigned char> &face_filament_ids, const unsigned char &first_extruder_id, Model *model)
+bool Model::obj_import_face_color_deal(const std::vector<unsigned int>& face_filament_ids,
+                                       const unsigned int&              first_extruder_id,
+                                       Model*                           model)
 {
     if (face_filament_ids.size() == 0) { return false; }
     // 2.generate mmu_segmentation_facets
     if (model->objects.size() == 1) {
         auto obj = model->objects[0];
-        obj->config.set("extruder", first_extruder_id);
+        obj->config.set("extruder", int(first_extruder_id));
         if (obj->volumes.size() == 1) {
             auto volume        = obj->volumes[0];
-            volume->config.set("extruder", first_extruder_id);
+            volume->config.set("extruder", int(first_extruder_id));
             auto face_count    = volume->mesh().its.indices.size();
             volume->mmu_segmentation_facets.reset();
             volume->mmu_segmentation_facets.reserve(face_count);

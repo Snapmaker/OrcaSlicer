@@ -994,6 +994,10 @@ static std::vector<std::string> s_Preset_print_options {
      "dithering_local_z_infill",
      "calib_flowrate_topinfill_special_order",
      "process_flow_support",
+     "fs_surface_paint_only", "fs_painted_zone_extra_perimeters",
+     "dithering_local_z_preserve_first_layer", "dithering_local_z_direct_multicolor",
+     "dithering_local_z_independent_layer_height", "dithering_local_z_gradient_layer_height",
+     "dithering_local_z_gradient_middle_filament_window",
 };
 
 static std::vector<std::string> s_Preset_filament_options {

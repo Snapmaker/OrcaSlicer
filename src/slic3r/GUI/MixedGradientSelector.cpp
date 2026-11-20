@@ -1,3 +1,4 @@
+#include "MixedColorMatchHelpers.hpp"
 #include "MixedGradientSelector.hpp"
 
 namespace Slic3r { namespace GUI {
@@ -5,22 +6,8 @@ namespace Slic3r { namespace GUI {
 
 wxColour blend_pair_filament_mixer(const wxColour &left, const wxColour &right, float t)
 {
-    const wxColour safe_left  = left.IsOk()  ? left  : wxColour("#26A69A");
-    const wxColour safe_right = right.IsOk() ? right : wxColour("#26A69A");
-
-    unsigned char out_r = static_cast<unsigned char>(safe_left.Red());
-    unsigned char out_g = static_cast<unsigned char>(safe_left.Green());
-    unsigned char out_b = static_cast<unsigned char>(safe_left.Blue());
-    ::Slic3r::filament_mixer_lerp(
-        static_cast<unsigned char>(safe_left.Red()),
-        static_cast<unsigned char>(safe_left.Green()),
-        static_cast<unsigned char>(safe_left.Blue()),
-        static_cast<unsigned char>(safe_right.Red()),
-        static_cast<unsigned char>(safe_right.Green()),
-        static_cast<unsigned char>(safe_right.Blue()),
-        std::clamp(t, 0.f, 1.f),
-        &out_r, &out_g, &out_b);
-    return wxColour(out_r, out_g, out_b);
+    const double fraction = std::clamp(double(t), 0.0, 1.0);
+    return blend_preview_colors({left, right}, {1.0 - fraction, fraction});
 }
 
 wxRect MixedGradientSelector::gradient_rect() const

@@ -417,3 +417,26 @@ TEST_CASE("GatewayDevice query_machine_info nozzle_volume_type edge cases", "[ga
         REQUIRE(flows.empty());
     }
 }
+
+TEST_CASE("GatewayDevice nozzle_flow_mismatches compares only the nozzles the plate uses", "[gateway][device][machine-slots]")
+{
+    std::vector<ConnectMachineInfo> slots;
+    REQUIRE(GatewayDevice::parse_machine_slots(machine_objects(), slots)); // nozzle 0 standard, nozzle 1 high_flow
+
+    // Sliced for what is installed: nothing to report.
+    REQUIRE(GatewayDevice::nozzle_flow_mismatches(slots, {"standard", "high_flow"}, {0, 1}).empty());
+
+    // Nozzle 1 has High Flow installed, the plate was sliced for Standard.
+    const auto mismatches = GatewayDevice::nozzle_flow_mismatches(slots, {"standard", "standard"}, {0, 1});
+    REQUIRE(mismatches.size() == 1);
+    REQUIRE(mismatches[0].nozzle == 1);
+    REQUIRE(mismatches[0].installed == "high_flow");
+    REQUIRE(mismatches[0].sliced == "standard");
+
+    // The same difference on a nozzle the plate does not use is not reported.
+    REQUIRE(GatewayDevice::nozzle_flow_mismatches(slots, {"standard", "standard"}, {0}).empty());
+
+    // No connected machine, or a nozzle the project does not know: nothing to compare.
+    REQUIRE(GatewayDevice::nozzle_flow_mismatches({}, {"standard", "standard"}, {0, 1}).empty());
+    REQUIRE(GatewayDevice::nozzle_flow_mismatches(slots, {"standard"}, {0, 1}).empty());
+}

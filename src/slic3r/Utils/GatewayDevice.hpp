@@ -34,6 +34,19 @@ public:
     static bool parse_machine_slots(const nlohmann::json& result, std::vector<ConnectMachineInfo>& slots);
     static bool delta_affects_machine_slots(const nlohmann::json& delta);
     static bool machine_slots_equal(const std::vector<ConnectMachineInfo>& left, const std::vector<ConnectMachineInfo>& right);
+
+    struct NozzleFlowMismatch
+    {
+        int         nozzle; // 0-based
+        std::string installed;
+        std::string sliced;
+    };
+    // Nozzles listed in used_nozzles (0-based) whose flow type on the connected machine differs from
+    // the one the plate was sliced for. Nozzles missing on either side are skipped, so an empty
+    // slot list (no machine connected) reports nothing.
+    static std::vector<NozzleFlowMismatch> nozzle_flow_mismatches(const std::vector<ConnectMachineInfo>& slots,
+                                                                  const std::vector<std::string>&        sliced_types,
+                                                                  const std::vector<int>&                used_nozzles);
 };
 
 }} // namespace Slic3r::Gateway

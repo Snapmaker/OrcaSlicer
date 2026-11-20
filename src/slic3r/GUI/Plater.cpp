@@ -21971,7 +21971,7 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
         dialog->set_store_id(store_id);
         bool res = dialog->run();
 
-        if (dialog->is_finish()) {
+        if (dialog->is_finish() && dialog->need_switch_to_device()) {
             wxGetApp().mainframe->select_tab(MainFrame::TabPosition::tpMonitor);
         }
 
@@ -22157,6 +22157,8 @@ void Plater::print_job_finished(wxCommandEvent &evt)
     if (!dev) return;
 
     dev->set_selected_machine(evt.GetString().ToStdString());
+    if (!get_app_config()->get_bool("open_device_tab_post_upload"))
+        return;
     p->main_frame->request_select_tab(MainFrame::TabPosition::tpMonitor);
     //jump to monitor and select device status panel
     MonitorPanel* curr_monitor = p->main_frame->m_monitor;

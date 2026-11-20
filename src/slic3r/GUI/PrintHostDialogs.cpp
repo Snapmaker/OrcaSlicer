@@ -64,7 +64,6 @@ void PrintHostSendDialog::init()
     const auto& storage_paths = m_paths;
     const auto& post_actions = m_post_actions;
     const auto& storage_names = m_storage_names;
-    m_switch_to_device_tab = true;
 
     const AppConfig* app_config = wxGetApp().app_config;
 

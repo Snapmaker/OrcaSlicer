@@ -464,6 +464,10 @@ void AppConfig::set_defaults()
     if (get("show_memory_usage_warning").empty()) {
         set_bool("show_memory_usage_warning", true);
     }
+    // Switching to the Device tab after a send has always been the behaviour; keep it as the default.
+    if (get("open_device_tab_post_upload").empty()) {
+        set_bool("open_device_tab_post_upload", true);
+    }
     if (get("linear_defletion", "angle_defletion").empty()) {
         set("linear_defletion", "0.003");
         set("angle_defletion", "0.5");

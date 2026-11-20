@@ -134,6 +134,8 @@ set(lisbslic3r_sources
     FileParserError.hpp
     AllowlistManager.cpp
     AllowlistManager.hpp
+    ColorConversionPalette.cpp
+    ColorConversionPalette.hpp
     FilamentColorLibrary.cpp
     FilamentColorLibrary.hpp
     FilamentHotBedNozzleRules.cpp

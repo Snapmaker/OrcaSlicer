@@ -8078,7 +8078,13 @@ std::string GCode::_extrude(const ExtrusionPath& path, std::string description, 
         } else if (path.role() == erTopSolidInfill) {
             speed = this->process_flow_value(m_config.top_surface_speed);
         } else if (path.role() == erIroning) {
-            speed = this->process_flow_value(m_config.ironing_speed);
+            // GH #957: filament-specific ironing speed override (ported from
+            // upstream OrcaSlicer). When the filament sets an ironing speed,
+            // use it; a nil entry means "use the process ironing speed".
+            const size_t filament_idx = m_writer.extruder() != nullptr ? m_writer.extruder()->id() : 0;
+            speed = m_config.filament_ironing_speed.is_nil(filament_idx)
+                ? this->process_flow_value(m_config.ironing_speed)
+                : m_config.filament_ironing_speed.get_at(filament_idx);
         } else if (path.role() == erBottomSurface) {
             speed = this->process_flow_value(m_config.initial_layer_infill_speed);
         } else if (path.role() == erGapFill) {

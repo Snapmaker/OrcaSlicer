@@ -3235,6 +3235,8 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         return;
 
     wxGetApp().get_opengl_manager().FlushPendingBufferDeletes();
+    if (wxGetApp().app_config->get("render_ao_quality") == "off")
+        ReleaseDisabledAOResources();
 
     if (!is_initialized() && !init())
         return;
@@ -9120,6 +9122,29 @@ bool GLCanvas3D::ApplyExplosionRatio(float ratio)
     InvalidateSceneAndPickingCaches();
     request_extra_frame();
     return true;
+}
+
+void GLCanvas3D::ReleaseDisabledAOResources()
+{
+    // The active canvas has already made its context current. Prepare and Assemble
+    // normally share it, so turning AO off also frees buffers on the hidden canvas.
+    const auto release = [this](GLCanvas3D* canvas) {
+        if (canvas == nullptr || canvas->m_context != m_context || canvas->m_ao_feature.failure_reason() == "OpenGL context lost" ||
+            canvas->m_ao_frame_target.failure_reason() == "OpenGL context lost")
+            return;
+        if (canvas->m_ao_feature.has_resources() || !canvas->m_ao_feature.failure_reason().empty()) {
+            canvas->m_ao_feature.release();
+            canvas->InvalidateSceneCache();
+        }
+        if (canvas->m_ao_frame_target.framebuffer() != 0 || !canvas->m_ao_frame_target.failure_reason().empty())
+            canvas->m_ao_frame_target.release();
+    };
+    release(this);
+    if (Plater* plater = wxGetApp().plater()) {
+        for (GLCanvas3D* canvas : {plater->get_view3D_canvas3D(), plater->get_assmeble_canvas3D()})
+            if (canvas != this)
+                release(canvas);
+    }
 }
 
 bool GLCanvas3D::IsAOSceneView() const { return m_canvas_type == CanvasView3D || m_canvas_type == CanvasAssembleView; }

@@ -1420,6 +1420,7 @@ private:
 
     /** @brief Discards the shadow renderer, deleting GL resources only with its context current. */
     void ReleaseSoftShadows(bool contextCurrent);
+    void ReleaseDisabledAOResources();
 
     void _switch_toolbars_icon_filename();
     bool _init_toolbars();

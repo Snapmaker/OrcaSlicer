@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <optional>
 #include <boost/log/trivial.hpp>
+#include <tuple>
 
 namespace Slic3r { namespace GUI { namespace AO {
 
@@ -48,14 +49,34 @@ bool separable_projection(const Matrix4d& inverse)
     return inverse(0, 1) == 0.0 && inverse(0, 2) == 0.0 && inverse(0, 3) == 0.0 && inverse(1, 0) == 0.0 && inverse(1, 2) == 0.0 &&
            inverse(1, 3) == 0.0 && inverse(2, 0) == 0.0 && inverse(2, 1) == 0.0 && inverse(3, 0) == 0.0 && inverse(3, 1) == 0.0;
 }
+
+bool same_work_plan(const AOPlan& lhs, const AOPlan& rhs)
+{
+    if (lhs.composite != rhs.composite || lhs.backend() != rhs.backend())
+        return false;
+    if (lhs.uses_compute()) {
+        const auto key = [](const AOCSPlan& plan) {
+            return std::tie(plan.quality, plan.width, plan.height, plan.slices, plan.steps, plan.denoise_passes, plan.legacy_low);
+        };
+        return key(lhs.cs()) == key(rhs.cs());
+    }
+    const auto key = [](const AOFSPlan& plan) {
+        return std::tie(plan.quality, plan.eval_width, plan.eval_height, plan.slices, plan.steps, plan.edge_filter, plan.edge_passes,
+                        plan.fast_reconstruction, plan.upsample);
+    };
+    return key(lhs.fs()) == key(rhs.fs());
+}
 } // namespace
 
-bool GLAOFeature::fail(const std::string& reason)
+bool GLAOFeature::fail(const std::string& reason, FailureScope scope)
 {
     m_visual_signature.clear();
+    if (m_failure == "OpenGL context lost")
+        return false;
     if (m_failure.empty())
         BOOST_LOG_TRIVIAL(warning) << "Ambient occlusion disabled: " << reason;
-    m_failure = reason;
+    m_failure       = reason;
+    m_failure_scope = scope;
     return false;
 }
 
@@ -105,6 +126,8 @@ GLAOFeature::Preparation GLAOFeature::prepare(const AOExecutionRequest& request,
     m_prepared = false;
     m_catalog  = &catalog;
     m_forbidden_reason.clear();
+    if (m_failure == "OpenGL context lost")
+        return Preparation::ContextLost;
     if (input.viewport[2] != m_prepare_width || input.viewport[3] != m_prepare_height) {
         m_prepare_width  = input.viewport[2];
         m_prepare_height = input.viewport[3];
@@ -112,31 +135,36 @@ GLAOFeature::Preparation GLAOFeature::prepare(const AOExecutionRequest& request,
         m_inputs.reset_health();
         m_compositor.reset_health();
         m_compute.retry_resource_failure();
-        if (m_failure.find("allocation") != std::string::npos)
+        if (m_failure_scope == FailureScope::DepthAllocation || m_failure_scope == FailureScope::Plan)
             m_failure.clear();
     }
     if (!(m_program_identity == catalog.identity())) {
         m_program_identity = catalog.identity();
-        if (m_failure != "OpenGL context lost")
+        if (m_failure_scope != FailureScope::DepthAllocation)
             m_failure.clear();
         m_compute.reset_health();
         m_fragment.reset_health();
         m_inputs.reset_health();
         m_compositor.reset_health();
     }
-    if (m_failure == "OpenGL context lost")
-        return Preparation::ContextLost;
-    if (settings.quality == AOSettings::Quality::Off || !m_failure.empty())
+    if (settings.quality == AOSettings::Quality::Off)
+        return Preparation::Failed;
+    if (!m_failure.empty() && m_failure_scope == FailureScope::DepthAllocation) {
+        const auto failed_quality = m_prepare_plan.uses_compute() ? m_prepare_plan.cs().quality : m_prepare_plan.fs().quality;
+        if (settings.quality != failed_quality)
+            m_failure.clear();
+    }
+    if (!m_failure.empty() && m_failure_scope != FailureScope::Plan)
         return Preparation::Failed;
     if (!GLEW_VERSION_3_1) {
-        fail("OpenGL 3.1 is required");
+        fail("OpenGL 3.1 is required", FailureScope::Common);
         return Preparation::Failed;
     }
     const int w = input.viewport[2], h = input.viewport[3];
     if (w <= 0 || h <= 0)
         return Preparation::Failed;
     if (!catalog.common_ready()) {
-        fail("a required common AO shader is unavailable");
+        fail("a required common AO shader is unavailable", FailureScope::Common);
         return Preparation::Failed;
     }
     // Keep the caller's scene target and bindings intact through every allocation path.
@@ -172,12 +200,16 @@ GLAOFeature::Preparation GLAOFeature::prepare(const AOExecutionRequest& request,
 
     const AOBackendAvailability availability = compute_availability(resolved, settings, catalog, input);
     AOPlanDecision              decision     = make_plan(resolved, settings, w, h, availability);
+    if (!m_failure.empty() && same_work_plan(m_prepare_plan, decision.plan))
+        return Preparation::Failed;
+    m_failure.clear();
     if (decision.forbidden) {
         m_forbidden_reason = "forced CS unavailable: " + decision.fallback_reason;
         return Preparation::Forbidden;
     }
-    m_plan      = decision.plan;
-    m_fell_back = decision.fell_back || resolved.composite != request.composite;
+    m_prepare_plan = decision.plan;
+    m_plan         = decision.plan;
+    m_fell_back    = decision.fell_back || resolved.composite != request.composite;
     // Historical selection/fallback reason (empty on a healthy CS plan); recorded in the
     // benchmark pipeline description and backend-info metadata.
     m_backend_reason = decision.fallback_reason;
@@ -188,16 +220,9 @@ GLAOFeature::Preparation GLAOFeature::prepare(const AOExecutionRequest& request,
         return Preparation::Failed;
 
     // Saved bindings may refer to work resources invalidated by this preparation.
-    for (unsigned int texture : {m_inputs.depth_texture(), m_inputs.normals_texture(), m_inputs.confidence_texture(),
-                                 m_inputs.sample_depth_texture(), m_fragment.raw_texture(), m_fragment.filtered_texture(),
-                                 m_fragment.full_texture(), m_fragment.edge_texture(), m_compositor.split_texture()})
-        state.forget_texture(texture);
-    for (unsigned int fbo : {m_inputs.depth_fbo(), m_inputs.normals_fbo(), m_inputs.sample_fbo(), m_fragment.raw_fbo(),
-                             m_fragment.filtered_fbo(), m_fragment.full_fbo(), m_compositor.split_fbo()})
-        state.forget_framebuffer(fbo);
-    state.forget_vertex_array(m_inputs.vao());
-    for (int index = 0; index < 6; ++index)
-        state.forget_texture(m_compute.texture(index));
+    forget_working_bindings(state);
+    if (m_plan.composite == CompositeVariant::Pixel && m_inputs.sample_fbo())
+        m_inputs.release_sample_depth();
     const auto preparation_failed = [&](const std::string& reason) {
         const bool lost = reason == "OpenGL context lost";
         if (lost)
@@ -318,13 +343,14 @@ void GLAOFeature::build_uniforms(const AOSettings& settings)
 
 GLShaderProgram* GLAOFeature::select_sample_composite_shader(const GLAOProgramCatalog::Refs& refs) const
 {
-    if (m_split_active)
-        return refs.split_edges;
-    if (m_plan.composite == CompositeVariant::Confidence)
-        return refs.composite_sample_confidence;
-    if (m_plan.composite == CompositeVariant::Reference)
-        return refs.composite_sample_reference;
-    return refs.composite_sample;
+    switch (m_plan.composite) {
+    case CompositeVariant::Pixel: return nullptr;
+    case CompositeVariant::Sample: return refs.composite_sample;
+    case CompositeVariant::Confidence: return refs.composite_sample_confidence;
+    case CompositeVariant::Reference: return refs.composite_sample_reference;
+    case CompositeVariant::SplitMsaa: return m_split_active ? refs.split_edges : refs.composite_sample;
+    }
+    return nullptr;
 }
 
 GLShaderProgram* GLAOFeature::select_pixel_composite_shader(const GLAOProgramCatalog::Refs& refs) const
@@ -350,7 +376,7 @@ AOResult GLAOFeature::render(const AOExecutionRequest&    request,
         return result;
     }
     if (!m_prepared || !m_failure.empty() || !m_catalog) {
-        result.status      = AOStatus::Failed;
+        result.status      = m_failure == "OpenGL context lost" ? AOStatus::ContextLost : AOStatus::Failed;
         result.reason      = m_failure.empty() ? "AO was not prepared" : m_failure;
         result.color_state = SceneColorState::Unchanged;
         return result;
@@ -383,11 +409,11 @@ AOResult GLAOFeature::render(const AOExecutionRequest&    request,
     const auto& refs = m_catalog->refs();
     build_uniforms(settings);
 
-    // Set the requested variant before recording per-run metadata. Unsupported sample layouts
-    // abort strict requests immediately after the depth copy below.
-    m_pixel_active      = m_plan.composite == CompositeVariant::Pixel && settings.debug_view == 0;
-    m_split_active      = m_plan.composite == CompositeVariant::SplitMsaa && settings.debug_view == 0;
-    m_last_render_clean = false;
+    m_pixel_active = m_plan.composite == CompositeVariant::Pixel && settings.debug_view == 0;
+    m_split_active = m_sample_active = false;
+    m_color_sample_count             = 0;
+    m_composite_shader = m_sample_composite_shader = nullptr;
+    m_last_render_clean                            = false;
     publish_execution(observer);
     if (observer)
         observer->mark(AOStage::AOBegin);
@@ -401,14 +427,22 @@ AOResult GLAOFeature::render(const AOExecutionRequest&    request,
             observer->stage_failed(AOStage::AOBegin, result.reason, result.status);
         return result;
     };
+    state.forget_texture(m_inputs.depth_texture());
+    state.forget_framebuffer(m_inputs.depth_fbo());
     if (!m_inputs.capture_depth(input)) {
-        // Historical contract: depth resolve failures latch AO off until the context changes.
-        fail(m_inputs.failure_reason());
-        result.status      = m_inputs.failure_reason() == "OpenGL context lost" ? AOStatus::ContextLost : AOStatus::Failed;
-        result.reason      = m_inputs.failure_reason();
-        result.color_state = SceneColorState::Unchanged;
-        if (result.status == AOStatus::ContextLost)
-            state.forget_context();
+        const std::string reason = m_inputs.failure_reason();
+        if (reason == "OpenGL context lost")
+            return lost_result();
+        const bool allocation_failed = m_inputs.depth_allocation_failed();
+        if (allocation_failed) {
+            forget_working_bindings(state);
+            release();
+        }
+        fail(reason, allocation_failed ? FailureScope::DepthAllocation : FailureScope::DepthSource);
+        result.status = AOStatus::Failed;
+        result.reason = reason;
+        if (observer)
+            observer->stage_failed(AOStage::AOBegin, result.reason, result.status);
         return result;
     }
     if (observer) {
@@ -426,8 +460,15 @@ AOResult GLAOFeature::render(const AOExecutionRequest&    request,
     }
     if (observer && observer->context_lost())
         return lost_result();
-    const bool sample_path_allowed = m_plan.composite != CompositeVariant::Pixel && refs.composite_sample;
-    m_sample_active                = !m_pixel_active && m_inputs.capture_sample_depth(input, sample_path_allowed);
+    const bool wants_samples       = m_plan.composite != CompositeVariant::Pixel;
+    const bool split_requested     = m_plan.composite == CompositeVariant::SplitMsaa && settings.debug_view == 0;
+    const bool split_supported     = m_inputs.source_samples() > 1 && m_inputs.source_samples() <= 8;
+    m_split_active                 = split_requested && split_supported;
+    const bool sample_shader_ready = select_sample_composite_shader(refs) != nullptr;
+    state.forget_texture(m_inputs.sample_depth_texture());
+    state.forget_framebuffer(m_inputs.sample_fbo());
+    m_sample_active = m_inputs.capture_sample_depth(input, wants_samples && (!split_requested || split_supported) && sample_shader_ready);
+    m_split_active &= m_sample_active;
     if (m_inputs.failure_reason() == "OpenGL context lost")
         return lost_result();
     if (m_sample_active && observer) {
@@ -445,28 +486,32 @@ AOResult GLAOFeature::render(const AOExecutionRequest&    request,
     // Color sample capture is independent of whether AO uses a copied sample-depth texture.
     m_color_sample_count = input.source != 0 && input.source == input.target && m_inputs.source_samples() > 1 ? m_inputs.source_samples() :
                                                                                                                 0;
-    if ((request.require_msaa_comparison && (m_color_sample_count <= 1 || settings.debug_view != 0)) ||
-        (request.require_sample_composite && !m_sample_active) ||
-        (request.fallback == FallbackPolicy::Forbid && m_plan.composite != CompositeVariant::Pixel && settings.debug_view == 0 &&
-         !m_sample_active)) {
-        result.status      = AOStatus::Forbidden;
-        result.reason      = "requested MSAA composite unavailable";
-        result.color_state = SceneColorState::Unchanged;
+    const bool sample_composite = settings.debug_view == 0 || m_uniforms.capture_sample;
+    const bool sample_required  = request.require_sample_composite ||
+                                 (request.fallback == FallbackPolicy::Forbid && wants_samples && sample_composite);
+    const bool bad_comparison = request.require_msaa_comparison && (m_color_sample_count <= 1 || settings.debug_view != 0);
+    if (!m_sample_active && m_inputs.sample_fbo()) {
+        state.forget_texture(m_inputs.sample_depth_texture());
+        state.forget_framebuffer(m_inputs.sample_fbo());
+        m_inputs.release_sample_depth();
+    }
+    const std::string sample_failure = split_requested && !split_supported       ? "split composite requires 2..8 MSAA samples" :
+                                       wants_samples && !sample_shader_ready     ? "requested sample composite shader is unavailable" :
+                                       !m_inputs.sample_failure_reason().empty() ? m_inputs.sample_failure_reason() :
+                                                                                   "sample depth unavailable";
+    if (bad_comparison || (sample_required && !m_sample_active)) {
+        result.status = AOStatus::Forbidden;
+        result.reason = bad_comparison ? "requested MSAA comparison target unavailable" : sample_failure;
         if (observer)
-            observer->stage_failed(AOStage::AOBegin, result.reason);
+            observer->stage_failed(AOStage::AOBegin, result.reason, result.status);
         return result;
     }
-    if (m_plan.composite != CompositeVariant::Pixel && settings.debug_view == 0 && !m_sample_active) {
-        if (m_plan.composite != CompositeVariant::Reference)
-            m_plan.composite = CompositeVariant::Pixel;
-        m_pixel_active   = true;
+    if (wants_samples && sample_composite && !m_sample_active) {
+        m_plan.composite = CompositeVariant::Pixel;
+        m_pixel_active   = settings.debug_view == 0;
         m_fell_back      = true;
-        m_backend_reason = "sample depth unavailable; using pixel composite";
+        m_backend_reason = sample_failure + "; using pixel composite";
     }
-    m_split_active = m_plan.composite == CompositeVariant::SplitMsaa && m_sample_active && m_inputs.sample_count() > 1 &&
-                     m_inputs.sample_count() <= 8 && settings.debug_view == 0;
-    if (m_plan.composite == CompositeVariant::SplitMsaa && !m_split_active && observer)
-        observer->stage_failed(AOStage::AOBegin, "split composite requires its programs and 2..8 MSAA samples");
 
     publish_execution(observer);
     if (observer) {
@@ -857,12 +902,31 @@ void GLAOFeature::publish_execution(AOFrameObserver* observer) const
     observer->execution_ready(view);
 }
 
+void GLAOFeature::forget_working_bindings(AOGLStateGuard& state) const
+{
+    for (unsigned int texture : {m_inputs.depth_texture(), m_inputs.normals_texture(), m_inputs.confidence_texture(),
+                                 m_inputs.sample_depth_texture(), m_fragment.raw_texture(), m_fragment.filtered_texture(),
+                                 m_fragment.full_texture(), m_fragment.edge_texture(), m_compositor.split_texture()})
+        state.forget_texture(texture);
+    for (unsigned int fbo : {m_inputs.depth_fbo(), m_inputs.normals_fbo(), m_inputs.sample_fbo(), m_fragment.raw_fbo(),
+                             m_fragment.filtered_fbo(), m_fragment.full_fbo(), m_compositor.split_fbo()})
+        state.forget_framebuffer(fbo);
+    state.forget_vertex_array(m_inputs.vao());
+    for (int index = 0; index < 6; ++index)
+        state.forget_texture(m_compute.texture(index));
+}
+
 void GLAOFeature::release()
 {
-    m_compute.release();
-    m_fragment.release();
-    m_compositor.release();
-    m_inputs.release();
+    if (has_resources()) {
+        m_compute.release();
+        m_fragment.release();
+        m_compositor.release();
+        m_inputs.release();
+    }
+    if (m_failure != "OpenGL context lost")
+        m_failure.clear();
+    m_visual_signature.clear();
     m_prepared = false;
 }
 
@@ -873,9 +937,9 @@ void GLAOFeature::forget_context()
     m_fragment.forget_context();
     m_compositor.forget_context();
     m_inputs.forget_context();
-    m_plan     = AOPlan{};
+    m_plan = m_prepare_plan = AOPlan{};
     m_prepared = false;
-    m_width = m_height = 0;
+    m_width = m_height = m_prepare_width = m_prepare_height = 0;
     m_backend_reason.clear();
     m_fell_back = false;
     m_failure.clear();

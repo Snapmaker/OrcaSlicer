@@ -29,6 +29,7 @@ public:
     bool capture_depth(const AOFrameInput& input);
     // Multisampled depth copy for per-sample evaluation; consults the plan's sample path.
     bool capture_sample_depth(const AOFrameInput& input, bool sample_path_allowed);
+    void release_sample_depth();
     void bind_resolved_receiver_target();
     void bind_sample_receiver_target(); // Binds the MSAA depth FBO and the sample texture at unit 3.
     // Normal reconstruction (unit 0: resolved depth, unit 4 afterwards: confidence when active).
@@ -51,14 +52,16 @@ public:
     unsigned int depth_format() const { return m_depth_format; }
 
     bool confidence_failed() const { return m_confidence_failed; }
-    bool sample_depth_failed() const { return m_sample_failed; }
+    bool depth_allocation_failed() const { return m_depth_allocation_failed; }
     void note_confidence_failed() { m_confidence_failed = true; }
     void reset_health()
     {
-        m_confidence_failed = m_sample_failed = false;
+        m_confidence_failed = m_depth_allocation_failed = false;
         m_failure.clear();
+        m_sample_failure.clear();
     }
     const std::string& failure_reason() const { return m_failure; }
+    const std::string& sample_failure_reason() const { return m_sample_failure; }
 
     void         release();
     void         forget_context();
@@ -67,22 +70,25 @@ public:
     void         set_context(const void* context) { m_context = context; }
 
 private:
-    bool fail(const std::string& reason);
-    bool allocate_depth(unsigned int format);
+    enum class DepthAllocation { Ready, Unsupported, OutOfMemory, ContextLost };
+
+    bool            fail(const std::string& reason);
+    bool            fail_sample(const char* reason);
+    DepthAllocation allocate_depth(unsigned int format);
 
     unsigned int m_vao{0};
     unsigned int m_depth_fbo{0}, m_depth{0}, m_depth_format{0};
-    unsigned int m_sample_fbo{0}, m_sample_depth{0};
+    unsigned int m_sample_fbo{0}, m_sample_depth{0}, m_sample_format{0};
     int          m_sample_count{0};
-    bool         m_sample_active{false}, m_sample_failed{false};
+    bool         m_sample_active{false};
     unsigned int m_normals_fbo{0}, m_normals{0};
     unsigned int m_confidence_texture{0};
     bool         m_confidence_failed{false};
     int          m_width{0}, m_height{0};
     unsigned int m_source{0};
     int          m_samples{-1};
-    bool         m_depth_validated{false};
-    std::string  m_failure;
+    bool         m_depth_validated{false}, m_depth_allocation_failed{false};
+    std::string  m_failure, m_sample_failure;
     unsigned int m_generation{0};
     const void*  m_context{nullptr};
 };

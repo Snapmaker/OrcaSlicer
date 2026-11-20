@@ -136,25 +136,33 @@ bool GLAOFrameTarget::Session::present(const std::function<void(int)>& mark)
 {
     if (!m_active)
         return true;
+
+    const auto fail = [this](const char* reason, bool context_lost) {
+        if (context_lost) {
+            forget();
+        } else {
+            restore();
+            errors(&context_lost);
+        }
+
+        // Keep the failed layout cached even after disposing of its storage.
+        const auto description = m_target->m_description;
+        if (context_lost)
+            m_target->forget_context();
+        else
+            m_target->release();
+        m_target->m_description = description;
+        m_target->m_failure     = context_lost ? "OpenGL context lost" : reason;
+        return false;
+    };
+
     GLint current_draw = 0;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &current_draw);
-    bool       lost_before_present = false;
-    const bool prior_error         = errors(&lost_before_present);
-    if (lost_before_present) {
-        forget();
-        m_target->m_failure = "OpenGL context lost";
-        return false;
-    }
-    if (prior_error) {
-        m_target->m_failure = "OpenGL error before full-frame presentation";
-        restore();
-        return false;
-    }
-    if (GLuint(current_draw) != m_target->m_fbo[0]) {
-        m_target->m_failure = "a nested pass changed the full-frame draw target";
-        restore();
-        return false;
-    }
+    bool context_lost = false;
+    if (errors(&context_lost))
+        return fail("OpenGL error before full-frame presentation", context_lost);
+    if (GLuint(current_draw) != m_target->m_fbo[0])
+        return fail("a nested pass changed the full-frame draw target", false);
     const GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
     glDisable(GL_SCISSOR_TEST);
     if (mark)
@@ -171,19 +179,13 @@ bool GLAOFrameTarget::Session::present(const std::function<void(int)>& mark)
                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
     if (mark)
         mark(12);
-    bool       context_lost = false;
-    const bool failed       = errors(&context_lost);
-    if (context_lost) {
-        forget();
-        m_target->m_failure = "OpenGL context lost";
-        return false;
-    }
-    if (scissor)
+    const bool failed = errors(&context_lost);
+    if (!context_lost && scissor)
         glEnable(GL_SCISSOR_TEST);
-    restore();
     if (failed)
-        m_target->m_failure = "full-frame MSAA color presentation failed";
-    return !failed;
+        return fail("full-frame MSAA color presentation failed", context_lost);
+    restore();
+    return true;
 }
 
 void GLAOFrameTarget::Session::restore()

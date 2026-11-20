@@ -19,6 +19,8 @@ namespace Slic3r {
 class GLShaderProgram;
 namespace GUI { namespace AO {
 
+class AOGLStateGuard;
+
 // Public AO entry point: resolves the request against availability, prepares the modules,
 // executes the plan (with complete-plan fallback), composites into the scene target and reports
 // the actual execution facts. Owns the working modules; programs stay with GLShadersManager and
@@ -61,6 +63,9 @@ public:
     void forget_context();
 
 private:
+    enum class FailureScope { Plan, DepthAllocation, DepthSource, Common };
+
+    void                  forget_working_bindings(AOGLStateGuard& state) const;
     void                  publish_execution(AOFrameObserver* observer) const;
     AOBackendAvailability compute_availability(const AOExecutionRequest& request,
                                                const AOSettings&         settings,
@@ -70,7 +75,7 @@ private:
     // historical validate_fs_shaders and MUST run before committing any FS plan, including
     // fallbacks, so render never dereferences a missing program.
     bool             validate_fs_programs(const AOFSPlan& plan, const GLAOProgramCatalog::Refs& refs);
-    bool             fail(const std::string& reason);
+    bool             fail(const std::string& reason, FailureScope scope = FailureScope::Plan);
     void             build_uniforms(const AOSettings& settings);
     GLShaderProgram* select_sample_composite_shader(const GLAOProgramCatalog::Refs& refs) const;
     GLShaderProgram* select_pixel_composite_shader(const GLAOProgramCatalog::Refs& refs) const;
@@ -81,13 +86,14 @@ private:
     GLAOFragmentBackend       m_fragment;
     GLAOCompositor            m_compositor;
     const GLAOProgramCatalog* m_catalog{nullptr};
-    AOPlan                    m_plan;
+    AOPlan                    m_plan, m_prepare_plan;
     bool                      m_prepared{false};
     AOProgramIdentity         m_program_identity;
     unsigned int              m_resource_epoch{0};
     int                       m_width{0}, m_height{0};
     int                       m_prepare_width{0}, m_prepare_height{0};
     std::string               m_failure;
+    FailureScope              m_failure_scope{FailureScope::Plan};
     std::string               m_visual_signature;
     std::string               m_forbidden_reason;
     std::string               m_backend_reason;

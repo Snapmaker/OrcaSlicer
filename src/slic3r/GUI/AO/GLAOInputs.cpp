@@ -5,13 +5,60 @@
 #include <GL/glew.h>
 #include <array>
 #include <boost/log/trivial.hpp>
+#include <vector>
 
 namespace Slic3r { namespace GUI { namespace AO {
+
+namespace {
+enum class SampleLayout { Match, Mismatch, Unsupported, ContextLost };
+
+SampleLayout check_sample_layout(GLuint source, GLuint copy, int samples)
+{
+    GLint saved_draw_fbo = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &saved_draw_fbo);
+    // GL_SAMPLE_POSITION and GL_SAMPLES describe the current draw framebuffer.
+    std::vector<std::array<GLfloat, 2>> source_positions(samples);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, source);
+    GLint source_samples = 0;
+    glGetIntegerv(GL_SAMPLES, &source_samples);
+    if (source_samples == samples)
+        for (int index = 0; index < samples; ++index)
+            glGetMultisamplefv(GL_SAMPLE_POSITION, index, source_positions[index].data());
+
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, copy);
+    GLint copy_samples = 0;
+    glGetIntegerv(GL_SAMPLES, &copy_samples);
+    bool matches = true;
+    if (source_samples == samples && copy_samples == samples) {
+        for (int index = 0; index < samples; ++index) {
+            std::array<GLfloat, 2> position{};
+            glGetMultisamplefv(GL_SAMPLE_POSITION, index, position.data());
+            matches &= position == source_positions[index];
+        }
+    }
+
+    bool       lost  = false;
+    const bool error = consume_errors(&lost);
+    if (lost)
+        return SampleLayout::ContextLost;
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, saved_draw_fbo);
+    if (error || source_samples != samples || copy_samples != samples)
+        return SampleLayout::Unsupported;
+    return matches ? SampleLayout::Match : SampleLayout::Mismatch;
+}
+} // namespace
 
 bool GLAOInputs::fail(const std::string& reason)
 {
     if (m_failure != "OpenGL context lost")
         m_failure = reason;
+    return false;
+}
+
+bool GLAOInputs::fail_sample(const char* reason)
+{
+    m_sample_failure = reason;
+    BOOST_LOG_TRIVIAL(warning) << reason;
     return false;
 }
 
@@ -96,11 +143,25 @@ bool GLAOInputs::prepare(int width, int height, bool with_confidence)
     return true;
 }
 
-bool GLAOInputs::allocate_depth(unsigned int format)
+GLAOInputs::DepthAllocation GLAOInputs::allocate_depth(unsigned int format)
 {
+    const auto allocation_status = [] {
+        bool error = false, out_of_memory = false, lost = false;
+        for (GLenum code = glGetError(); code != GL_NO_ERROR; code = glGetError()) {
+            error = true;
+            out_of_memory |= code == GL_OUT_OF_MEMORY;
+            lost |= code == GL_CONTEXT_LOST;
+        }
+        if (lost)
+            return DepthAllocation::ContextLost;
+        if (out_of_memory)
+            return DepthAllocation::OutOfMemory;
+        return error ? DepthAllocation::Unsupported : DepthAllocation::Ready;
+    };
     m_depth_format = format;
     glDeleteTextures(1, &m_depth);
     glDeleteFramebuffers(1, &m_depth_fbo);
+    m_depth = m_depth_fbo = 0;
     glGenTextures(1, &m_depth);
     glGenFramebuffers(1, &m_depth_fbo);
     glActiveTexture(GL_TEXTURE0);
@@ -113,25 +174,28 @@ bool GLAOInputs::allocate_depth(unsigned int format)
                           format == GL_DEPTH_COMPONENT32F ? GL_FLOAT :
                                                             GL_UNSIGNED_INT;
     glTexImage2D(GL_TEXTURE_2D, 0, format, m_width, m_height, 0, packed ? GL_DEPTH_STENCIL : GL_DEPTH_COMPONENT, type, nullptr);
+    const auto storage_status = allocation_status();
+    if (storage_status != DepthAllocation::Ready)
+        return storage_status;
     glBindFramebuffer(GL_FRAMEBUFFER, m_depth_fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, packed ? GL_DEPTH_STENCIL_ATTACHMENT : GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, m_depth, 0);
     glDrawBuffer(GL_NONE);
     glReadBuffer(GL_NONE);
     const bool complete = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-    bool       lost     = false;
-    const bool error    = consume_errors(&lost);
-    if (lost)
-        return fail("OpenGL context lost");
-    return !error && complete;
+    const auto fbo_status = allocation_status();
+    return fbo_status == DepthAllocation::Ready && !complete ? DepthAllocation::Unsupported : fbo_status;
 }
 
 bool GLAOInputs::capture_depth(const AOFrameInput& input)
 {
+    m_depth_allocation_failed = false;
     glBindFramebuffer(GL_FRAMEBUFFER, input.source);
     GLint samples = 0;
     glGetIntegerv(GL_SAMPLES, &samples);
-    if (m_source != input.source || m_samples != samples)
+    if (m_source != input.source || m_samples != samples) {
         m_depth_validated = false;
+        m_sample_failure.clear();
+    }
     m_source  = input.source;
     m_samples = samples;
     auto copy = [&]() {
@@ -164,7 +228,14 @@ bool GLAOInputs::capture_depth(const AOFrameInput& input)
         const int  candidate_bits = floating || format == GL_DEPTH_COMPONENT32 ? 32 : format == GL_DEPTH_COMPONENT16 ? 16 : 24;
         if (candidate_bits != bits || floating != (type == GL_FLOAT))
             continue;
-        if (allocate_depth(format) && copy()) {
+        const auto allocation = allocate_depth(format);
+        if (allocation == DepthAllocation::ContextLost)
+            return fail("OpenGL context lost");
+        if (allocation == DepthAllocation::OutOfMemory) {
+            m_depth_allocation_failed = true;
+            return fail("AO depth texture allocation failed: OpenGL out of memory");
+        }
+        if (allocation == DepthAllocation::Ready && copy()) {
             m_depth_validated = true;
             BOOST_LOG_TRIVIAL(info) << "AO depth format " << format << ", samples " << samples << ", " << m_width << "x" << m_height;
             return true;
@@ -177,13 +248,15 @@ bool GLAOInputs::capture_depth(const AOFrameInput& input)
 
 bool GLAOInputs::capture_sample_depth(const AOFrameInput& input, bool sample_path_allowed)
 {
-    // Never index a window's colors with sample IDs from a copied texture. Strict sample
-    // operations require a canvas-owned MSAA target of known layout.
-    if (!sample_path_allowed || !GLEW_VERSION_4_0 || m_samples <= 1 || input.source == 0 || input.source != input.target || m_sample_failed)
+    m_sample_active = false;
+    // The canvas target uses multisampled renderbuffers with fixed sample locations.
+    if (!sample_path_allowed || input.target_kind != FrameTargetKind::CanvasMsaa || m_samples <= 1 || input.source == 0 ||
+        input.source != input.target || !m_sample_failure.empty())
         return false;
-    if (!m_sample_depth || m_sample_count != m_samples) {
-        glDeleteTextures(1, &m_sample_depth);
-        glDeleteFramebuffers(1, &m_sample_fbo);
+    if (!GLEW_VERSION_4_0 || !glGetMultisamplefv)
+        return fail_sample("AO sample positions cannot be queried");
+    if (!m_sample_depth || m_sample_count != m_samples || m_sample_format != m_depth_format) {
+        release_sample_depth();
         glGenTextures(1, &m_sample_depth);
         glGenFramebuffers(1, &m_sample_fbo);
         glActiveTexture(GL_TEXTURE3);
@@ -199,11 +272,16 @@ bool GLAOInputs::capture_sample_depth(const AOFrameInput& input, bool sample_pat
         if (!complete || error) {
             if (lost)
                 return fail("OpenGL context lost");
-            m_sample_failed = true;
-            BOOST_LOG_TRIVIAL(warning) << "AO sample depth unavailable; using resolved composite";
-            return false;
+            return fail_sample("AO sample depth allocation or framebuffer validation failed");
         }
-        m_sample_count = m_samples;
+        m_sample_count  = m_samples;
+        m_sample_format = m_depth_format;
+    }
+    switch (check_sample_layout(input.source, m_sample_fbo, m_samples)) {
+    case SampleLayout::ContextLost: return fail("OpenGL context lost");
+    case SampleLayout::Unsupported: return fail_sample("AO sample positions cannot be queried");
+    case SampleLayout::Mismatch: return fail_sample("sample positions differ between the scene and AO depth copy");
+    case SampleLayout::Match: break;
     }
     glBindFramebuffer(GL_READ_FRAMEBUFFER, input.source);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_sample_fbo);
@@ -213,12 +291,19 @@ bool GLAOInputs::capture_sample_depth(const AOFrameInput& input, bool sample_pat
     if (consume_errors(&lost)) {
         if (lost)
             return fail("OpenGL context lost");
-        m_sample_failed = true;
-        BOOST_LOG_TRIVIAL(warning) << "AO sample depth copy failed; using resolved composite";
-        return false;
+        return fail_sample("AO sample depth copy failed");
     }
     m_sample_active = true;
     return true;
+}
+
+void GLAOInputs::release_sample_depth()
+{
+    glDeleteTextures(1, &m_sample_depth);
+    glDeleteFramebuffers(1, &m_sample_fbo);
+    m_sample_depth = m_sample_fbo = m_sample_format = 0;
+    m_sample_count                                  = 0;
+    m_sample_active                                 = false;
 }
 
 void GLAOInputs::bind_resolved_receiver_target()
@@ -271,33 +356,31 @@ void GLAOInputs::release()
     glDeleteTextures(1, &m_depth);
     glDeleteFramebuffers(1, &m_depth_fbo);
     m_depth = m_depth_fbo = m_depth_format = 0;
-    glDeleteTextures(1, &m_sample_depth);
-    glDeleteFramebuffers(1, &m_sample_fbo);
-    m_sample_depth = m_sample_fbo = 0;
+    release_sample_depth();
     glDeleteVertexArrays(1, &m_vao);
     m_vao   = 0;
     m_width = m_height = 0;
-    m_depth_validated  = false;
-    m_samples          = -1;
-    m_sample_count     = 0;
-    m_sample_active = m_sample_failed = false;
+    m_depth_validated = m_depth_allocation_failed = false;
+    m_samples                                     = -1;
     m_failure.clear();
+    m_sample_failure.clear();
     ++m_generation;
 }
 
 void GLAOInputs::forget_context()
 {
     m_vao = m_depth_fbo = m_depth = m_depth_format = 0;
-    m_sample_fbo = m_sample_depth = 0;
-    m_sample_count                = 0;
-    m_sample_active = m_sample_failed = false;
+    m_sample_fbo = m_sample_depth = m_sample_format = 0;
+    m_sample_count                                  = 0;
+    m_sample_active                                 = false;
     m_normals = m_normals_fbo = m_confidence_texture = 0;
     m_confidence_failed                              = false;
     m_width = m_height = 0;
     m_source           = 0;
     m_samples          = -1;
-    m_depth_validated  = false;
+    m_depth_validated = m_depth_allocation_failed = false;
     m_failure.clear();
+    m_sample_failure.clear();
     ++m_generation;
 }
 

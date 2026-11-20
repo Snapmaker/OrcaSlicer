@@ -286,7 +286,11 @@ public:
     	return *this != *rhs;
     }
     // Apply an override option, possibly a nullable one.
-    virtual bool 				apply_override(const ConfigOption *rhs) {
+    // slot_extruder maps each index of a filament override array to the printer
+    // extruder used when that slot is nil. Flow variants can make the filament
+    // array longer than the extruder list, so index i is not always extruder i.
+    virtual bool 				apply_override(const ConfigOption *rhs, const std::vector<size_t> *slot_extruder = nullptr) {
+    	(void)slot_extruder;
     	if (*this == *rhs)
     		return false;
     	*this = *rhs;
@@ -521,7 +525,11 @@ public:
     	return false;
     }
     // Apply an override option, possibly a nullable one.
-    bool apply_override(const ConfigOption *rhs) override {
+    // A nil filament slot keeps the printer value of the extruder that owns that
+    // slot. Without slot_extruder, ownership is the same index. It must not copy
+    // extruder 0 into every empty slot: flow-variant arrays are shifted, so that
+    // made every later tool use the first tool's toolchange retraction.
+    bool apply_override(const ConfigOption *rhs, const std::vector<size_t> *slot_extruder = nullptr) override {
         if (this->nullable())
         	throw ConfigurationError("Cannot override a nullable ConfigOption.");
         if (rhs->type() != this->type())
@@ -540,20 +548,28 @@ public:
         if (cnt < 1)
             return false;
 
+        const std::vector<T> saved = this->values;
+        const bool slots_ok = slot_extruder != nullptr && slot_extruder->size() == rhs_vec->size();
         if (this->values.empty())
             this->values.resize(rhs_vec->size());
         else
-            this->values.resize(rhs_vec->size(), this->values.front());
+            this->values.resize(rhs_vec->size(), saved.front());
 
     	bool modified = false;
-        auto default_value = this->values[0];
         for (size_t i = 0; i < rhs_vec->size(); ++i) {
             if (!rhs_vec->is_nil(i)) {
                 this->values[i] = rhs_vec->values[i];
                 modified        = true;
-            } else {
-                this->values[i] = default_value;
+                continue;
             }
+            T fallback = this->values[i];
+            if (slots_ok && (*slot_extruder)[i] < saved.size())
+                fallback = saved[(*slot_extruder)[i]];
+            else if (i < saved.size())
+                fallback = saved[i];
+            else if (!saved.empty())
+                fallback = saved.front();
+            this->values[i] = fallback;
         }
         return modified;
     }

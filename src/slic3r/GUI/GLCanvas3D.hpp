@@ -6,11 +6,19 @@
 #include <memory>
 #include <chrono>
 #include <cstdint>
-#include <array>
 #include <optional>
 
 #include "GLToolbar.hpp"
 #include "GLPickingBuffer.hpp"
+#include "GLAOFrameTarget.hpp"
+// Render diagnostics (AO experiments, captures, benchmarks) can be excluded from the build;
+// normal FS/CS rendering works either way. AOConfig supplies the disabled default.
+#include "AO/AOTypes.hpp"
+#include "AO/GLAOFeature.hpp"
+#include "AO/GLAOProgramCatalog.hpp"
+#if ORCA_RENDER_DIAGNOSTICS
+#include "AO/Diagnostics/AODiagnosticsController.hpp"
+#endif
 #include "Event.hpp"
 #include "Selection.hpp"
 #include "ThumbnailView.hpp"     // ThumbnailView enum (kept lightweight, separate from this header)
@@ -587,7 +595,7 @@ private:
         int samples{ 0 };
     };
 
-    /** @brief Parameters shared by cached and legacy View3D main-scene rendering. */
+    /** @brief Parameters shared by cached and legacy preparation/assembly rendering. */
     struct MainSceneRenderParams
     {
         bool onlyCurrent{ false };
@@ -665,7 +673,22 @@ private:
     // Screen is only refreshed from the OnIdle handler if it is dirty.
     bool m_dirty;
     // Requests a frame that may reuse the cached main scene.
-    bool m_overlayDirty{ false };
+    bool m_overlayDirty{false};
+    // Ambient occlusion: production feature, borrowed program catalog and the diagnostics
+    // controller (observer of the feature). The canvas owns the full-frame target below.
+    AO::GLAOFeature        m_ao_feature;
+    AO::GLAOProgramCatalog m_ao_catalog;
+#if ORCA_RENDER_DIAGNOSTICS
+    AO::AODiagnosticsController m_ao_diagnostics;
+#endif
+    // Actual facts are also used by the production scene cache.
+    AO::AOResult    m_last_ao_result;
+    GLAOFrameTarget m_ao_frame_target;
+    bool            m_ownedFrameLastRender{false};
+    std::string     m_frameTargetFallbackReason;
+    // Cache invalidation key derived from the request and the actual result signature.
+    std::string m_sceneCacheAOSignature;
+
     bool m_initialized;
     //BBS: add flag to controll rendering
     bool m_render_preview{ true };
@@ -721,10 +744,19 @@ private:
     SceneCacheResources m_sceneCacheResources;
     // Identifies the selection membership represented by the cached highlight textures.
     Selection::IndicesList m_selectionHighlightVolumeIndices;
-    bool m_sceneCacheValid{ false };
+    bool                   m_sceneCacheValid{false};
+    bool                   m_sceneCacheHasAO{false};
+    bool                   m_sceneCacheSoftShadowsVisible{false};
+    // AO settings and the shared camera may change while this canvas is hidden.
+    Matrix4d    m_sceneCacheViewMatrix{Matrix4d::Identity()};
+    Matrix4d    m_sceneCacheProjectionMatrix{Matrix4d::Identity()};
+    std::string m_sceneCacheAOConfiguration;
+    float       m_sceneCacheExplosionRatio{1.0f};
+    float       m_appliedExplosionRatio{1.0f};
+    bool        m_explosionBoundsDirty{true};
     // Avoids glGetError on the hot path after each Scene Cache copy direction has been validated.
-    bool m_sceneCacheCaptureValidated{ false };
-    bool m_sceneCachePresentValidated{ false };
+    bool m_sceneCacheCaptureValidated{false};
+    bool m_sceneCachePresentValidated{false};
     // Defers cache capture while short-lived camera input is producing consecutive FullScene frames.
     bool m_sceneCacheCaptureDeferred{ false };
     bool m_selectionHighlightValid{ false };
@@ -845,7 +877,10 @@ public:
 
     bool is_initialized() const { return m_initialized; }
 
-    void set_context(wxGLContext* context) { m_context = context; }
+    void set_context(wxGLContext* context);
+    // Called before hiding this canvas so a comparison cannot resume across a view switch.
+    void on_view_deactivated();
+    const std::string& get_ao_failure_reason() const { return m_ao_feature.failure_reason(); }
     void set_type(ECanvasType type) { if (m_canvas_type != type) InvalidateSceneAndPickingCaches(); m_canvas_type = type; }
     ECanvasType get_canvas_type() { return m_canvas_type; }
 
@@ -1383,6 +1418,10 @@ private:
     /** @brief Updates the soft shadow cache, or releases it when soft shadows are turned off. */
     void UpdateSoftShadows(bool shadowsVisible);
 
+    /** @brief Discards the shadow renderer, deleting GL resources only with its context current. */
+    void ReleaseSoftShadows(bool contextCurrent);
+    void ReleaseDisabledAOResources();
+
     void _switch_toolbars_icon_filename();
     bool _init_toolbars();
     bool _init_main_toolbar();
@@ -1417,30 +1456,51 @@ private:
     void SetOverlayAsDirty();
     /** @brief Invalidates cached selection highlight data and schedules an overlay frame. */
     void SetSelectionAsDirty();
-    /** @brief Checks whether the current target and framebuffer format support Scene Cache V1. */
+    bool IsAOSceneView() const;
+    bool ApplyExplosionRatio(float ratio);
+    bool IsAssembleClipped() const;
+    AO::AOSettings::Quality ResolveAOQualityForView() const;
+    /** @brief Checks whether the current view, target and framebuffer format support Scene Cache. */
     bool CanUseSceneCache(const Size& canvasSize, int targetDrawFramebuffer, int& samples) const;
     /** @brief Creates or reuses Scene Cache framebuffer resources for the requested specification. */
     bool EnsureSceneCacheResources(const Size& canvasSize, int samples);
     /** @brief Releases all Scene Cache OpenGL resources. */
     void ReleaseSceneCacheResources();
-    /** @brief Copies the directly rendered View3D main scene from the window framebuffer into Scene Cache. */
+    /** @brief Copies the rendered preparation/assembly scene into its canvas-owned Scene Cache. */
     bool CaptureSceneCache();
     /** @brief Copies cached color and depth into the window framebuffer. */
     bool PresentSceneCache();
-    /** @brief Draws the cacheable View3D scene content directly into the current window framebuffer. */
-    void RenderMainSceneContent(const Camera& camera, const MainSceneRenderParams& params);
-    /**
-     * @brief Shows the hovered plate icon tooltip outside of the cached scene.
-     * @param params Scene params of the current frame.
-     * @param oldPlateHoverId Plate hover id of the previous frame.
-     */
+    /** @brief Selects one AO request/frame-target configuration before cache and drawing decisions. */
+    struct AOFramePlan
+    {
+        AO::AOExecutionRequest request;
+        AO::AOSettings         settings;
+        bool                   owned_target{false};
+        bool                   strict_target{false};
+        bool                   sample_capture{false};
+        // Borrowed GL targets/projection snapshot filled by the canvas while the context is current.
+        AO::AOFrameInput input;
+        // Diagnostic tags (static literal from the canvas; not part of the frame input).
+        const char* scene_view{"external"};
+        float       explosion_ratio{1.0f};
+    };
+    AOFramePlan BuildAOFramePlan(const Camera& camera);
+#if ORCA_RENDER_DIAGNOSTICS
+    /** @brief Stops any AO experiment/capture and schedules one more frame. */
+    void finish_ao_diagnostics(const std::string& reason);
+#endif
+    /** @brief Draws preparation/assembly opaque content in the selected target. */
+    bool RenderMainSceneContent(const Camera& camera, const MainSceneRenderParams& params, const AOFramePlan& plan);
+    /** @brief Shows the hovered plate icon tooltip outside of the cached scene. */
     void RenderPlateIconTooltip(const MainSceneRenderParams& params, int oldPlateHoverId);
     /** @brief Draws the selection box after scene presentation with explicit depth and blend state. */
-    void RenderSelectionBoxWithExplicitState();
-    bool RenderPickingBuffer(const Camera& camera);
-    VolumePickResult QueryVolumeFromPickingBuffer(const Vec2d& screenPosition, const Camera& camera, int toleranceRadiusPx);
-    PickingPassResult QueryHybridPickingHit(const Vec2d& screenPosition, const Camera& camera, const ClippingPlane& clippingPlane,
-                                            int volumeToleranceRadiusPx);
+    void              RenderSelectionBoxWithExplicitState();
+    bool              RenderPickingBuffer(const Camera& camera);
+    VolumePickResult  QueryVolumeFromPickingBuffer(const Vec2d& screenPosition, const Camera& camera, int toleranceRadiusPx);
+    PickingPassResult QueryHybridPickingHit(const Vec2d&         screenPosition,
+                                            const Camera&        camera,
+                                            const ClippingPlane& clippingPlane,
+                                            int                  volumeToleranceRadiusPx);
 
     /**
      * @brief Projects a Volume surface hit onto the original mouse ray using the active drag-plane semantics.
@@ -1458,9 +1518,9 @@ private:
     void _render_background();
     void _render_bed(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool show_axes);
     //BBS: add part plate related logic
-    void _render_platelist(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_current, bool only_body = false, int hover_id = -1, bool render_cali = false, bool show_grid = true);
+    void _render_platelist(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_current, bool only_body = false, int hover_id = -1, bool render_cali = false, bool show_grid = true, SceneRenderStage stage = SceneRenderStage::Legacy);
     //BBS: add outline drawing logic
-    void _render_objects(GLVolumeCollection::ERenderType type, bool with_outline = true);
+    void _render_objects(GLVolumeCollection::ERenderType type, bool with_outline = true, bool surface_only = false);
     //BBS: GUI refactor: add canvas size as parameters
     void _render_gcode(int canvas_width, int canvas_height);
     //BBS: render a plane for assemble

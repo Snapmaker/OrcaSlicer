@@ -3291,8 +3291,14 @@ bool PartPlate::intersects(const BoundingBoxf3& bb) const
 	return print_volume.intersects(bb);
 }
 
-void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_body, bool force_background_color, HeightLimitMode mode, int hover_id, bool render_cali, bool show_grid)
+void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_body, bool force_background_color, HeightLimitMode mode, int hover_id, bool render_cali, bool show_grid, SceneRenderStage stage)
 {
+    if (stage == SceneRenderStage::AOReceiverDepth) {
+        // Selected plate is supplied by Bed3D (model or its fallback plane).
+        if (!bottom && (!m_selected || force_background_color)) m_triangles.model.render();
+        return;
+    }
+
     glsafe(::glEnable(GL_DEPTH_TEST));
 
     GLShaderProgram* printbedShader = wxGetApp().get_shader("printbed");
@@ -3307,15 +3313,15 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
 
         if (!bottom) {
             // draw background
-            render_background(force_background_color);
+            if (stage != SceneRenderStage::Decoration) render_background(force_background_color);
 
-            render_exclude_area(force_background_color);
+            if (stage != SceneRenderStage::Surface) render_exclude_area(force_background_color);
         }
 
-        if (show_grid)
+        if (show_grid && stage != SceneRenderStage::Surface)
             render_grid(bottom);
 
-        render_height_limit(mode);
+        if (stage != SceneRenderStage::Surface) render_height_limit(mode);
 
         glsafe(::glDisable(GL_BLEND));
 
@@ -3333,15 +3339,15 @@ void PartPlate::render(const Transform3d& view_matrix, const Transform3d& projec
         printbedShader->set_uniform("projection_matrix", projection_matrix);
         printbedShader->set_uniform("svg_source", 0);
 
-        if (!bottom && m_selected && !force_background_color) {
+        if (stage != SceneRenderStage::Decoration && !bottom && m_selected && !force_background_color) {
             if (m_partplate_list)
                 render_logo(bottom, m_partplate_list->render_cali_logo && render_cali);
             else
                 render_logo(bottom);
         }
 
-        render_icons(bottom, only_body, hover_id);
-        if (!force_background_color && only_body) {
+        if (stage != SceneRenderStage::Surface) render_icons(bottom, only_body, hover_id);
+        if (stage != SceneRenderStage::Surface && !force_background_color && only_body) {
             render_only_numbers(bottom);
         }
 
@@ -5510,7 +5516,7 @@ void PartPlateList::postprocess_arrange_polygon(arrangement::ArrangePolygon& arr
 
 /*rendering related functions*/
 //render
-void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_current, bool only_body, int hover_id, bool render_cali, bool show_grid)
+void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_current, bool only_body, int hover_id, bool render_cali, bool show_grid, SceneRenderStage stage)
 {
 	const std::lock_guard<std::mutex> local_lock(m_plates_mutex);
 	std::vector<PartPlate*>::iterator it = m_plate_list.begin();
@@ -5523,10 +5529,10 @@ void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& pr
 	}
 
 	static bool last_dark_mode_status = m_is_dark;
-	if (m_is_dark != last_dark_mode_status) {
+	if (stage != SceneRenderStage::AOReceiverDepth && m_is_dark != last_dark_mode_status) {
 		last_dark_mode_status = m_is_dark;
 		generate_icon_textures();
-	} else if(m_del_texture.get_id() == 0)
+	} else if(stage != SceneRenderStage::AOReceiverDepth && m_del_texture.get_id() == 0)
 		generate_icon_textures();
 	for (it = m_plate_list.begin(); it != m_plate_list.end(); it++) {
 		int current_index = (*it)->get_index();
@@ -5535,15 +5541,15 @@ void PartPlateList::render(const Transform3d& view_matrix, const Transform3d& pr
 		if (current_index == m_current_plate) {
 			PartPlate::HeightLimitMode height_mode = (only_current)?PartPlate::HEIGHT_LIMIT_NONE:m_height_limit_mode;
 			if (plate_hover_index == current_index)
-                (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, height_mode, plate_hover_action, render_cali, show_grid);
+                (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, height_mode, plate_hover_action, render_cali, show_grid, stage);
 			else
-                (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, height_mode, -1, render_cali, show_grid);
+                (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, height_mode, -1, render_cali, show_grid, stage);
 		}
 		else {
 			if (plate_hover_index == current_index)
-				(*it)->render(view_matrix, projection_matrix, bottom, only_body, false, PartPlate::HEIGHT_LIMIT_NONE, plate_hover_action, render_cali, show_grid);
+				(*it)->render(view_matrix, projection_matrix, bottom, only_body, false, PartPlate::HEIGHT_LIMIT_NONE, plate_hover_action, render_cali, show_grid, stage);
 			else
-                (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, PartPlate::HEIGHT_LIMIT_NONE, -1, render_cali, show_grid);
+                (*it)->render(view_matrix, projection_matrix, bottom, only_body, false, PartPlate::HEIGHT_LIMIT_NONE, -1, render_cali, show_grid, stage);
 		}
 	}
 }

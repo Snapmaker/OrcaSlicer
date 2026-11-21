@@ -3,9 +3,11 @@
 #include "GLShadersManager.hpp"
 #include "3DScene.hpp"
 #include "GUI_App.hpp"
+#include "AO/AOConfig.hpp"
 
 #include <cassert>
 #include <algorithm>
+#include <cstdlib>
 #include <string_view>
 using namespace std::literals;
 
@@ -31,13 +33,14 @@ std::pair<bool, std::string> GLShadersManager::init()
     };
 
     auto appendOptionalShader = [&append_shader, &error](const std::string& name,
-                                                          const GLShaderProgram::ShaderFilenames& filenames) {
+                                                          const GLShaderProgram::ShaderFilenames& filenames,
+                                                          const std::initializer_list<std::string_view>& defines = {}) {
         const size_t errorLength = error.size();
-        if (append_shader(name, filenames))
+        if (append_shader(name, filenames, defines))
             return;
 
         error.erase(errorLength);
-        BOOST_LOG_TRIVIAL(warning) << "Selection highlight shader unavailable: " << name;
+        BOOST_LOG_TRIVIAL(warning) << "Optional shader unavailable: " << name;
     };
 
     assert(m_shaders.empty());
@@ -115,15 +118,90 @@ std::pair<bool, std::string> GLShadersManager::init()
     if (platform_flavor() == PlatformFlavor::OSXOnArm && wxPlatformInfo::Get().GetOSMajorVersion() < 12)
         valid &= append_shader("mm_gouraud", { prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs" }, { "FLIP_TRIANGLE_NORMALS"sv });
     else
-        valid &= append_shader("mm_gouraud", { prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs" });
+        valid &= append_shader("mm_gouraud", {prefix + "mm_gouraud.vs", prefix + "mm_gouraud.fs"});
 
-    return { valid, error };
+#if ORCA_RENDER_DIAGNOSTICS
+    // Diagnostic variants are selected at launch, including automated comparisons.
+    // Keep their files available without compiling every experiment in normal sessions.
+    // The same immutable AOStartupOptions feed per-frame requests; nothing here re-reads env.
+    const auto& ao_options             = GUI::AO::startup_options();
+    const auto& ao_comparison          = ao_options.comparison_mode;
+    const auto  ao_composite           = ao_options.composite;
+    const bool  ao_split               = ao_composite == GUI::AO::AOStartupOptions::Composite::Split || ao_comparison == "split";
+    const bool  ao_confidence          = ao_composite == GUI::AO::AOStartupOptions::Composite::Confidence || ao_comparison == "confidence";
+    const bool  ao_reference           = ao_composite == GUI::AO::AOStartupOptions::Composite::Reference || ao_comparison == "composite";
+    const bool  ao_fast_reconstruction = ao_options.fs_fast_reconstruction || ao_comparison == "fseval";
+    const bool  ao_legacy_low          = ao_options.cs_low_legacy || ao_comparison == "cslow";
+#else
+    constexpr bool ao_split = false, ao_confidence = false, ao_reference = false, ao_fast_reconstruction = false, ao_legacy_low = false;
+#endif
+
+    if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(3, 1)) {
+        // Files and registered programs use functional AO stage names.
+        appendOptionalShader("ao_reconstruct_view_normals", {"140/ao_fullscreen_triangle.vs", "140/ao_reconstruct_view_normals.fs"});
+        if (ao_confidence)
+            appendOptionalShader("ao_reconstruct_view_normals_confidence",
+                                 {"140/ao_fullscreen_triangle.vs", "140/ao_reconstruct_view_normals.fs"}, {"AO_CONFIDENCE_OUTPUT"});
+#if ORCA_RENDER_DIAGNOSTICS
+        appendOptionalShader("ao_evaluate_visibility_reference_fs",
+                             {"140/ao_fullscreen_triangle.vs", "140/ao_evaluate_visibility_reference.fs"});
+        appendOptionalShader("ao_denoise_visibility_geometry_reference",
+                             {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_visibility_geometry_reference.fs"});
+#endif
+        appendOptionalShader("ao_upsample_visibility_bilateral",
+                             {"140/ao_fullscreen_triangle.vs", "140/ao_upsample_visibility_bilateral.fs"});
+        appendOptionalShader("ao_composite_color_pixel", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_pixel.fs"});
+        if (ao_confidence)
+            appendOptionalShader("ao_composite_color_pixel_confidence",
+                                 {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_pixel.fs"}, {"AO_PRECOMPUTED_CONFIDENCE"});
+        if (ao_reference)
+            appendOptionalShader("ao_composite_color_pixel_reference",
+                                 {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_pixel_reference.fs"});
+        appendOptionalShader("ao_evaluate_visibility_fs", {"140/ao_fullscreen_triangle.vs", "140/ao_evaluate_visibility.fs"});
+        appendOptionalShader("ao_denoise_visibility_geometry", {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_visibility_geometry.fs"});
+        appendOptionalShader("ao_evaluate_visibility_edges_fs", {"140/ao_fullscreen_triangle.vs", "140/ao_evaluate_visibility.fs"},
+                             {"AO_EDGE_OUTPUT"});
+        if (ao_fast_reconstruction)
+            appendOptionalShader("ao_evaluate_visibility_edges_xy_fs", {"140/ao_fullscreen_triangle.vs", "140/ao_evaluate_visibility.fs"},
+                                 {"AO_EDGE_OUTPUT", "AO_SEPARABLE_XY"});
+        appendOptionalShader("ao_denoise_visibility_edge_guided_fs",
+                             {"140/ao_fullscreen_triangle.vs", "140/ao_denoise_visibility_edge_guided.fs"});
+        appendOptionalShader("ao_render_receiver_depth", {"140/ao_render_receiver_depth.vs", "140/ao_render_receiver_depth.fs"});
+        if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(4, 0)) {
+            appendOptionalShader("ao_composite_color_sample", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_sample.fs"});
+            if (ao_confidence)
+                appendOptionalShader("ao_composite_color_sample_confidence",
+                                     {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_sample.fs"}, {"AO_PRECOMPUTED_CONFIDENCE"});
+            if (ao_split) {
+                appendOptionalShader("ao_classify_sample_surfaces", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_sample.fs"},
+                                     {"AO_CLASSIFY_SURFACE"});
+                appendOptionalShader("ao_composite_color_pixel_fast", {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_sample.fs"},
+                                     {"AO_COMPOSITE_FAST"});
+                appendOptionalShader("ao_composite_color_sample_edges",
+                                     {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_sample.fs"}, {"AO_COMPOSITE_EDGES"});
+            }
+            if (ao_reference)
+                appendOptionalShader("ao_composite_color_sample_reference",
+                                     {"140/ao_fullscreen_triangle.vs", "140/ao_composite_color_sample_reference.fs"});
+        }
+    }
+    if (GUI::wxGetApp().is_gl_version_greater_or_equal_to(4, 3)) {
+        const std::pair<std::string, std::string> stages[] = {{"ao_prefilter_depth_mips", "ao_prefilter_depth_mips"},
+                                                              {"ao_evaluate_visibility_edges_cs", "ao_evaluate_visibility_edges"},
+                                                              {"ao_denoise_visibility_edge_guided_cs",
+                                                               "ao_denoise_visibility_edge_guided"}};
+        for (const auto& stage : stages) {
+            GLShaderProgram::ShaderFilenames files{};
+            files[static_cast<size_t>(GLShaderProgram::EShaderType::Compute)] = "430/" + stage.second + ".cs";
+            appendOptionalShader(stage.first, files);
+            if (stage.first == "ao_evaluate_visibility_edges_cs" && ao_legacy_low)
+                appendOptionalShader("ao_evaluate_visibility_edges_legacy_low_cs", files, {"AO_LEGACY_LOW"});
+        }
+    }
+    return {valid, error};
 }
 
-void GLShadersManager::shutdown()
-{
-    m_shaders.clear();
-}
+void GLShadersManager::shutdown() { m_shaders.clear(); }
 
 GLShaderProgram* GLShadersManager::get_shader(const std::string& shader_name)
 {
@@ -143,4 +221,3 @@ GLShaderProgram* GLShadersManager::get_current_shader()
 }
 
 } // namespace Slic3r
-

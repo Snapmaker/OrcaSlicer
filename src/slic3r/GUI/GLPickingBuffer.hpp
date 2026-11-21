@@ -52,6 +52,8 @@ public:
      * @brief Releases all resources. The owning context must be current.
      */
     void Reset();
+    /** @brief Discards stale names after context loss, without issuing GL calls. */
+    void ForgetContext();
 
     bool IsReady() const;
     int GetWidth() const;

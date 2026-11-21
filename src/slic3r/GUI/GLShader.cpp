@@ -9,6 +9,7 @@
 #include <boost/nowide/fstream.hpp>
 #include <GL/glew.h>
 #include <cassert>
+#include <atomic>
 
 #include <boost/log/trivial.hpp>
 
@@ -182,6 +183,12 @@ bool GLShaderProgram::init_from_texts(const std::string& name, const ShaderSourc
     if (shader_ids[static_cast<size_t>(EShaderType::Vertex)] > 0)
         bind_default_attrib_locations(m_id);
 
+    if (name.rfind("ao_", 0) == 0 && shader_ids[static_cast<size_t>(EShaderType::Fragment)] > 0)
+        glsafe(::glBindFragDataLocation(m_id, 0, "out_color"));
+    if (name == "ao_evaluate_visibility_edges_fs" || name == "ao_evaluate_visibility_edges_xy_fs")
+        glsafe(::glBindFragDataLocation(m_id, 1, "out_edges"));
+    if (name == "ao_reconstruct_view_normals_confidence")
+        glsafe(::glBindFragDataLocation(m_id, 1, "out_confidence"));
     glsafe(::glLinkProgram(m_id));
     GLint params;
     glsafe(::glGetProgramiv(m_id, GL_LINK_STATUS, &params));
@@ -202,6 +209,8 @@ bool GLShaderProgram::init_from_texts(const std::string& name, const ShaderSourc
         return false;
     }
 
+    static std::atomic<uint64_t> next_revision{1};
+    m_revision = next_revision.fetch_add(1, std::memory_order_relaxed);
     // release shaders, they are no more needed
     release_shaders(shader_ids);
 

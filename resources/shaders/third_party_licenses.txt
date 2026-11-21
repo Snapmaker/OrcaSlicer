@@ -1,0 +1,95 @@
+Third-party licenses
+====================
+
+Supplemental notices for the AO rendering components in Snapmaker Orca.
+Other component notices remain with their respective source or resource files.
+
+1. AO depth preprocessing, edge evaluation and denoising
+------------------------------------------------------
+
+Source: GameTechDev/XeGTAO
+Upstream revision: a5b1686c7ea37788eeb3576b5be47f7c03db532c
+https://github.com/GameTechDev/XeGTAO
+
+Applicable files:
+- shaders/430/ao_prefilter_depth_mips.cs
+- shaders/430/ao_evaluate_visibility_edges.cs
+- shaders/430/ao_denoise_visibility_edge_guided.cs
+- shaders/140/ao_evaluate_visibility.fs (directional edge output)
+- shaders/140/ao_denoise_visibility_edge_guided.fs
+- shaders/140/ao_denoise_visibility_compact_experimental.fs
+
+MIT License
+
+Copyright (C) 2016-2021, Intel Corporation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+CS adaptation: FP32 OpenGL depth/normal coordinates, orthographic reconstruction,
+padded depth tiles, explicit background and image bounds, R8UI edges,
+normalized final output, fixed temporal index, and Low unoccluded-slice
+normalization with LOD0 sampling. Bent normals are not included.
+
+FS edge adaptation: normalized R8 visibility, RGBA8 directional edges,
+and fragment-stage edge-guided filtering without CS visibility encoding.
+
+Experimental adaptation: ao_denoise_visibility_compact_experimental.fs, compact edge-guided denoising kernel.
+Source: https://github.com/GameTechDev/XeGTAO/blob/a5b1686c7ea37788eeb3576b5be47f7c03db532c/Source/Rendering/Shaders/XeGTAO.hlsli
+Local upstream revision: a5b1686c7ea37788eeb3576b5be47f7c03db532c
+Changes: GLSL 140, RGBA8 edge channels in left/right/down/up order, no deliberate
+edge leakage, explicit screen bounds, normalized R8 visibility, no bent normals,
+no texture Gather batching or upstream visibility term scaling.
+
+
+2. AO horizon integration
+-------------------------
+
+Source: three.js r180
+Upstream revision: 0af9729d0c143a86a1d725d6e2c3ad83301f3f34
+examples/jsm/shaders/GTAOShader.js
+https://github.com/mrdoob/three.js
+
+Applicable files:
+- shaders/140/ao_evaluate_visibility.fs (horizon integration)
+- shaders/140/ao_evaluate_visibility_reference.fs
+
+The MIT License
+
+Copyright © 2010-2025 three.js authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+Adaptation: view-space horizon integration, explicit orthographic view direction,
+spatial sampling, numerical guards and production calculation reuse.

@@ -185,26 +185,33 @@ struct DepthCopyFormat
 };
 
 /**
- * @brief Queries the depth/stencil layout of the default framebuffer bound for reading.
+ * @brief Queries the depth/stencil layout of the scene framebuffer bound for reading.
  * @return false when the layout has no matching texture format.
  */
-bool QueryDefaultDepthFormat(DepthCopyFormat& out)
+bool QuerySceneDepthFormat(unsigned int sceneFramebuffer, DepthCopyFormat& out)
 {
+    const GLenum depthAttachment = sceneFramebuffer == 0 ? GL_DEPTH : GL_DEPTH_ATTACHMENT;
+    const GLenum stencilAttachment = sceneFramebuffer == 0 ? GL_STENCIL : GL_STENCIL_ATTACHMENT;
     GLint depthType = GL_NONE;
-    glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &depthType));
+    glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, depthAttachment,
+                                                   GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &depthType));
     if (depthType == GL_NONE)
         return false;
 
     GLint depthBits = 0;
     GLint componentType = GL_NONE;
-    glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &depthBits));
-    glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE, &componentType));
+    glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, depthAttachment,
+                                                   GL_FRAMEBUFFER_ATTACHMENT_DEPTH_SIZE, &depthBits));
+    glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, depthAttachment,
+                                                   GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE, &componentType));
 
     GLint stencilType = GL_NONE;
     GLint stencilBits = 0;
-    glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &stencilType));
+    glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, stencilAttachment,
+                                                   GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &stencilType));
     if (stencilType != GL_NONE)
-        glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, GL_STENCIL, GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencilBits));
+        glsafe(::glGetFramebufferAttachmentParameteriv(GL_READ_FRAMEBUFFER, stencilAttachment,
+                                                       GL_FRAMEBUFFER_ATTACHMENT_STENCIL_SIZE, &stencilBits));
     if (stencilBits != 0 && stencilBits != 8)
         return false;
 
@@ -1105,17 +1112,18 @@ void SoftShadowRenderer::DisableObjectShadows(const char* reason)
     BOOST_LOG_TRIVIAL(warning) << "Soft shadows on objects disabled: " << (reason != nullptr ? reason : "unknown");
 }
 
-bool SoftShadowRenderer::EnsureSceneDepthResources(int width, int height)
+bool SoftShadowRenderer::EnsureSceneDepthResources(int width, int height, unsigned int sceneFramebuffer, int samples)
 {
-    if (_sceneDepthFramebuffer != 0 && _sceneDepthWidth == width && _sceneDepthHeight == height)
+    if (_sceneDepthFramebuffer != 0 && _sceneDepthWidth == width && _sceneDepthHeight == height &&
+        _sceneDepthSource == sceneFramebuffer && _sceneDepthSamples == samples)
         return true;
 
-    // The blit needs the exact depth/stencil format of the default framebuffer
-    glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, 0));
+    // The depth resolve needs the same depth/stencil format as its source.
+    glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, sceneFramebuffer));
     DepthCopyFormat format;
-    if (!QueryDefaultDepthFormat(format))
+    if (!QuerySceneDepthFormat(sceneFramebuffer, format))
     {
-        DisableObjectShadows("unsupported default depth format");
+        BOOST_LOG_TRIVIAL(warning) << "Soft shadows on objects unavailable: unsupported scene depth format";
         return false;
     }
 
@@ -1143,12 +1151,15 @@ bool SoftShadowRenderer::EnsureSceneDepthResources(int width, int height)
     glsafe(::glReadBuffer(GL_NONE));
     if (!IsDrawFramebufferComplete())
     {
-        DisableObjectShadows("scene depth framebuffer incomplete");
+        ReleaseSceneDepthResources();
+        BOOST_LOG_TRIVIAL(warning) << "Soft shadows on objects unavailable: scene depth framebuffer incomplete";
         return false;
     }
 
     _sceneDepthWidth = width;
     _sceneDepthHeight = height;
+    _sceneDepthSource = sceneFramebuffer;
+    _sceneDepthSamples = samples;
     return true;
 }
 
@@ -1162,11 +1173,15 @@ void SoftShadowRenderer::ReleaseSceneDepthResources()
     _sceneDepthTexture = 0;
     _sceneDepthWidth = 0;
     _sceneDepthHeight = 0;
+    _sceneDepthSource = 0;
+    _sceneDepthSamples = 0;
+    _sceneDepthVerified = false;
 }
 
-bool SoftShadowRenderer::CopySceneDepth(const std::array<int, 4>& viewport, const SoftShadowPixelRect& copyRect)
+bool SoftShadowRenderer::CopySceneDepth(const std::array<int, 4>& viewport, const SoftShadowPixelRect& copyRect,
+                                        unsigned int sceneFramebuffer, int samples)
 {
-    if (!EnsureSceneDepthResources(viewport[2], viewport[3]))
+    if (!EnsureSceneDepthResources(viewport[2], viewport[3], sceneFramebuffer, samples))
         return false;
 
     // Only the object region is copied, into the same position of the full size texture
@@ -1175,7 +1190,7 @@ bool SoftShadowRenderer::CopySceneDepth(const std::array<int, 4>& viewport, cons
     const GLint srcX1 = viewport[0] + copyRect.x1;
     const GLint srcY1 = viewport[1] + copyRect.y1;
     glsafe(::glDisable(GL_SCISSOR_TEST));
-    glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, 0));
+    glsafe(::glBindFramebuffer(GL_READ_FRAMEBUFFER, sceneFramebuffer));
     glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, _sceneDepthFramebuffer));
     if (_sceneDepthVerified)
     {
@@ -1192,7 +1207,9 @@ bool SoftShadowRenderer::CopySceneDepth(const std::array<int, 4>& viewport, cons
                         GL_DEPTH_BUFFER_BIT, GL_NEAREST);
     if (::glGetError() != GL_NO_ERROR)
     {
-        DisableObjectShadows("depth blit from the default framebuffer failed");
+        ReleaseSceneDepthResources();
+        BOOST_LOG_TRIVIAL(warning) << "Soft shadows on objects unavailable: depth blit from the "
+                                   << (sceneFramebuffer == 0 ? "window" : "canvas-owned MSAA target") << " failed";
         return false;
     }
     _sceneDepthVerified = true;
@@ -1313,9 +1330,10 @@ void SoftShadowRenderer::ReleaseObjectShadowTarget()
 }
 
 void SoftShadowRenderer::CompositeObjectShadows(GLShaderProgram& shader, const Camera& camera, const std::array<int, 4>& viewport,
-                                                int resolutionScale, const SoftShadowPixelRect& workRect)
+                                                int resolutionScale, const SoftShadowPixelRect& workRect,
+                                                unsigned int sceneFramebuffer, bool multisampled)
 {
-    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0));
+    glsafe(::glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sceneFramebuffer));
     glsafe(::glViewport(viewport[0], viewport[1], viewport[2], viewport[3]));
     glsafe(::glEnable(GL_SCISSOR_TEST));
     glsafe(::glScissor(viewport[0] + workRect.x0, viewport[1] + workRect.y0, workRect.x1 - workRect.x0,
@@ -1337,7 +1355,8 @@ void SoftShadowRenderer::CompositeObjectShadows(GLShaderProgram& shader, const C
     shader.set_uniform("resolution_scale", resolutionScale);
     shader.set_uniform("inv_projection", Matrix4d(camera.get_projection_matrix().matrix().inverse()));
     shader.set_uniform("depth_tolerance", UPSAMPLE_DEPTH_TOLERANCE);
-    shader.set_uniform("multisampled", _defaultFramebufferMultisampled);
+    // Silhouette background pixels only receive shadows when the scene framebuffer is multisampled.
+    shader.set_uniform("multisampled", multisampled);
     // Full resolution normals let the filter keep samples of one face apart from the adjacent face
     const Matrix4d viewProjection = camera.get_projection_matrix().matrix() * camera.get_view_matrix().matrix();
     shader.set_uniform("inv_view_projection", Matrix4d(viewProjection.inverse()));
@@ -1346,9 +1365,10 @@ void SoftShadowRenderer::CompositeObjectShadows(GLShaderProgram& shader, const C
     shader.stop_using();
 }
 
-void SoftShadowRenderer::RenderObjectShadows(const Camera& camera, bool darkMode)
+void SoftShadowRenderer::RenderObjectShadows(const Camera& camera, bool darkMode, unsigned int sceneFramebuffer)
 {
-    if (_objectShadowsFailed || !_maskValid || _shadowDepthTexture == 0)
+    bool& depthFailed = sceneFramebuffer == 0 ? _windowDepthFailed : _ownedDepthFailed;
+    if (_objectShadowsFailed || depthFailed || !_maskValid || _shadowDepthTexture == 0)
         return;
 
     GLShaderProgram* const shader = wxGetApp().get_shader("shadow_screen");
@@ -1358,13 +1378,12 @@ void SoftShadowRenderer::RenderObjectShadows(const Camera& camera, bool darkMode
 
     GLint drawFramebuffer = 0;
     glsafe(::glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &drawFramebuffer));
-    // Fix: a frame rendered into another framebuffer only skips the pass instead of disabling it for good
-    if (drawFramebuffer != 0)
+    // External render targets skip the pass without affecting the window or the canvas-owned target.
+    if (static_cast<unsigned int>(drawFramebuffer) != sceneFramebuffer)
         return;
-    // GL_SAMPLES describes the bound draw framebuffer, here the default one
+    // GL_SAMPLES describes the currently bound draw framebuffer.
     GLint samples = 0;
     glsafe(::glGetIntegerv(GL_SAMPLES, &samples));
-    _defaultFramebufferMultisampled = samples > 1;
 
     std::array<int, 4> viewport{ { 0, 0, 0, 0 } };
     glsafe(::glGetIntegerv(GL_VIEWPORT, viewport.data()));
@@ -1392,11 +1411,23 @@ void SoftShadowRenderer::RenderObjectShadows(const Camera& camera, bool darkMode
     const SoftShadowPixelRect copyRect = ExpandRect(workRect, 2 * scale + 2, viewport[2], viewport[3]);
 
     ShadowStateGuard stateGuard;
-    if (!CopySceneDepth(viewport, copyRect) || !EnsureObjectShadowTarget(targetWidth, targetHeight))
+    if (!CopySceneDepth(viewport, copyRect, sceneFramebuffer, samples))
+    {
+        depthFailed = true;
+        return;
+    }
+    if (!EnsureObjectShadowTarget(targetWidth, targetHeight))
         return;
 
     DrawObjectShadows(*shader, camera, scale, shadeRect, darkMode);
-    CompositeObjectShadows(*compositeShader, camera, viewport, scale, workRect);
+    CompositeObjectShadows(*compositeShader, camera, viewport, scale, workRect, sceneFramebuffer, samples > 1);
+}
+
+void SoftShadowRenderer::AbandonContext()
+{
+    // Only GLModel objects release GPU resources in their destructors.
+    _footprintModel.ForgetContext();
+    _fullscreenQuad.ForgetContext();
 }
 
 void SoftShadowRenderer::Release()

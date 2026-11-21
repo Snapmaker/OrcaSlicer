@@ -67,6 +67,16 @@ void GLPickingBuffer::Reset()
     _failedHeight = 0;
 }
 
+void GLPickingBuffer::ForgetContext()
+{
+    _framebuffer = _colorTexture = _depthRenderbuffer = 0;
+    _width = _height         = 0;
+    _previousDrawFramebuffer = _previousReadFramebuffer = 0;
+    _renderBound                                        = false;
+    _failedWidth = _failedHeight = 0;
+    _framebufferType             = OpenGLManager::EFramebufferType::Unknown;
+}
+
 bool GLPickingBuffer::IsReady() const
 {
     return _framebuffer != 0 && _colorTexture != 0 && _depthRenderbuffer != 0 && _width > 0 && _height > 0 &&

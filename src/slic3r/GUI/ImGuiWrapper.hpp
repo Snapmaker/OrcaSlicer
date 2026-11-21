@@ -96,6 +96,8 @@ public:
     const ImWchar *get_glyph_ranges() const { return m_glyph_ranges; } // language specific
 
     void new_frame();
+    // Finish an abandoned CPU frame without submitting any OpenGL work.
+    void cancel_frame();
     void render();
 
     float scaled(float x) const { return x * m_font_size; }

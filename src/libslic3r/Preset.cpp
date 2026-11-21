@@ -2569,6 +2569,25 @@ void PresetCollection::save_current_preset(const std::string &new_name, bool det
         final_inherits = inherits;
         unlock();
     }
+    // A preset saved to the user folder must not inherit from a project-embedded preset: that parent exists only
+    // while its 3mf is open, so the saved diff would be unusable in any other project (#1207). Rebase onto the
+    // first ancestor that is not project-embedded (a system preset), or onto nothing so the full config is saved.
+    if (!save_to_project && !final_inherits.empty()) {
+        std::string base = final_inherits;
+        for (int depth = 0; depth < 8 && !base.empty(); ++depth) {
+            const Preset *parent = this->find_preset(base, false, true);
+            if (parent == nullptr || !parent->is_project_embedded)
+                break;
+            base = parent->inherits();
+        }
+        if (base != final_inherits) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": preset %1% inherited from project preset %2%, rebased onto \"%3%\"") % new_name % final_inherits % base;
+            auto it_saved = this->find_preset_internal(new_name);
+            if (it_saved != m_presets.end() && it_saved->name == new_name)
+                it_saved->inherits() = base;
+            final_inherits = base;
+        }
+    }
     // 2) Activate the saved preset.
     this->select_preset_by_name(new_name, true);
     // 2) Store the active preset to disk.

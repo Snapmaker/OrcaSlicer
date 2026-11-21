@@ -29,10 +29,11 @@ as for predictable geometry.
 
 ## Vendored Clipper2
 
-`deps_src/clipper2` builds the static target `Clipper2`. It carries five
-changes to the upstream sources that must be carried over when Clipper2 is
-updated. The namespace switch sits at the top of every header and source, the
-other four are marked with `Orca:` comments.
+`deps_src/clipper2` builds the static target `Clipper2`. It carries six
+changes to the upstream sources. The namespace switch sits at the top of every
+header and source and four changes are marked with `Orca:` comments; both
+kinds have to be carried over when Clipper2 is updated. The sixth is a backport
+of a Clipper2 fix and comes with the next Clipper2 update.
 
 | Change | Files | Why |
 | --- | --- | --- |
@@ -40,6 +41,7 @@ other four are marked with `Orca:` comments.
 | Engine nodes from tbbmalloc | `clipper.engine.h`, `clipper.engine.cpp` | Vertices, active edges, output points and records, local minima and `PolyTree` nodes are allocated one by one. `CLIPPER2_NODE_ALLOCATOR` routes them through `scalable_malloc`, because the default heap does not scale when all slicing threads clip at once. |
 | Concave joins at the edge crossing | `clipper.offset.cpp` | For closed paths, a concave corner is joined at the crossing of the two offset edges when that point lies within half of both adjacent edges. The upstream 3-point loop makes inward offsets of dense curves very slow to union. |
 | Rounded arc steps | `clipper.offset.cpp` | Round joins use the rounded number of steps, not the ceiling, which keeps the vertex count of round offsets that the rest of the code is tuned for. |
+| Split owner search guarded against recursion | `clipper.engine.cpp` | Backport of Clipper2 f97d65d (OrcaSlicer 49b84637ee). When emptied output loops of a result refer to each other, looking for the owner of a loop through them recursed until the stack overflowed. Not marked with a comment, the code is the one of Clipper2. |
 | End type kept to the path | `clipper.offset.cpp` | A joined path of only two points gets open ends. Upstream changes the end type of the whole group for it, so the closed paths after it in the same group lose their closing edge. The end type is restored after every path. Clipper2 main still behaves this way (checked 2026-11). |
 
 ## ClipperUtils semantics

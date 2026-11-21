@@ -5021,6 +5021,24 @@ int CLI::run(int argc, char **argv)
                                 flush_and_exit(CLI_FILAMENTS_DIFFERENT_TEMP);
                             }
                         }
+#ifdef _WIN32
+                        // CLI guard: the export opens "<outfile>.tmp" and then GCodeProcessor::post_process_path() of it,
+                        // so the longest path is 16 characters longer than the final G-code. Without a long-path-aware
+                        // manifest, fopen fails at MAX_PATH only after slicing, with no path in the error (#1120).
+                        if (!outfile_dir.empty()) {
+                            const std::string outfile_check = boost::filesystem::absolute(outfile_dir + "/plate_" + std::to_string(index + 1) + ".gcode").string();
+                            const std::string longest = GCodeProcessor::post_process_path(outfile_check + ".tmp");
+                            if (longest.size() >= MAX_PATH) {
+                                const std::string msg = "Output path too long for Windows: the G-code export writes the temporary file\n" + longest +
+                                                        "\n(" + std::to_string(longest.size()) + " characters, limit " + std::to_string(MAX_PATH - 1) +
+                                                        "). Use an --outputdir at least " + std::to_string(longest.size() - (MAX_PATH - 1)) + " characters shorter.";
+                                boost::nowide::cerr << msg << std::endl;
+                                BOOST_LOG_TRIVIAL(error) << msg;
+                                record_exit_reson(outfile_dir, CLI_INVALID_PARAMS, index + 1, msg, sliced_info);
+                                flush_and_exit(CLI_INVALID_PARAMS);
+                            }
+                        }
+#endif
                         StringObjectException warning;
                         auto err = print->validate(&warning);
                         if (!err.string.empty()) {

@@ -23,6 +23,8 @@
 #include <charconv>
 #include <string>
 #include <system_error>
+#include <cerrno>
+#include <cstring>
 
 #if __has_include(<charconv>)
     #include <charconv>
@@ -4146,15 +4148,21 @@ static void update_lines_ends_and_out_file_pos(const std::string& out_string, st
 
 void GCodeProcessor::run_post_process()
 {
+    // Name the path, its length and the OS error, so a path-length limit (e.g. MAX_PATH on Windows) is identifiable.
+    auto open_failed = [](const char* what, const std::string& path) {
+        const int err = errno;
+        return Slic3r::RuntimeError(std::string("GCode processor post process export failed.\nCannot open file for ") + what + ".\n" +
+                                    "Path (" + std::to_string(path.size()) + " characters): " + path + "\n" + std::strerror(err) + "\n");
+    };
     FilePtr in{ boost::nowide::fopen(m_result.filename.c_str(), "rb") };
     if (in.f == nullptr)
-        throw Slic3r::RuntimeError(std::string("GCode processor post process export failed.\nCannot open file for reading.\n"));
+        throw open_failed("reading", m_result.filename);
 
     // temporary file to contain modified gcode
-    std::string out_path = m_result.filename + ".postprocess";
+    std::string out_path = post_process_path(m_result.filename);
     FilePtr out{ boost::nowide::fopen(out_path.c_str(), "wb") };
     if (out.f == nullptr)
-        throw Slic3r::RuntimeError(std::string("GCode processor post process export failed.\nCannot open file for writing.\n"));
+        throw open_failed("writing", out_path);
 
     std::vector<double> filament_mm(m_result.extruders_count, 0.0);
     std::vector<double> filament_cm3(m_result.extruders_count, 0.0);

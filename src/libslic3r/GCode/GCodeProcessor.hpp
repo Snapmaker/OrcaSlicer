@@ -318,6 +318,8 @@ class Print;
 
         static int get_gcode_last_filament(const std::string &gcode_str);
         static bool get_last_z_from_gcode(const std::string& gcode_str, double& z);
+        // Temporary file run_post_process() writes next to the G-code it processes (the longest path an export opens).
+        static std::string post_process_path(const std::string& gcode_path) { return gcode_path + ".postprocess"; }
 
         static const float Wipe_Width;
         static const float Wipe_Height;

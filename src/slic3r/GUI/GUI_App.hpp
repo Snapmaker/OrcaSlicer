@@ -626,7 +626,7 @@ private:
     boost::asio::ip::port_type get_page_http_port() const { return m_page_http_server.get_port(); }
 
     bool            start_gateway_service(bool restart = false);
-    void            stop_gateway_service();
+    void            stop_gateway_service(bool terminate_cli = false);
     wxString        gateway_web_url(const wxString& page_key) const;
     std::string     gateway_localfile_url(const std::string& file_path) const;
     Gateway::PreprintStoreResult gateway_store_preprint_context(const std::string& id, const nlohmann::json& payload) const;

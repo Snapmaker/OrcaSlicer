@@ -685,3 +685,34 @@ TEST_CASE("request_sync fails fast when the service stops while waiting", "[gate
     REQUIRE((code == static_cast<int>(GatewayErrorCode::NotConnected) || code == static_cast<int>(GatewayErrorCode::Cancelled)));
     REQUIRE(elapsed_ms.load() < 3000); // nowhere near the 10 s timeout
 }
+
+TEST_CASE("GatewayService stop terminates the CLI only when asked", "[gateway][service][lifecycle]")
+{
+    for (const bool terminate_cli : {false, true}) {
+        DYNAMIC_SECTION("terminate_cli=" << terminate_cli)
+        {
+            std::shared_ptr<ConnectionProcessManager> unused;
+            std::shared_ptr<FakeHttp>                 http;
+            std::shared_ptr<FakeWebSocket>            websocket;
+            GatewayService::Dependencies              dependencies = make_dependencies(unused, http, websocket);
+            auto manager = std::make_shared<RecordingProcessManager>(ConnectionProcessManager::Config{boost::filesystem::path{
+                                                                         "snapmaker_connection.exe"}},
+                                                                     [](const std::vector<std::string>&) {
+                                                                         ConnectionProcessManager::ProcessRunResult result;
+                                                                         result.stdout_data = "PORT:8888\r\n\r\n";
+                                                                         return result;
+                                                                     });
+            dependencies.process_manager = manager;
+            GatewayService service(GatewayService::Config{}, std::move(dependencies));
+
+            REQUIRE(service.start("en-US"));
+            REQUIRE(wait_for_state(service, ConnectionState::Connected));
+            REQUIRE(manager->terminate_calls.load() == 0);
+
+            service.stop(terminate_cli);
+            REQUIRE(manager->terminate_calls.load() == (terminate_cli ? 1 : 0));
+            service.stop(terminate_cli); // second stop is a no-op
+            REQUIRE(manager->terminate_calls.load() == (terminate_cli ? 1 : 0));
+        }
+    }
+}

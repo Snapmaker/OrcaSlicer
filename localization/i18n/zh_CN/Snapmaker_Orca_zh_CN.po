@@ -15810,8 +15810,8 @@ msgid "Subdivision failed"
 msgstr "细分失败"
 
 #, c-format
-msgid "Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."
-msgstr "局部细分停留在第 %d 级（共 %d 级）：所选区域存在非流形边。"
+msgid "Local subdivision stopped at level %d of %d: the selected region could not be subdivided (non-manifold edges or degenerate geometry)."
+msgstr "局部细分停留在第 %d 级（共 %d 级）：所选区域无法细分（存在非流形边或退化几何）。"
 
 #, c-format
 msgid "Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."

@@ -524,10 +524,11 @@ void GLGizmoLocalSubdivision::update_preview()
         }
     }
 
-    // A region whose inner edges are not all 2-manifold stops growing at the level
-    // where the pairing guard trips: say so instead of silently showing a lower
-    // level than the slider requests. Throttled to one notification per (requested,
-    // achieved) level pair, so repainting does not re-notify on every mouse move.
+    // A region that cannot be subdivided stops growing at the level where it failed
+    // (non-manifold pairing guard or the child-face validation): say so instead of
+    // silently showing a lower level than the slider requests. Throttled to one
+    // notification per (requested, achieved) level pair, so repainting does not
+    // re-notify on every mouse move.
     int lowest_achieved = m_subdiv_level;
     for (const Preview& p : m_previews)
         lowest_achieved = std::min(lowest_achieved, int(p.meshes.size()) - 1);
@@ -536,7 +537,7 @@ void GLGizmoLocalSubdivision::update_preview()
             m_last_failed_levels = {m_subdiv_level, lowest_achieved};
             wxGetApp().plater()->get_notification_manager()->push_notification(
                 NotificationManager::NotificationLevel::WarningNotificationLevel, 5,
-                wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."),
+                wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region could not be subdivided (non-manifold edges or degenerate geometry)."),
                                  lowest_achieved, m_subdiv_level).ToStdString());
         }
     } else {

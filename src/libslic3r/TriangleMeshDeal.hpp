@@ -18,6 +18,12 @@ public:
     // patch count). Use it for previewing, where the stats would be recomputed and
     // thrown away on every step; construct the TriangleMesh only when applying.
     static indexed_triangle_set smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok);
+
+    // Verification hook: how many times smooth_triangle_mesh_local_its ran since the
+    // last reset (or process start). Lets the UI layer check that an unchanged
+    // failing selection is not recomputed on every frame.
+    static uint64_t smooth_triangle_mesh_local_its_call_count();
+    static void     reset_smooth_triangle_mesh_local_its_call_count();
 };
 } // namespace Slic3r
 

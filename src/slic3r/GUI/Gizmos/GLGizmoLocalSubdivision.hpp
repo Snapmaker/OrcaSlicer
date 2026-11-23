@@ -78,6 +78,11 @@ private:
         std::vector<uint32_t>     next_facets;      // selection for the next subdivision step
         std::vector<indexed_triangle_set> meshes;   // [0] original, [n] = n-th subdivision level (bare sets, no stats)
         std::vector<size_t>       region_counts;    // region faces of each level (front of the face list)
+        // Level whose computation failed for the current cached inputs (-1 when all
+        // requested levels were computed). The caches are rebuilt - and the record
+        // cleared - whenever the selection or the mesh changes, so an unchanged
+        // failing selection (e.g. non-manifold edges) is not recomputed every frame.
+        int                       failed_level = -1;
         GLModel                   model;            // non-region geometry, drawn by the gizmo with the volume color
         GLModel                   model_region;     // region-only geometry, colored like the level-0 painting
         bool                      hidden = false;   // the original volume is hidden while the preview is shown

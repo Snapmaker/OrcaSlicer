@@ -444,8 +444,21 @@ void GLGizmoLocalSubdivision::restore_preview()
 
 void GLGizmoLocalSubdivision::update_preview()
 {
-    if (! m_preview_dirty && m_shown_level == m_subdiv_level)
+    // A preview whose next level failed carries a cached failure record, so no
+    // growth is pending for it. Without this, an unchanged failing selection
+    // (e.g. non-manifold edges) retried the same computation on every frame and
+    // re-requested redraws, keeping the UI thread busy.
+    bool any_growth_pending = false;
+    for (const Preview& p : m_previews)
+        if (int(p.meshes.size()) <= m_subdiv_level && ! p.next_facets.empty() && p.failed_level != int(p.meshes.size()))
+            any_growth_pending = true;
+    if (! m_preview_dirty && ! any_growth_pending && m_shown_level == m_subdiv_level)
         return;
+
+    // Set when this frame changed what is shown on screen; a failed selection that
+    // cannot be recomputed (cached failure above) must not keep re-requesting
+    // redraws, or the panel never goes idle.
+    bool changed = false;
 
     ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
     if (mo == nullptr)
@@ -453,6 +466,7 @@ void GLGizmoLocalSubdivision::update_preview()
 
     if (m_preview_dirty) {
         // Rebuild the caches from the current painting state.
+        changed = true;
         restore_preview();
         m_previews.clear();
         // The selectors are built by update_from_model_object; without them there is
@@ -488,12 +502,17 @@ void GLGizmoLocalSubdivision::update_preview()
     // front of the result face list, so they are the selection of the next iteration.
     for (Preview& p : m_previews) {
         while (int(p.meshes.size()) <= m_subdiv_level && ! p.next_facets.empty()) {
+            const int next_level = int(p.meshes.size());
+            if (p.failed_level == next_level)
+                break; // cached failure for the current inputs: do not recompute
             const indexed_triangle_set& src        = p.meshes.back();
             const size_t                unselected = src.indices.size() - p.next_facets.size();
             bool                        ok         = false;
             indexed_triangle_set        next       = TriangleMeshDeal::smooth_triangle_mesh_local_its(src, p.next_facets, ok);
-            if (! ok)
+            if (! ok) {
+                p.failed_level = next_level;
                 break;
+            }
             const size_t region = next.indices.size() - unselected;
             p.next_facets.clear();
             p.next_facets.resize(region);
@@ -501,6 +520,7 @@ void GLGizmoLocalSubdivision::update_preview()
                 p.next_facets[i] = uint32_t(i);
             p.meshes.emplace_back(std::move(next));
             p.region_counts.push_back(region);
+            changed = true;
         }
     }
 
@@ -577,11 +597,17 @@ void GLGizmoLocalSubdivision::update_preview()
             p.hidden        = true;
             anything_shown  = true;
         }
-        m_shown_level = anything_shown ? m_subdiv_level : 0;
+        const int new_shown_level = anything_shown ? m_subdiv_level : 0;
+        if (new_shown_level != m_shown_level)
+            changed = true;
+        m_shown_level = new_shown_level;
     } else {
+        if (m_shown_level != 0)
+            changed = true;
         restore_preview();
     }
-    m_parent.set_as_dirty();
+    if (changed)
+        m_parent.set_as_dirty();
 }
 
 void GLGizmoLocalSubdivision::render_preview_meshes()
@@ -727,7 +753,6 @@ void GLGizmoLocalSubdivision::apply_subdivision()
     close();
 
     plater->take_snapshot("Local subdivision");
-    plater->clear_before_change_mesh(object_idx);
 
     for (auto& [volume, mesh] : meshes_to_apply) {
         volume->set_mesh(std::move(mesh));
@@ -737,6 +762,9 @@ void GLGizmoLocalSubdivision::apply_subdivision()
         // The four FacetsAnnotation stores (supports, seams, MMU segmentation, fuzzy
         // skin) are indexed by face number; subdivision replaced the selected faces
         // with up to four new ones, so the stale markers would land on wrong faces.
+        // Reset ONLY the subdivided volumes: the object-level
+        // Plater::clear_before_change_mesh() would also wipe the painting of the
+        // object's other volumes, whose meshes this operation did not touch.
         volume->reset_extra_facets();
     }
     mo->invalidate_bounding_box();

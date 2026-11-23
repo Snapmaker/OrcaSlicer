@@ -3,13 +3,21 @@
 #include <array>
 #include <igl/loop.h>
 #include <assert.h>
+#include <atomic>
 #include <boost/log/trivial.hpp>
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <map>
 #include <set>
 #include <utility>
+
+namespace {
+// Counts every smooth_triangle_mesh_local_its call; see the accessors on
+// TriangleMeshDeal.
+std::atomic<uint64_t> s_local_its_call_count{0};
+} // namespace
 
 namespace Slic3r {
 TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok)
@@ -278,6 +286,8 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
 
 
 indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok) {
+    s_local_its_call_count.fetch_add(1, std::memory_order_relaxed);
+
     // Guards limited to the SELECTION: only the selected faces take part in the
     // subdivision and its edge pairing, so duplicates or non-manifold edges outside the
     // selection cannot break this algorithm - untouched faces are appended verbatim.
@@ -410,10 +420,16 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
         const stl_triangle_vertex_indices& tri = selected_faces[face];
         if (bound_index.size() == 0)
         {
+            // Average the UPDATED positions: a face can end up here while one of its
+            // vertices is interior to the patch and was moved by the smoothing pass
+            // (e.g. the center of a fully selected fan, whose inner edges were all
+            // dropped pairwise because every neighbour is a boundary face). The
+            // centroid of the ORIGINAL face may fall outside the moved face, flipping
+            // the child faces and overlapping the neighbours.
             stl_vertex mid_point(stl_vertex::Zero());
             for (int i = 0; i < 3; i++)
             {
-                mid_point += vertices[tri[i]];
+                mid_point += its.vertices[size_t(tri[i])];
             }
             mid_point /= 3;
 
@@ -489,6 +505,16 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh_local(const TriangleMesh& or
     // Build the full stats (neighbour graph, volume, bounding box, ...) only here,
     // when the result is actually applied, not during previewing.
     return TriangleMesh(smooth_triangle_mesh_local_its(origin_mesh.its, facet_indices, ok));
+}
+
+uint64_t TriangleMeshDeal::smooth_triangle_mesh_local_its_call_count()
+{
+    return s_local_its_call_count.load(std::memory_order_relaxed);
+}
+
+void TriangleMeshDeal::reset_smooth_triangle_mesh_local_its_call_count()
+{
+    s_local_its_call_count.store(0, std::memory_order_relaxed);
 }
 
 } // namespace Slic3r

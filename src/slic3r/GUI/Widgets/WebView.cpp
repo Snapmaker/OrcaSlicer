@@ -610,6 +610,7 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)", SLIC3R_VERSION,
                                                Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
 #endif
+        WebView::AddFlutterCompatScript(webView);
 #ifdef __WXMAC__
         WKWebView * wkWebView = (WKWebView *) webView->GetNativeBackend();
         Slic3r::GUI::WKWebView_setTransparentBackground(wkWebView);
@@ -685,6 +686,29 @@ void WebView::LoadUrl(wxWebView * webView, wxString const &url)
     if (!url2.empty())
         BOOST_LOG_TRIVIAL(info) << "webview load url=" << url2.ToUTF8().data();
     webView->LoadURL(url2);
+}
+
+void WebView::AddFlutterCompatScript(wxWebView *webView)
+{
+#if defined(__linux__)
+    // Flutter web picks its browser-specific code path from navigator.vendor. Under WebKitGTK the
+    // WebKit path presents checkbox state one frame late: the last-clicked checkbox only updates on
+    // the next pointer event, so checkmarks seem to vanish or to affect each other (login page,
+    // Print Preprocessing). Windows already reports a Chromium user agent and uses the Blink path,
+    // so make the Flutter pages see the same on Linux. Scoped to the bundled Flutter pages.
+    webView->AddUserScript(wxString::FromUTF8(
+        "(function(){"
+        "if(location.href.indexOf('/web/flutter_web/')<0)return;"
+        "try{"
+        "Object.defineProperty(navigator,'vendor',{get:function(){return 'Google Inc.';}});"
+        "var ua='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';"
+        "Object.defineProperty(navigator,'userAgent',{get:function(){return ua;}});"
+        "Object.defineProperty(navigator,'appVersion',{get:function(){return ua.substring(8);}});"
+        "}catch(e){}"
+        "})();"));
+#else
+    (void) webView;
+#endif
 }
 
 bool WebView::RunScript(wxWebView *webView, wxString const &javascript)

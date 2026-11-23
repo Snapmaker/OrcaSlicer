@@ -508,9 +508,11 @@ void GLGizmoLocalSubdivision::update_preview()
             const indexed_triangle_set& src        = p.meshes.back();
             const size_t                unselected = src.indices.size() - p.next_facets.size();
             bool                        ok         = false;
-            indexed_triangle_set        next       = TriangleMeshDeal::smooth_triangle_mesh_local_its(src, p.next_facets, ok);
+            TriangleMeshDeal::SubdivisionFailure failure = TriangleMeshDeal::SubdivisionFailure::None;
+            indexed_triangle_set        next       = TriangleMeshDeal::smooth_triangle_mesh_local_its(src, p.next_facets, ok, &failure);
             if (! ok) {
-                p.failed_level = next_level;
+                p.failed_level   = next_level;
+                p.failure_reason = failure;
                 break;
             }
             const size_t region = next.indices.size() - unselected;
@@ -537,8 +539,7 @@ void GLGizmoLocalSubdivision::update_preview()
             m_last_failed_levels = {m_subdiv_level, lowest_achieved};
             wxGetApp().plater()->get_notification_manager()->push_notification(
                 NotificationManager::NotificationLevel::WarningNotificationLevel, 5,
-                wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region could not be subdivided (non-manifold edges or degenerate geometry)."),
-                                 lowest_achieved, m_subdiv_level).ToStdString());
+                subdivision_failure_text(lowest_achieved, false).ToStdString());
         }
     } else {
         m_last_failed_levels = {0, 0};
@@ -658,6 +659,37 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
     glsafe(::glPopAttrib());
 }
 
+wxString GLGizmoLocalSubdivision::subdivision_failure_text(int lowest_achieved, bool apply) const
+{
+    bool any_non_manifold = false, any_degenerate = false;
+    for (const Preview& p : m_previews)
+        if (p.failure_reason == TriangleMeshDeal::SubdivisionFailure::NonManifold)
+            any_non_manifold = true;
+        else if (p.failure_reason == TriangleMeshDeal::SubdivisionFailure::DegenerateGeometry)
+            any_degenerate = true;
+
+    // Name the specific cause when all failed previews share one; mixed causes get
+    // the combined wording.
+    if (apply) {
+        if (any_non_manifold && any_degenerate)
+            return wxString::Format(_L("Subdivision failed: the selected region could not be subdivided (non-manifold edges or degenerate geometry; reached level %d of %d). No changes were applied."),
+                                    lowest_achieved, m_subdiv_level);
+        if (any_non_manifold)
+            return wxString::Format(_L("Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."),
+                                    lowest_achieved, m_subdiv_level);
+        return wxString::Format(_L("Subdivision failed: the selected region contains degenerate geometry (reached level %d of %d). No changes were applied."),
+                                lowest_achieved, m_subdiv_level);
+    }
+    if (any_non_manifold && any_degenerate)
+        return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region could not be subdivided (non-manifold edges or degenerate geometry)."),
+                                lowest_achieved, m_subdiv_level);
+    if (any_non_manifold)
+        return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."),
+                                lowest_achieved, m_subdiv_level);
+    return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains degenerate geometry."),
+                            lowest_achieved, m_subdiv_level);
+}
+
 void GLGizmoLocalSubdivision::apply_subdivision()
 {
     ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
@@ -677,8 +709,7 @@ void GLGizmoLocalSubdivision::apply_subdivision()
     if (lowest_achieved < m_subdiv_level) {
         wxGetApp().plater()->get_notification_manager()->push_notification(
             NotificationManager::NotificationLevel::WarningNotificationLevel, 10,
-            wxString::Format(_L("Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."),
-                             lowest_achieved, m_subdiv_level).ToStdString());
+            subdivision_failure_text(lowest_achieved, true).ToStdString());
         return;
     }
 

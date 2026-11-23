@@ -380,8 +380,10 @@ static bool validate_region_children(const std::vector<stl_vertex>& parent_verti
     return true;
 }
 
-indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok) {
+indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok, SubdivisionFailure* failure) {
     s_local_its_call_count.fetch_add(1, std::memory_order_relaxed);
+    if (failure != nullptr)
+        *failure = SubdivisionFailure::None;
 
     // Only the selected faces take part in the subdivision; the patch BOUNDARY,
     // however, is detected against the full mesh (see the neighborhood pass below):
@@ -423,6 +425,8 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
                 if (++edge_face_count[{a, b}] > 2)
                 {
                     ok = false;
+                    if (failure != nullptr)
+                        *failure = SubdivisionFailure::NonManifold;
                     return indexed_triangle_set();
                 }
             }
@@ -662,6 +666,8 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
         // Even the linear construction failed: the selection cannot be subdivided
         // into valid geometry (e.g. a zero-area face in the selection).
         ok = false;
+        if (failure != nullptr)
+            *failure = SubdivisionFailure::DegenerateGeometry;
         return indexed_triangle_set();
     }
     // Smooth attempt failed: retry the whole level linearly.

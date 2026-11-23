@@ -335,15 +335,19 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
 
 
 // Validates the generated child faces of one subdivision level against their direct
-// parent faces, in double precision from the final float coordinates: every child
-// must keep the parent's orientation and a strictly positive area relative to the
-// parent's scale. This catches flipped children (Loop edge points can leave a
-// concave parent), exact degenerates (a smoothed vertex landing exactly on an edge)
-// and faces collapsed by float rounding. Untouched faces are not checked: they are
-// the input verbatim.
-static bool validate_region_children(const indexed_triangle_set& its,
-                                     size_t                     region_faces,
-                                     const std::vector<int>&    child_parent,
+// parent faces: every child must keep the parent's orientation and a strictly
+// positive area relative to the parent's scale. The parent normal and scale are
+// taken from the INPUT vertices of this level (parent_vertices), the child cross
+// products from the final smoothed float coordinates: a parent that flipped during
+// the smoothing would otherwise be measured against its own flipped normal, and
+// children flipped together with it would pass. The check also catches Loop edge
+// points leaving a concave parent, exact degenerates (a smoothed vertex landing
+// exactly on an edge) and faces collapsed by float rounding. Untouched faces are
+// not checked: they are the input verbatim.
+static bool validate_region_children(const std::vector<stl_vertex>& parent_vertices,
+                                     const indexed_triangle_set&     its,
+                                     size_t                         region_faces,
+                                     const std::vector<int>&        child_parent,
                                      const std::vector<stl_triangle_vertex_indices>& parents)
 {
     // Minimum child area as a fraction of the parent's longest edge squared.
@@ -353,9 +357,9 @@ static bool validate_region_children(const indexed_triangle_set& its,
 
     for (size_t i = 0; i < region_faces; ++i) {
         const stl_triangle_vertex_indices& p    = parents[size_t(child_parent[i])];
-        const Vec3d p0 = its.vertices[size_t(p[0])].cast<double>();
-        const Vec3d p1 = its.vertices[size_t(p[1])].cast<double>();
-        const Vec3d p2 = its.vertices[size_t(p[2])].cast<double>();
+        const Vec3d p0 = parent_vertices[size_t(p[0])].cast<double>();
+        const Vec3d p1 = parent_vertices[size_t(p[1])].cast<double>();
+        const Vec3d p2 = parent_vertices[size_t(p[2])].cast<double>();
         const double L2 = std::max({(p1 - p0).squaredNorm(), (p2 - p1).squaredNorm(), (p0 - p2).squaredNorm()});
         if (! (L2 > 0.) || ! std::isfinite(L2))
             return false; // the parent itself is degenerate: children cannot be valid
@@ -652,7 +656,7 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
     // area: the smooth attempt can still produce flipped or degenerate children
     // (see validate_region_children), the linear attempt cannot unless the
     // selection itself contains degenerate faces.
-    if (validate_region_children(its, child_parent.size(), child_parent, selected_faces))
+    if (validate_region_children(vertices, its, child_parent.size(), child_parent, selected_faces))
         break;
     if (linear) {
         // Even the linear construction failed: the selection cannot be subdivided

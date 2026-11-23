@@ -99,11 +99,15 @@ public:
      * Call right after the opaque objects are drawn and before the plates, so the depth holds objects only.
      * @param camera Camera of the current frame.
      * @param darkMode Selects the shadow strength for the dark theme.
+     * @param sceneFramebuffer The expected draw framebuffer, either the window or the canvas-owned MSAA target.
      */
-    void RenderObjectShadows(const Camera& camera, bool darkMode);
+    void RenderObjectShadows(const Camera& camera, bool darkMode, unsigned int sceneFramebuffer = 0);
 
     /** @brief Releases all GL objects; the GL context must be current. */
     void Release();
+
+    /** @brief Allows immediate destruction without GL calls when the owning context is unavailable. */
+    void AbandonContext();
 
     /** @brief Returns true when the last Update() rebuilt the shadow map and mask. */
     bool WasRebuilt() const { return _rebuilt; }
@@ -123,15 +127,17 @@ private:
     bool RenderGroundMask(bool reducedSamples);
     void BlurGroundMask();
     void EnsureFullscreenQuad();
-    bool EnsureSceneDepthResources(int width, int height);
+    bool EnsureSceneDepthResources(int width, int height, unsigned int sceneFramebuffer, int samples);
     void ReleaseSceneDepthResources();
-    bool CopySceneDepth(const std::array<int, 4>& viewport, const SoftShadowPixelRect& copyRect);
+    bool CopySceneDepth(const std::array<int, 4>& viewport, const SoftShadowPixelRect& copyRect,
+                        unsigned int sceneFramebuffer, int samples);
     bool EnsureObjectShadowTarget(int width, int height);
     void ReleaseObjectShadowTarget();
     void DrawObjectShadows(GLShaderProgram& shader, const Camera& camera, int resolutionScale,
                            const SoftShadowPixelRect& shadeRect, bool darkMode);
     void CompositeObjectShadows(GLShaderProgram& shader, const Camera& camera, const std::array<int, 4>& viewport,
-                                int resolutionScale, const SoftShadowPixelRect& workRect);
+                                int resolutionScale, const SoftShadowPixelRect& workRect,
+                                unsigned int sceneFramebuffer, bool multisampled);
     void DisableObjectShadows(const char* reason);
 
     unsigned int _shadowFramebuffer{ 0 };
@@ -184,10 +190,12 @@ private:
     unsigned int _sceneDepthTexture{ 0 };
     int _sceneDepthWidth{ 0 };
     int _sceneDepthHeight{ 0 };
+    unsigned int _sceneDepthSource{ 0 };
+    int _sceneDepthSamples{ 0 };
     bool _sceneDepthVerified{ false };
     bool _objectShadowsFailed{ false };
-    // Silhouette background pixels only receive object shadows when the frame buffer is multisampled
-    bool _defaultFramebufferMultisampled{ false };
+    bool _windowDepthFailed{ false };
+    bool _ownedDepthFailed{ false };
     GLModel _fullscreenQuad;
 
     // Intermediate object shadow result: R = shadow amount, G = linear view depth, BA = octahedral normal

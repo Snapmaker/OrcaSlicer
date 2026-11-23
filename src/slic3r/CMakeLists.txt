@@ -201,6 +201,33 @@ set(SLIC3R_GUI_SOURCES
     GUI/GLModel.hpp
     GUI/GLSelectionRectangle.cpp
     GUI/GLSelectionRectangle.hpp
+    GUI/AO/AOConfig.cpp
+    GUI/AO/AOConfig.hpp
+    GUI/AO/AOFullscreenPass.cpp
+    GUI/AO/AOFullscreenPass.hpp
+    GUI/AO/AOGLUtils.cpp
+    GUI/AO/AOGLUtils.hpp
+    GUI/AO/AOObserver.hpp
+    GUI/AO/AOPlan.cpp
+    GUI/AO/AOPlan.hpp
+    GUI/AO/AOShaderNames.hpp
+    GUI/AO/AOTypes.cpp
+    GUI/AO/AOTypes.hpp
+    GUI/AO/GLAOCompositor.cpp
+    GUI/AO/GLAOCompositor.hpp
+    GUI/AO/GLAOComputeBackend.cpp
+    GUI/AO/GLAOComputeBackend.hpp
+    GUI/AO/GLAOFeature.cpp
+    GUI/AO/GLAOFeature.hpp
+    GUI/AO/GLAOFragmentBackend.cpp
+    GUI/AO/GLAOFragmentBackend.hpp
+    GUI/AO/GLAOInputs.cpp
+    GUI/AO/GLAOInputs.hpp
+    GUI/AO/GLAOProgramCatalog.cpp
+    GUI/AO/GLAOProgramCatalog.hpp
+    GUI/GLAOFrameTarget.cpp
+    GUI/GLAOFrameTarget.hpp
+    GUI/SceneRenderStage.hpp
     GUI/GLShader.cpp
     GUI/GLShader.hpp
     GUI/GLShadersManager.cpp
@@ -746,9 +773,32 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/GeneratedConfig.hpp.in
                ${CMAKE_CURRENT_BINARY_DIR}/GeneratedConfig.hpp
                @ONLY)
 
+# Render diagnostics: AO experiments, captures, benchmark and performance sampling. Disabled
+# builds exclude the diagnostics implementation, experiment recipes and export modules; normal
+# FS/CS rendering and the application itself are unaffected.
+option(ORCA_ENABLE_RENDER_DIAGNOSTICS "Include render diagnostics (AO benchmark/capture/experiment tooling)" OFF)
+if(ORCA_ENABLE_RENDER_DIAGNOSTICS)
+    list(APPEND SLIC3R_GUI_SOURCES
+        GUI/AO/Diagnostics/AOCaptureWriter.cpp
+        GUI/AO/Diagnostics/AOCaptureWriter.hpp
+        GUI/AO/Diagnostics/AODiagnosticsController.cpp
+        GUI/AO/Diagnostics/AODiagnosticsController.hpp
+        GUI/AO/Diagnostics/AOExperimentRunner.cpp
+        GUI/AO/Diagnostics/AOExperimentRunner.hpp
+        GUI/AO/Diagnostics/GLAOProfiler.cpp
+        GUI/AO/Diagnostics/GLAOProfiler.hpp
+        GUI/AO/Diagnostics/GLAOReadback.cpp
+        GUI/AO/Diagnostics/GLAOReadback.hpp)
+endif()
+
 add_library(libslic3r_gui STATIC ${SLIC3R_GUI_SOURCES})
 if(WIN32 AND SLIC3R_WIDGET_INSPECTOR)
     target_compile_definitions(libslic3r_gui PRIVATE ORCA_WIDGET_INSPECTOR)
+endif()
+if(ORCA_ENABLE_RENDER_DIAGNOSTICS)
+    target_compile_definitions(libslic3r_gui PUBLIC ORCA_RENDER_DIAGNOSTICS=1)
+else()
+    target_compile_definitions(libslic3r_gui PUBLIC ORCA_RENDER_DIAGNOSTICS=0)
 endif()
 target_include_directories(libslic3r_gui PRIVATE Utils ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(libslic3r_gui paho-mqttpp3-static)

@@ -521,6 +521,10 @@ public:
                 bool                                  partly_inside_enable =true
           ) const;
 
+    // Used after AO; the surface pass suppresses the inlined sinking contours.
+    void render_sinking_contours(ERenderType type, const GUI::Camera& camera,
+        std::function<bool(const GLVolume&)> filter_func) const;
+
     // Clear the geometry. Volumes are unregistered from the LOD sharing map
     // (release_volume) before being deleted.
     void clear() { for (auto *v : volumes) { release_volume(v); delete v; } volumes.clear(); }

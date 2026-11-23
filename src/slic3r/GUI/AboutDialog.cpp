@@ -9,7 +9,9 @@
 #include "format.hpp"
 #include "Widgets/Button.hpp"
 
+#include <boost/log/trivial.hpp>
 #include <wx/clipbrd.h>
+#include <wx/ffile.h>
 
 namespace Slic3r {
 namespace GUI {
@@ -101,6 +103,8 @@ void CopyrightsDialog::fill_entries()
         { "GNU gettext",                                    "",      "https://www.gnu.org/software/gettext" },
         { "ImGUI",                                          "",      "https://github.com/ocornut/imgui" },
         { "ImGuizmo",                                       "",      "https://github.com/CedricGuillemet/ImGuizmo" },
+        { "Intel AO rendering algorithms", "Copyright (C) 2016-2021, Intel Corporation",
+          "https://github.com/GameTechDev/XeGTAO" },
         { "Libigl",                                         "",      "https://libigl.github.io" },
         { "libnest2d",                                      "",      "https://github.com/tamasmeszaros/libnest2d" },
         { "lib_fts",                                        "",      "https://www.forrestthewoods.com" },
@@ -118,6 +122,8 @@ void CopyrightsDialog::fill_entries()
         { "Shinyprofiler",                                  "",      "https://code.google.com/p/shinyprofiler" },
         { "SuperSlicer",                                    "",      "https://github.com/supermerill/SuperSlicer" },
         { "TBB",                                            "",      "https://www.intel.cn/content/www/cn/zh/developer/tools/oneapi/onetbb.html" },
+        { "three.js (AO horizon integration)", "Copyright (C) 2010-2025 three.js authors",
+          "https://github.com/mrdoob/three.js" },
         { "wxWidgets",                                      "",      "https://www.wxwidgets.org" },
         { "zlib",                                           "",      "http://zlib.net" },
 
@@ -160,9 +166,24 @@ wxString CopyrightsDialog::get_html_text()
                     "%s<br/>"
                     , entry.lib_name);
 
+        if (!entry.copyright.empty())
+            text += format_wxstr("%s<br/>", entry.copyright);
+
          text += wxString::Format(
                     "<a href=\"%s\">%s</a><br/><br/>"
                     , entry.link, entry.link);
+    }
+
+    // Central resource notices are installed with the application on every platform.
+    wxFFile  notices(from_u8(resources_dir() + "/shaders/third_party_licenses.txt"), "rb");
+    wxString notice_text;
+    if (notices.IsOpened() && notices.ReadAll(&notice_text, wxConvUTF8)) {
+        notice_text.Replace("&", "&amp;");
+        notice_text.Replace("<", "&lt;");
+        notice_text.Replace(">", "&gt;");
+        text += wxString::Format("<br/><b>%s (AO)</b><br/><pre>%s</pre>", _L("License"), notice_text);
+    } else {
+        BOOST_LOG_TRIVIAL(warning) << "Unable to read third-party license notices";
     }
 
     text += wxString(

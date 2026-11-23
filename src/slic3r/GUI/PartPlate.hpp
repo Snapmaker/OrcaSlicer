@@ -450,7 +450,16 @@ public:
     bool contains(const BoundingBoxf3& bb) const;
     bool intersects(const BoundingBoxf3& bb) const;
 
-    void render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_body = false, bool force_background_color = false, HeightLimitMode mode = HEIGHT_LIMIT_NONE, int hover_id = -1, bool render_cali = false, bool show_grid = true);
+    void render(const Transform3d& view_matrix,
+                const Transform3d& projection_matrix,
+                bool               bottom,
+                bool               only_body              = false,
+                bool               force_background_color = false,
+                HeightLimitMode    mode                   = HEIGHT_LIMIT_NONE,
+                int                hover_id               = -1,
+                bool               render_cali            = false,
+                bool               show_grid              = true,
+                SceneRenderStage   stage                  = SceneRenderStage::Legacy);
 
     void set_selected();
     void set_unselected();
@@ -887,7 +896,15 @@ public:
 
     /*rendering related functions*/
     void on_change_color_mode(bool is_dark) { m_is_dark = is_dark; }
-    void render(const Transform3d& view_matrix, const Transform3d& projection_matrix, bool bottom, bool only_current = false, bool only_body = false, int hover_id = -1, bool render_cali = false, bool show_grid = true);
+    void render(const Transform3d& view_matrix,
+                const Transform3d& projection_matrix,
+                bool               bottom,
+                bool               only_current = false,
+                bool               only_body    = false,
+                int                hover_id     = -1,
+                bool               render_cali  = false,
+                bool               show_grid    = true,
+                SceneRenderStage   stage        = SceneRenderStage::Legacy);
     /** @brief Draws every plate polygon with the currently bound shader; used as soft shadow receivers. */
     void RenderShadowReceivers();
 

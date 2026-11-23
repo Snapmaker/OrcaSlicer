@@ -2,6 +2,10 @@
 #define slic3r_GLShader_hpp_
 
 #include <array>
+#include <cstdint>
+#include <initializer_list>
+#include <utility>
+#include <vector>
 #include <string>
 #include <string_view>
 
@@ -43,19 +47,30 @@ public:
     typedef std::array<std::string, static_cast<size_t>(EShaderType::Count)> ShaderSources;
 
 private:
-    std::string m_name;
-    unsigned int m_id{ 0 };
+    std::string                              m_name;
+    unsigned int                             m_id{0};
+    uint64_t                                 m_revision{0};
     std::vector<std::pair<std::string, int>> m_attrib_location_cache;
     std::vector<std::pair<std::string, int>> m_uniform_location_cache;
 
 public:
     ~GLShaderProgram();
 
-    bool init_from_files(const std::string& name, const ShaderFilenames& filenames, const std::initializer_list<std::string_view> &defines = {});
+    bool init_from_files(const std::string&                             name,
+                         const ShaderFilenames&                         filenames,
+                         const std::initializer_list<std::string_view>& defines = {});
     bool init_from_texts(const std::string& name, const ShaderSources& sources);
 
     const std::string& get_name() const { return m_name; }
-    unsigned int get_id() const { return m_id; }
+    unsigned int       get_id() const { return m_id; }
+    uint64_t           get_revision() const { return m_revision; }
+    void               forget_context()
+    {
+        m_id       = 0;
+        m_revision = 0;
+        m_attrib_location_cache.clear();
+        m_uniform_location_cache.clear();
+    }
 
     void start_using() const;
     void stop_using() const;

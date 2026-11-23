@@ -185,6 +185,8 @@ namespace GUI {
         const ColorRGBA& get_color() const { return m_render_data.geometry.color; }
 
         void reset();
+        /** Drops GPU object names after context loss or retirement without issuing OpenGL calls. */
+        void ForgetContext();
         /** Transfers owned GPU buffer IDs to the caller without issuing OpenGL calls. */
         void DetachGpuBuffers(std::vector<unsigned int>& bufferIds);
         /** Returns whether this model currently owns any GPU buffer IDs. */

@@ -3,6 +3,7 @@
 
 #include <wx/popupwin.h>
 #include <wx/timer.h>
+#include <wx/weakref.h>
 
 #include <vector>
 
@@ -51,6 +52,12 @@ private:
     wxRect                 m_std_rect;              // "Standard Mode" row, client coords
     wxRect                 m_custom_rect;           // "Custom Mode" row, client coords
     int                    m_hovered_row { -1 };    // 0 = standard, 1 = custom
+#ifdef __WXGTK__
+    // Top-level window whose wxEVT_ACTIVATE the constructor bound to. The destructor must
+    // unbind from this exact window: by then our parent may already be detached from it, so
+    // wxGetTopLevelParent(GetParent()) can be null. Cleared automatically if it dies first.
+    wxWeakRef<wxWindow>    m_activate_source;
+#endif
 };
 
 }} // namespace Slic3r::GUI

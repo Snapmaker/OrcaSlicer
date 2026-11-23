@@ -2278,6 +2278,31 @@ void TriangleSelector::get_seed_fill_contour_recursive(const int facet_idx, cons
     }
 }
 
+std::vector<int> TriangleSelector::get_facets_indices_by_state(EnforcerBlockerType state) const
+{
+    std::vector<int> out;
+    for (int i = 0; i < m_orig_size_indices; ++i) {
+        // Walk the whole subtree of the original triangle; any leaf in the wanted
+        // state marks the original triangle as selected.
+        bool              has_state = false;
+        std::vector<int>  stack{i};
+        while (! stack.empty()) {
+            const Triangle& tr = m_triangles[stack.back()];
+            stack.pop_back();
+            if (tr.is_split()) {
+                for (int j = 0; j <= tr.number_of_split_sides(); ++j)
+                    stack.push_back(tr.children[j]);
+            } else if (tr.get_state() == state) {
+                has_state = true;
+                break;
+            }
+        }
+        if (has_state)
+            out.push_back(i);
+    }
+    return out;
+}
+
 TriangleSelector::TriangleSplittingData TriangleSelector::serialize() const {
     // Each original triangle of the mesh is assigned a number encoding its state
     // or how it is split. Each triangle is encoded by 4 bits (xxyy) or by

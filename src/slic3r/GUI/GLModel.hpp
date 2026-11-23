@@ -144,6 +144,9 @@ namespace GUI {
     private:
         RenderData m_render_data;
 
+        /** Clears CPU-side geometry and detached GPU bookkeeping without calling OpenGL. */
+        void ClearRenderData();
+
         // By default the vertex and index buffers data are sent to gpu at the first call to render() method.
         // If you need to initialize a model from outside the main thread, so that a call to render() may happen
         // before the initialization is complete, use the methods:
@@ -182,6 +185,10 @@ namespace GUI {
         const ColorRGBA& get_color() const { return m_render_data.geometry.color; }
 
         void reset();
+        /** Transfers owned GPU buffer IDs to the caller without issuing OpenGL calls. */
+        void DetachGpuBuffers(std::vector<unsigned int>& bufferIds);
+        /** Returns whether this model currently owns any GPU buffer IDs. */
+        bool HasGpuBuffers() const { return m_render_data.vbo_id != 0 || m_render_data.ibo_id != 0; }
         void render();
         void render(const std::pair<size_t, size_t>& range);
         void render_instanced(unsigned int instances_vbo, unsigned int instances_count);

@@ -162,6 +162,7 @@ Run individual test suites:
 
 ### Resources and Configuration
 - `resources/profiles/` - Printer and material profiles organized by manufacturer
+- `submodules/Profiles` - Git submodule; source of truth for Snapmaker `filament/`, `machine/`, `process/` presets and `Snapmaker.json`
 - `resources/printers/` - Printer-specific configurations and G-code templates  
 - `resources/images/` - UI icons, logos, calibration images
 - `resources/calib/` - Calibration test patterns and data

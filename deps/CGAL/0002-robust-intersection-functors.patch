@@ -1,0 +1,89 @@
+From: Snapmaker Orca maintainers
+Subject: [PATCH] Make intersection construction functors throw instead of UB on degenerate input
+
+Construct_line_line_intersection_point_3 and
+Construct_plane_line_intersection_point_3 dereferenced the result of
+Intersect_3 guarded only by CGAL_assertion. When the input is degenerate
+(reached in practice through Polygon_mesh_processing corefinement of
+coplanar faces on nearly-degenerate meshes), Intersect_3 returns
+boost::none; in release builds the assert is compiled out and
+boost::get walks a garbage variant until
+boost::detail::variant::forced_return calls a null function pointer
+(reported as a crash in forced_return.hpp:42 / get.hpp:145 /
+function_objects.h:1720 / Lazy.h:639).
+
+Throw std::runtime_error instead so callers (mesh booleans, cut,
+export) can catch and degrade gracefully.
+---
+diff --git a/Kernel_23/include/CGAL/Kernel/function_objects.h b/Kernel_23/include/CGAL/Kernel/function_objects.h
+--- a/Kernel_23/include/CGAL/Kernel/function_objects.h
++++ b/Kernel_23/include/CGAL/Kernel/function_objects.h
+@@ -32,6 +32,7 @@
+ 
+ 
+ #include <cmath> // for Compute_dihedral_angle
++#include <stdexcept> // for Construct_line_line_intersection_point_3 error path
+ 
+ namespace CGAL {
+ 
+@@ -1716,10 +1717,18 @@ namespace CommonKernelFunctors {
+       Line l2 = construct_line(l21, l22);
+ 
+       const auto res = typename K::Intersect_3()(l1,l2);
+-      CGAL_assertion(res!=boost::none);
+-      const Point* e_pt = boost::get<Point>(&(*res));
+-      CGAL_assertion(e_pt!=nullptr);
+-      return *e_pt;
++      if (res) {
++        if (const Point* e_pt = boost::get<Point>(&(*res)))
++          return *e_pt;
++      }
++      // The two lines do not intersect in a single point. With degenerate input
++      // (e.g. PMP corefinement of coplanar faces on a nearly-degenerate mesh)
++      // this is reachable: res is none (or holds a Line for colinear inputs)
++      // and the original assert-protected code dereferenced it, which is UB and
++      // crashed release builds inside boost::get (variant forced_return).
++      // Throw a catchable error instead so callers can degrade gracefully.
++      throw std::runtime_error("CGAL::Construct_line_line_intersection_point_3: "
++                               "the two lines do not intersect in a single point");
+     }
+   };
+ 
+@@ -2115,10 +2124,14 @@ namespace CommonKernelFunctors {
+       Line line = construct_line( l1, l2 );
+ 
+       const auto res = typename K::Intersect_3()(plane,line);
+-      CGAL_assertion(res!=boost::none);
+-      const Point* e_pt = boost::get<Point>(&(*res));
+-      CGAL_assertion(e_pt!=nullptr);
+-      return *e_pt;
++      if (res) {
++        if (const Point* e_pt = boost::get<Point>(&(*res)))
++          return *e_pt;
++      }
++      // Line parallel to the plane or contained in it: no single intersection
++      // point. See Construct_line_line_intersection_point_3 for the rationale.
++      throw std::runtime_error("CGAL::Construct_plane_line_intersection_point_3: "
++                               "the line and the plane do not intersect in a single point");
+     }
+ 
+     Point
+@@ -2128,10 +2141,14 @@ namespace CommonKernelFunctors {
+       Line line = construct_line( l1, l2 );
+ 
+       const auto res = typename K::Intersect_3()(plane,line);
+-      CGAL_assertion(res!=boost::none);
+-      const Point* e_pt = boost::get<Point>(&(*res));
+-      CGAL_assertion(e_pt!=nullptr);
+-      return *e_pt;
++      if (res) {
++        if (const Point* e_pt = boost::get<Point>(&(*res)))
++          return *e_pt;
++      }
++      // Line parallel to the plane or contained in it: no single intersection
++      // point. See Construct_line_line_intersection_point_3 for the rationale.
++      throw std::runtime_error("CGAL::Construct_plane_line_intersection_point_3: "
++                               "the line and the plane do not intersect in a single point");
+     }
+   };
+ 

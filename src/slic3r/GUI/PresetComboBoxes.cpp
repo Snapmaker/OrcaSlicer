@@ -327,7 +327,6 @@ int PresetComboBox::update_ams_color()
     if (m_filament_idx < 0) return -1;
     int idx = selected_ams_filament();
 
-    auto& filaments = wxGetApp().preset_bundle->machine_filaments;
     const ConnectMachineInfo* machineInfo = nullptr;
     if (idx >= 0)
     {
@@ -342,19 +341,6 @@ int PresetComboBox::update_ams_color()
     {
         real_idx = machineInfo->index;
     }
-    else if (idx >= 0)
-    {
-        int tmp = idx;
-        for (auto iter = filaments.begin(); iter != filaments.end(); ++iter) {
-            if (tmp == 0) {
-                real_idx = iter->first;
-                break;
-            }
-
-            tmp--;
-        }
-    }
-    
 
     auto& filament_extruder_map = wxGetApp().app_config->get_filament_extruder_map_ref();
     if (real_idx >= 0) {
@@ -384,29 +370,13 @@ int PresetComboBox::update_ams_color()
     }
     else
     {
-        if (wxGetApp().preset_bundle->machine_filaments.size() > 0)
-        {
-            auto iter = wxGetApp().preset_bundle->machine_filaments.begin();
-            for (size_t i = 0; iter != wxGetApp().preset_bundle->machine_filaments.end() && i < idx; ++i) {
-                ++iter;
-            }
-            if (iter == wxGetApp().preset_bundle->machine_filaments.end())
-            {
-                return -1;
-            }
-            color = iter->second.second;
+        auto& ams_list = wxGetApp().preset_bundle->filament_ams_list;
+        auto  iter     = ams_list.find(idx);
+        if (iter == ams_list.end()) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": ams %1% out of range %2%") % idx % ams_list.size();
+            return -1;
         }
-        else
-        {
-            auto& ams_list = wxGetApp().preset_bundle->filament_ams_list;
-            auto  iter     = ams_list.find(idx);
-            if (iter == ams_list.end())
-            {
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(": ams %1% out of range %2%") % idx % ams_list.size();
-                return -1;
-            }
-            color = iter->second.opt_string("filament_colour", 0u);
-        }
+        color = iter->second.opt_string("filament_colour", 0u);
     }
     const std::string normalizedColor = FilamentColorUtils::NormalizeHexColor(color, "#26A69A");
     if (machineInfo != nullptr && multiColors.empty() && !normalizedColor.empty())
@@ -1400,10 +1370,10 @@ void PlaterPresetComboBox::update()
     if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->is_bbl_vendor())
         add_ams_filaments(into_u8(selected_user_preset), true);
 
-    if (m_type == Preset::TYPE_FILAMENT && wxGetApp().preset_bundle->machine_filaments.size() > 0) {
+    if (m_type == Preset::TYPE_FILAMENT && m_preset_bundle->m_connect_machine_info_list.size() > 0) {
         set_label_marker(Append(separator(L("Machine Filament")), wxNullBitmap));
         auto& filaments         = m_collection->get_presets();
-        auto  machine_nozzles_list = wxGetApp().preset_bundle->m_connect_machine_info_list;
+        auto& machine_nozzles_list = m_preset_bundle->m_connect_machine_info_list;
         m_first_ams_filament    = GetCount();
 
         std::string currentNozzleInfo;
@@ -1420,7 +1390,7 @@ void PlaterPresetComboBox::update()
             std::string filament_name   = machine_nozzles_list[i].filament_info;
             std::string machine_nozzles = machine_nozzles_list[i].nozzle_info;
 
-            // Filter by nozzle for display only; machine_filaments / m_connect_machine_info_list stay from sync (SSWCP).
+            // Filter by nozzle for display only; slot state stays owned by device sync.
             if (currentNozzleInfo != machine_nozzles)
                 continue;
 

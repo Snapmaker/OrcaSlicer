@@ -1,0 +1,11 @@
+{
+  "releaseTag": "v1.10.0",
+  "sha256": {
+    "windows-x64": "5e2cd630c4916501eae5ba75c19811465a24ff264ef6e299a4a8b2ca537175c1",
+    "windows-arm64": "f30f7067813f5de69b001f52c38b5765ad7845d6fa873c38fb55004b0995308c",
+    "macos-x64": "0cbceba1cb72098e538587d08073623e7763d881b9db9198445bdee57562d0d2",
+    "macos-arm64": "bd423fcab5f29ab6f2ba77f91082510fd7df8e4ed49ffe3f4c8d750c0de51dd3",
+    "linux-x64": "5ae8a991f411cab4550d974ffaeafa4054e293f1d9954a86b67af31892b02bea",
+    "linux-arm64": "ff92a611872707f9027687b52a45f9e1f0f0f5a9fd9a79e1b45c52b1ad4857ef"
+  }
+}

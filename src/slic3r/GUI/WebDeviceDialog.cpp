@@ -5,7 +5,7 @@
 #include "SSWCP.hpp"
 #include <wx/sizer.h>
 #include <slic3r/GUI/Widgets/WebView.hpp>
-#include "sentry_wrapper/SentryWrapper.hpp"
+#include "app_common/SentryWrapper.hpp"
 
 namespace Slic3r { namespace GUI {
 
@@ -16,12 +16,11 @@ END_EVENT_TABLE()
 WebDeviceDialog::WebDeviceDialog()
     : wxDialog((wxWindow*)(wxGetApp().mainframe), wxID_ANY, _L("Add Device"))
 {
-    m_device_url = wxString::FromUTF8(LOCALHOST_URL + std::to_string(wxGetApp().get_page_http_port()) +
-                                      "/web/flutter_web/index.html?path=discovery");
+    m_device_url = wxGetApp().gateway_web_url("device_control");
 
     SetBackgroundColour(*wxWHITE);
 
-    // Create blank; run() loads the localized URL once (same pattern as WebPreprintDialog / #679).
+    // Create blank; run() loads the gateway URL once (same pattern as WebPreprintDialog / #679).
     m_browser = WebView::CreateWebView(this, "about:blank");
     if (m_browser == nullptr) {
         wxLogError("Could not init m_browser");
@@ -52,26 +51,31 @@ WebDeviceDialog::WebDeviceDialog()
 
 WebDeviceDialog::~WebDeviceDialog()
 {
+    // Clear the global registration before the wxWidgets base destructor runs,
+    // otherwise later users of wxGetApp().web_device_dialog would dereference
+    // freed memory (Sentry SNAPMAKER_ORCA-21F).
+    if (wxGetApp().web_device_dialog == this) {
+        wxGetApp().web_device_dialog = nullptr;
+    }
+
     SSWCP::on_webview_delete(m_browser);
 }
 
 void WebDeviceDialog::reload()
 {
-    wxString target_url = wxGetApp().get_international_url(m_device_url);
-    load_url(target_url);
+    load_url(m_device_url);
 }
 
 void WebDeviceDialog::load_url(wxString &url)
 {
-    m_browser->LoadURL(url);
+    WebView::LoadUrl(m_browser, url);
     m_browser->Show();
     Layout();
 }
 
 bool WebDeviceDialog::run()
 {
-    wxString target_url = wxGetApp().get_international_url(m_device_url);
-    this->load_url(target_url);
+    this->load_url(m_device_url);
     if (this->ShowModal() == wxID_OK) {
         return true;
     }

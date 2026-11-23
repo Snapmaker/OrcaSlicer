@@ -3278,7 +3278,27 @@ void TabPrint::update()
         if (m_type != Preset::TYPE_MODEL && !wxGetApp().plater()->inside_snapshot_capture())
             wxGetApp().obj_list()->update_and_show_object_settings_item();
 
-        wxGetApp().mainframe->on_config_changed(m_config);
+        // For object-scope tabs (TYPE_MODEL: object / part / layer-range),
+        // m_config is an aggregated "global + object overrides" view (see
+        // TabPrintModel::update_model_config). Forwarding it through
+        // on_config_changed would write object-level values (e.g. one
+        // object's support_filament) into the Plater working config, where
+        // every consumer that expects global values gets polluted - most
+        // visibly the per-plate pre-slice gates, which then block unrelated
+        // plates. Forward the global print tab's config instead: a pure
+        // object edit yields an empty diff (nothing is written), while the
+        // change-notification tail of Plater::on_config_change
+        // (background-process scheduling, dirty title, filament usage
+        // notification) still runs, so object edits keep invalidating the
+        // slice via ModelConfig::touch().
+        if (m_type == Preset::TYPE_MODEL) {
+            Tab* global_print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT);
+            if (global_print_tab != nullptr)
+                wxGetApp().mainframe->on_config_changed(global_print_tab->get_config());
+        }
+        else {
+            wxGetApp().mainframe->on_config_changed(m_config);
+        }
     }
 }
 
@@ -3502,7 +3522,21 @@ void TabPrintModel::reset_model_config()
         notify_changed(config.first);
     }
     update_model_config();
-    wxGetApp().mainframe->on_config_changed(m_config);
+    // m_config is the aggregated "global + object overrides" view; for the
+    // object-scope tabs forwarding it would push object-level values into
+    // the Plater working config (see TabPrint::update). Forward the global
+    // print tab's config so only global values propagate. The plate tab
+    // (TYPE_PLATE) keeps forwarding its own aggregated config: its overrides
+    // (bed type, print sequence) are plate-scope state that the plater
+    // consumes intentionally.
+    if (m_type == Preset::TYPE_MODEL) {
+        Tab* global_print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT);
+        if (global_print_tab != nullptr)
+            wxGetApp().mainframe->on_config_changed(global_print_tab->get_config());
+    }
+    else {
+        wxGetApp().mainframe->on_config_changed(m_config);
+    }
 }
 
 bool TabPrintModel::has_key(std::string const& key)

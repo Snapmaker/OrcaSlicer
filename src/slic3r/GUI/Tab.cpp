@@ -780,6 +780,11 @@ void Tab::update_label_colours()
             else
                 color = &m_modified_label_clr;
         }
+        // value differs from the last saved preset while matching the parent/system
+        // value: keep the modified colour so the label agrees with the revert icon
+        else if ((opt.second & osInitValue) == 0) {
+            color = &m_modified_label_clr;
+        }
         if (opt.first == "printable_area"            ||
             opt.first == "compatible_prints"    || opt.first == "compatible_printers"           ) {
             if (Line* line = get_line(opt.first))
@@ -802,8 +807,8 @@ void Tab::update_label_colours()
             if (translate_category(page->title(), m_type) != title)
                 continue;
 
-            const wxColor *clr = !page->m_is_nonsys_values ? &m_sys_label_clr :
-                page->m_is_modified_values ? &m_modified_label_clr :
+            const wxColor *clr = page->m_is_modified_values ? &m_modified_label_clr :
+                !page->m_is_nonsys_values ? &m_sys_label_clr :
                 (m_type < Preset::TYPE_COUNT ? &m_default_text_clr : &m_modified_label_clr);
 
             m_tabctrl->SetItemTextColour(cur_item, clr == &m_modified_label_clr ? *clr : StateColor(
@@ -855,6 +860,11 @@ void Tab::decorate()
             // value is modified
             else
                 color = &m_modified_label_clr;
+        }
+        // value differs from the last saved preset while matching the parent/system
+        // value: keep the modified colour so the label agrees with the revert icon
+        else if ((opt.second & osInitValue) == 0) {
+            color = &m_modified_label_clr;
         }
         if ((opt.second & osInitValue) != 0)
         {
@@ -1314,8 +1324,9 @@ void Tab::update_changed_tree_ui()
                 }
             }
 
-            const wxColor *clr = sys_page ? (m_is_default_preset ? &m_default_text_clr : &m_sys_label_clr) :
-                                 (modified_page || m_type >= Preset::TYPE_COUNT) ? &m_modified_label_clr : &m_default_text_clr;
+            const wxColor *clr = modified_page ? &m_modified_label_clr :
+                                 sys_page ? (m_is_default_preset ? &m_default_text_clr : &m_sys_label_clr) :
+                                 (m_type >= Preset::TYPE_COUNT) ? &m_modified_label_clr : &m_default_text_clr;
 
             if (page->set_item_colour(clr))
                 m_tabctrl->SetItemTextColour(cur_item, clr == &m_modified_label_clr ? *clr : StateColor(
@@ -3058,6 +3069,7 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
 
         optgroup = page->new_optgroup(L("Special mode"), L"param_special");
         optgroup->append_single_option_line("slicing_mode", "others_settings_special_mode#slicing-mode");
+        optgroup->append_single_option_line("enable_overlap_area_carving");
         optgroup->append_single_option_line("print_sequence", "others_settings_special_mode#print-sequence");
         optgroup->append_single_option_line("print_order", "others_settings_special_mode#intra-layer-order");
         optgroup->append_single_option_line("spiral_mode", "others_settings_special_mode#spiral-vase");
@@ -3502,6 +3514,9 @@ void TabPrintModel::reset_model_config()
     }
     update_model_config();
     wxGetApp().mainframe->on_config_changed(m_config);
+    // Reset erases the overrides directly; the pill tab colour is set only by
+    // notify_object_config_changed(), so refresh it here as the other paths do.
+    wxGetApp().params_panel()->notify_object_config_changed();
 }
 
 bool TabPrintModel::has_key(std::string const& key)
@@ -3537,9 +3552,36 @@ void TabPrintModel::on_value_change(const std::string& opt_key, const boost::any
     // always add object config
     bool set   = true; // *m_config->option(k) != *m_prints.get_selected_preset().config.option(k) || inull != m_null_keys.end();
     if (m_back_to_sys) {
-        for (auto config : m_object_configs)
-            config.second->erase(k);
-        m_all_keys.erase(std::remove(m_all_keys.begin(), m_all_keys.end(), k), m_all_keys.end());
+        // Snapmaker: flow variant.
+        bool keep_override = false;
+        if (m_flow_variant_view && m_flow_variant_view->is_option(k)) {
+            const auto *edited_vec = dynamic_cast<const ConfigOptionVectorBase *>(m_config->option(k, false));
+            const auto *base_vec   = dynamic_cast<const ConfigOptionVectorBase *>(m_prints.get_selected_preset().config.option(k));
+            if (edited_vec != nullptr && base_vec != nullptr && !edited_vec->empty() && !base_vec->empty()) {
+                const std::vector<std::string> edited_vals = edited_vec->vserialize();
+                if (edited_vals.size() >= m_flow_variant_view->modes.size()) {
+                    const std::vector<std::string> base_vals = base_vec->vserialize();
+                    auto slot_at = [](const std::vector<std::string> &vals, size_t i) -> const std::string & {
+                        return vals[std::min(i, vals.size() - 1)];
+                    };
+                    for (size_t i = 0; i < m_flow_variant_view->modes.size(); ++i) {
+                        if (slot_at(edited_vals, i) != slot_at(base_vals, i)) {
+                            keep_override = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (keep_override) {
+            for (auto config : m_object_configs)
+                config.second->apply_only(*m_config, {k});
+            m_all_keys = concat(m_all_keys, {k});
+        } else {
+            for (auto config : m_object_configs)
+                config.second->erase(k);
+            m_all_keys.erase(std::remove(m_all_keys.begin(), m_all_keys.end(), k), m_all_keys.end());
+        }
     } else if (set) {
         for (auto config : m_object_configs)
             config.second->apply_only(*m_config, {k});

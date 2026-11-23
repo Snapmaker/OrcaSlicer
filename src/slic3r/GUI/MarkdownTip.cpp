@@ -5,6 +5,7 @@
 #include "Widgets/WebView.hpp"
 
 #include "libslic3r/Utils.hpp"
+#include "slic3r/Utils/Http.hpp"
 #include "I18N.hpp"
 
 #include <wx/display.h>
@@ -16,26 +17,6 @@ namespace Slic3r { namespace GUI {
 
 // CMGUO
 
-static std::string url_encode(const std::string& value) {
-    std::ostringstream escaped;
-    escaped.fill('0');
-    escaped << std::hex;
-    for (std::string::const_iterator i = value.begin(), n = value.end(); i != n; ++i) {
-        std::string::value_type c = (*i);
-
-        // Keep alphanumeric and other accepted characters intact
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            escaped << c;
-            continue;
-        }
-
-        // Any other characters are percent-encoded
-        escaped << std::uppercase;
-        escaped << '%' << std::setw(2) << int((unsigned char)c);
-        escaped << std::nouppercase;
-    }
-    return escaped.str();
-}
 /*
  * Edge browser not support WebViewHandler
  * 
@@ -132,7 +113,12 @@ bool MarkdownTip::ShowTip(wxPoint pos, std::string const &tip, std::string const
             BOOST_LOG_TRIVIAL(info) << "MarkdownTip::ShowTip: hide soon on empty content.";
             return false;
         }
-        auto script = "window.showMarkdown('" + url_encode(content) + "', true);";
+        // Http::url_encode escapes quotes and other URL-unsafe characters so the
+        // content cannot terminate the JS string literal. Its fail-open path (curl
+        // cannot initialise, returns the input unchanged) is a pathological case
+        // and does not skip the injection.
+        const std::string encoded = Http::url_encode(content);
+        auto script = "window.showMarkdown('" + encoded + "', true);";
         if (!_pendingScript.empty()) {
             _pendingScript = script;
         }

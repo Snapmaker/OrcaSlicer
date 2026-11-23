@@ -8,6 +8,27 @@
 
 namespace Slic3r {
 
+/// Build a 1-based old-to-new filament id remap for a single deletion.
+///
+/// `replace_1based` is the merge target expressed in post-deletion numbering.
+/// Zero means there is no merge target, so the deleted filament maps to the
+/// "no filament" default used by remap_filament_config_id().
+inline std::vector<unsigned int> build_delete_filament_id_remap(size_t old_total_filaments,
+                                                                unsigned int deleted_1based,
+                                                                unsigned int replace_1based)
+{
+    std::vector<unsigned int> id_remap(old_total_filaments + 1, 0);
+    for (unsigned int old_id = 1; old_id <= unsigned(old_total_filaments); ++old_id) {
+        if (old_id == deleted_1based)
+            id_remap[old_id] = replace_1based;
+        else if (old_id > deleted_1based)
+            id_remap[old_id] = old_id - 1;
+        else
+            id_remap[old_id] = old_id;
+    }
+    return id_remap;
+}
+
 /// Feature-filament option keys that can be overridden at object or volume level.
 inline const std::vector<std::string> &mixed_filament_feature_keys()
 {
@@ -86,6 +107,35 @@ inline void remap_dynamic_config_feature_filament_ids(DynamicPrintConfig &config
         if (mapped_id == 0) {
             if (old_id > 0)
                 config.erase(key);
+        } else {
+            config.set(key, static_cast<int>(mapped_id));
+        }
+    }
+}
+
+/// Remap feature-filament keys in a complete DynamicPrintConfig such as an
+/// edited process preset. Unlike partial ModelConfig stores, complete configs
+/// must keep every option present: UI consumers assume the keys exist and call
+/// opt_int()/opt_bool() without null checks. When the referenced filament is
+/// deleted without a merge target, reset the key to its defined default
+/// instead of erasing it.
+inline void remap_complete_config_feature_filament_ids(DynamicPrintConfig &config,
+                                                       const std::vector<unsigned int> &id_remap,
+                                                       size_t total_filaments)
+{
+    for (const std::string &key : mixed_filament_feature_keys()) {
+        if (!config.has(key))
+            continue;
+
+        const int old_id = config.opt_int(key);
+        const unsigned int mapped_id = remap_filament_config_id(old_id, id_remap, total_filaments);
+        if (mapped_id == 0) {
+            if (old_id > 0) {
+                const ConfigOptionDef *option_def = print_config_def.get(key);
+                const auto *default_option = option_def == nullptr ? nullptr
+                    : dynamic_cast<const ConfigOptionInt *>(option_def->default_value.get());
+                config.set(key, default_option != nullptr ? default_option->value : 0);
+            }
         } else {
             config.set(key, static_cast<int>(mapped_id));
         }

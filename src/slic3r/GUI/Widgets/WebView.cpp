@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <boost/log/trivial.hpp>
 
+#include <wx/weakref.h>
 #include <wx/webviewarchivehandler.h>
 #include <wx/webviewfshandler.h>
 #if wxUSE_WEBVIEW_EDGE
@@ -27,6 +28,7 @@
 #include <objbase.h>
 #include <WebView2.h>
 #include <Shellapi.h>
+#include <wrl/event.h>
 #include <slic3r/Utils/Http.hpp>
 #elif defined __linux__
 #include <gtk/gtk.h>
@@ -120,7 +122,41 @@ static wxString PreserveWebViewEngineUserAgent(const wxString &requestedUserAgen
 class WebViewEdge : public wxWebViewEdge
 {
 public:
-    bool SetUserAgent(const wxString &userAgent)
+    bool AddScriptMessageHandler(const wxString& name) override
+    {
+        if (m_bridgeScriptState != BridgeScriptState::Idle) {
+            return name == m_scriptMessageHandlerName && m_bridgeScriptState != BridgeScriptState::Failed;
+        }
+
+        m_scriptMessageHandlerName = name;
+        m_bridgeScriptState        = BridgeScriptState::Waiting;
+
+        if (!wxWebViewEdge::AddScriptMessageHandler(name)) {
+            // Keep navigation fail-open if wxWidgets cannot register its native
+            // message handler. Otherwise LoadURL() below would strand the page.
+            MarkBridgeScriptReady(false);
+            return false;
+        }
+
+        ScheduleBridgeScriptInstallation();
+        return true;
+    }
+
+    void LoadURL(const wxString& url) override
+    {
+        // wxWidgets registers its Edge bridge with an async document-created
+        // script. Keep the first real navigation pending until registration has
+        // completed, so page scripts cannot run before window.wx is installed.
+        if ((m_bridgeScriptState == BridgeScriptState::Idle || m_bridgeScriptState == BridgeScriptState::Waiting) &&
+            url != wxString("about:blank")) {
+            m_pendingURL = url;
+            return;
+        }
+
+        wxWebViewEdge::LoadURL(url);
+    }
+
+    bool SetUserAgent(const wxString& userAgent)
     {
         bool dark = userAgent.Contains("dark");
         SetColorScheme(dark ? COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK : COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT);
@@ -191,6 +227,115 @@ public:
         wxWebViewEdge::DoGetClientSize(x, y);
     };
 private:
+    enum class BridgeScriptState
+    {
+        Idle,
+        Waiting,
+        Ready,
+        Failed,
+    };
+
+    static constexpr int MAX_BRIDGE_SCRIPT_INSTALL_ATTEMPTS = 500;
+
+    void ScheduleBridgeScriptInstallation()
+    {
+        if (m_bridgeScriptState != BridgeScriptState::Waiting)
+            return;
+
+        if (!m_bridgeScriptTimerBound) {
+            m_bridgeScriptTimer.Bind(wxEVT_TIMER, &WebViewEdge::OnBridgeScriptTimer, this);
+            m_bridgeScriptTimerBound = true;
+        }
+
+        if (++m_bridgeScriptInstallAttempts > MAX_BRIDGE_SCRIPT_INSTALL_ATTEMPTS) {
+            wxLogWarning("Timed out waiting for the WebView2 backend after %d attempts", MAX_BRIDGE_SCRIPT_INSTALL_ATTEMPTS);
+            MarkBridgeScriptReady(false);
+            return;
+        }
+
+        if (!m_bridgeScriptTimer.Start(20, wxTIMER_ONE_SHOT)) {
+            wxLogError("Could not start the WebView2 script-message bridge timer");
+            MarkBridgeScriptReady(false);
+        }
+    }
+
+    void OnBridgeScriptTimer(wxTimerEvent &event)
+    {
+        (void) event;
+        InstallBridgeScript();
+    }
+
+    void InstallBridgeScript()
+    {
+        if (m_bridgeScriptState != BridgeScriptState::Waiting)
+            return;
+
+        ICoreWebView2 *webView2 = static_cast<ICoreWebView2 *>(GetNativeBackend());
+        if (webView2 == nullptr) {
+            ScheduleBridgeScriptInstallation();
+            return;
+        }
+
+        const wxString script = wxString::Format("if (window.chrome && window.chrome.webview) window.%s = window.chrome.webview;",
+                                                 m_scriptMessageHandlerName);
+        wxWeakRef<WebViewEdge> weak_self(this);
+        const HRESULT hr = webView2->AddScriptToExecuteOnDocumentCreated(script.wc_str(),
+            Microsoft::WRL::Callback<ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler>(
+                [weak_self](HRESULT errorCode, LPCWSTR scriptId) -> HRESULT {
+                    (void) scriptId;
+                    if (WebViewEdge *self = weak_self.get()) {
+                        BOOST_LOG_TRIVIAL(warning) << "[FLUTTER_FLOW] [webview-bridge] [register_callback] handler="
+                                                << self->m_scriptMessageHandlerName.ToUTF8().data() << " hr=" << errorCode;
+                        self->MarkBridgeScriptReady(SUCCEEDED(errorCode));
+                    }
+                    return S_OK;
+                }).Get());
+        if (FAILED(hr)) {
+            wxLogError("Could not register the WebView2 script-message bridge (0x%08lx)", hr);
+            MarkBridgeScriptReady(false);
+        }
+    }
+
+    void MarkBridgeScriptReady(bool registered)
+    {
+        if (m_bridgeScriptState != BridgeScriptState::Waiting)
+            return;
+
+        if (!registered)
+            m_bridgeScriptState = BridgeScriptState::Failed;
+        else
+            m_bridgeScriptState = BridgeScriptState::Ready;
+
+        if (!registered) {
+            m_bridgeScriptTimer.Stop();
+            ReportBridgeScriptFailure();
+        }
+
+        if (!m_pendingURL.empty()) {
+            const wxString url = std::move(m_pendingURL);
+            m_pendingURL.clear();
+            wxWebViewEdge::LoadURL(url);
+        }
+    }
+
+    void ReportBridgeScriptFailure()
+    {
+        const wxString message = "WebView2 script-message bridge registration failed; opening the page without native messaging";
+        BOOST_LOG_TRIVIAL(error) << message.ToUTF8().data();
+
+        wxWebViewEvent event(wxEVT_WEBVIEW_ERROR, GetId(), m_pendingURL, message,
+                             wxWEBVIEW_NAV_ACTION_NONE, m_scriptMessageHandlerName);
+        event.SetEventObject(this);
+        event.SetInt(wxWEBVIEW_NAV_ERR_OTHER);
+        wxQueueEvent(GetEventHandler(), event.Clone());
+    }
+
+    wxString m_scriptMessageHandlerName;
+    wxString m_pendingURL;
+    wxTimer m_bridgeScriptTimer;
+    BridgeScriptState m_bridgeScriptState{BridgeScriptState::Idle};
+    bool m_bridgeScriptTimerBound{false};
+    int m_bridgeScriptInstallAttempts{0};
     wxString pendingUserAgent;
     COREWEBVIEW2_PREFERRED_COLOR_SCHEME pendingColorScheme = COREWEBVIEW2_PREFERRED_COLOR_SCHEME_AUTO;
 };
@@ -437,8 +582,8 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         webView->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
 #ifdef __WIN32__
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52", SLIC3R_VERSION, 
-            Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
+                                               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52",
+                                               SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         // We register the wxfs:// protocol for testing purposes
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("bbl")));

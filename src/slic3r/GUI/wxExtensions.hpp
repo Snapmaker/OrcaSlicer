@@ -16,7 +16,8 @@
 
 #include <vector>
 #include <functional>
-#include "BitmapCache.hpp"
+#include <widgets/BitmapCache.hpp>
+#include <widgets/ScalableBitmap.hpp>
 #include "Widgets/PopupWindow.hpp"
 
 #ifdef __WXMSW__
@@ -54,23 +55,6 @@ int     em_unit(wxWindow* win);
 int     mode_icon_px_size();
 
 wxBitmap create_menu_bitmap(const std::string& bmp_name);
-
-// BBS: support resize by fill border
-#if 1
-wxBitmap create_scaled_bitmap(const std::string& bmp_name, wxWindow *win = nullptr,
-    const int px_cnt = 16, const bool grayscale = false,
-    const std::string& new_color = std::string(), // color witch will used instead of orange
-    const bool menu_bitmap = false, const bool resize = false,
-    const bool bitmap2 = false,// for create_scaled_bitmap2
-    const std::vector<std::string>& array_new_color = std::vector<std::string>());
-//used for semi transparent material
-wxBitmap create_scaled_bitmap2(const std::string& bmp_name_in, Slic3r::GUI::BitmapCache& cache, wxWindow* win = nullptr,
-    const int px_cnt = 16, const bool grayscale = false, const bool resize = false,
-    const std::vector<std::string>& array_new_color = std::vector<std::string>()); // color witch will used instead of orange
-#else
-wxBitmap create_scaled_bitmap(const std::string& bmp_name, wxWindow *win = nullptr, 
-    const int px_cnt = 16, const bool grayscale = false, const bool resize = false);
-#endif
 
 wxBitmap* get_default_extruder_color_icon(bool thin_icon = false);
 std::vector<wxBitmap *> get_extruder_color_icons(bool thin_icon = false);
@@ -144,46 +128,6 @@ public:
     virtual void		OnKeyEvent(wxKeyEvent& evt);
     void				OnDataViewTreeCtrlSelection(wxCommandEvent& evt);
     void				SetItemsCnt(int cnt) { m_cnt_open_items = cnt; }
-};
-
-
-// ----------------------------------------------------------------------------
-// ScalableBitmap
-// ----------------------------------------------------------------------------
-
-class ScalableBitmap
-{
-public:
-    ScalableBitmap() {};
-    ScalableBitmap( wxWindow *parent,
-                    const std::string& icon_name = "",
-                    const int px_cnt = 16, 
-                    const bool grayscale = false,
-                    const bool resize = false,
-                    const bool bitmap2 = false,
-                    const std::vector<std::string>& new_color = std::vector<std::string>());// BBS: support resize by fill border
-
-    ~ScalableBitmap() {}
-
-    wxSize  GetBmpSize() const;
-    int     GetBmpWidth() const;
-    int     GetBmpHeight() const;
-
-    void                msw_rescale();
-
-    const wxBitmap&     bmp() const { return m_bmp; }
-    wxBitmap&           bmp()       { return m_bmp; }
-    const std::string&  name() const{ return m_icon_name; }
-
-    int                 px_cnt()const           {return m_px_cnt;}
-
-private:
-    wxWindow*       m_parent{ nullptr };
-    wxBitmap        m_bmp = wxBitmap();
-    std::string     m_icon_name = "";
-    int             m_px_cnt {16};
-    bool            m_grayscale{ false };
-    bool            m_resize{ false };
 };
 
 

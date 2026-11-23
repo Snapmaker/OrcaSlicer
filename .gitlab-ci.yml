@@ -1,3 +1,17 @@
+# Minimal pipeline for the widgets extraction: keep src/widgets decoupled
+# from libslic3r_gui. Extend with build/test jobs as needed.
+# Gate logic shared with okr_q4: scripts/check_widgets_deps.py (single source).
+# The only instance runner ("45-docker-shared") has run_untagged=false
+# -> jobs MUST carry tags: [ shared ].
+stages:
+  - test
+
+widgets-deps-check:
+  stage: test
+  image: python:3.12-slim
+  tags: [ shared ]
+  script:
+    - python scripts/check_widgets_deps.py
 # AI harness review job - runs on the local project runner (tag: ai-review).
 # Requires masked CI/CD variables:
 #   AI_REVIEW_GITLAB_TOKEN  - project access token with api scope (Reporter+)
@@ -32,6 +46,24 @@ ai_review:
     - git clone --depth 1 --branch $env:DG_REF "http://oauth2:$($env:DG_CLONE_TOKEN)@gitlab.s.com/snapmaker_orca/dev-guidelines.git" dg
     - '& $env:PYEXE dg/scripts/ai_review_gitlab.py'
 
+
+# Lightweight lifecycle regression checks also run on every merge request.
+watcher_lifecycle_tests:
+  tags: [orca-linux-test]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  timeout: 5m
+  variables:
+    GIT_LFS_SKIP_SMUDGE: "1"
+    GIT_SUBMODULE_STRATEGY: none
+  script:
+    - cmake -S tests/macos -B build-watcher-tests -G Ninja
+    - cmake --build build-watcher-tests --parallel 2
+    - ctest --test-dir build-watcher-tests --output-on-failure --output-junit results.xml
+  artifacts:
+    when: always
+    reports:
+      junit: build-watcher-tests/results.xml
 
 # Full non-GUI Release suite. Test failures gate this job; JUnit drives the
 # GitLab Tests tab and the HTML artifact is for human review.

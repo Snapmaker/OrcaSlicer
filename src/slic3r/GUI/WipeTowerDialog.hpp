@@ -53,6 +53,20 @@ public:
     std::vector<float> read_matrix_values();
     std::vector<float> read_extruders_values();
     void toggle_advanced(bool user_action = false);
+    /// Re-measure this panel and resize/re-pin the dialog that hosts it (see
+    /// fit_wiping_dialog_to_display() in WipeTowerDialog.cpp).
+    ///
+    /// Called from WipingDialog::on_dpi_changed(): the panel's DIP sizes are frozen when it is
+    /// constructed (ITEM_WIDTH() and the FromDIP constants are evaluated once), but the display
+    /// work area and the DIP floors change with the scale factor, so the fitted size has to be
+    /// recomputed.
+    ///
+    /// No page-switch caller is needed: toggle_advanced() is called once from the constructor
+    /// without @c user_action and nothing else calls it, so the visible page never changes and
+    /// the panel's content size stays the same while the dialog is open.
+    ///
+    /// Does nothing when the expected viewport -> dialog hierarchy is not found. GUI thread only.
+    void refit_in_dialog();
     void create_panels(wxWindow* parent, const int num);
     void calc_flushing_volumes();
     void msw_rescale();

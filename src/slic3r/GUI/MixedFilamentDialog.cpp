@@ -437,12 +437,12 @@ void MixedFilamentDialog::build_ui()
                     m_match_target_picker->Refresh();
                     if (m_match_hex_input)
                         m_match_hex_input->ChangeValue(c.GetAsString(wxC2S_HTML_SYNTAX).Mid(1));
+                    m_match_hex_applied = c; // programmatic write: field now matches c
                     if (m_match_panel) m_match_panel->set_target_color(c);
                     if (m_match_hex_error) {
                         m_match_hex_error = false;
                         if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
-                        if (m_error_panel) m_error_panel->Hide();
-                        if (m_btn_confirm) m_btn_confirm->Enable();
+                        update_compatibility_warning();
                         Layout();
                     }
                 }
@@ -492,31 +492,25 @@ void MixedFilamentDialog::build_ui()
         m_match_hex_input->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         m_match_hex_input->SetBackgroundColour(StateColor::darkModeColorFor(wxColour("#FFFFFF")));
         m_match_hex_input->SetMaxLength(6);
+        m_match_hex_applied = default_target; // field opens showing this target
         // Prevent wxEVT_TEXT_ENTER from propagating to dialog default button
         m_match_hex_input->Bind(wxEVT_TEXT_ENTER, [this](wxCommandEvent&) {
-            wxString val = m_match_hex_input->GetValue();
-            val.Trim(true).Trim(false);
-            wxColour parsed;
-            if (try_parse_color_match_hex(val, parsed)) {
-                m_match_hex_error = false;
-                if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
-                if (m_error_panel) m_error_panel->Hide();
-                if (m_btn_confirm) m_btn_confirm->Enable();
-                Layout();
-                if (m_match_target_picker) { m_match_target_picker->SetBackgroundColour(parsed); m_match_target_picker->Refresh(); }
-                if (m_match_panel) m_match_panel->set_target_color(parsed);
-            } else {
-                m_match_hex_error = true;
-                if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
-                set_error(_L("Please enter a valid 6-digit Hex value."));
-            }
+            validate_match_hex();
+        });
+        // Commit on focus loss so a hex value edited without Enter still applies.
+        m_match_hex_input->Bind(wxEVT_KILL_FOCUS, [this](wxFocusEvent& event) {
+            validate_match_hex();
+            event.Skip();
         });
         m_match_hex_input->Bind(wxEVT_TEXT, [this](wxCommandEvent&) {
             if (m_match_hex_error) {
                 m_match_hex_error = false;
                 if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
-                if (m_error_panel) m_error_panel->Hide();
-                if (m_btn_confirm) m_btn_confirm->Enable();
+                // Re-evaluate the gates instead of blindly re-enabling: the error
+                // panel is shared with the compatibility banner, so clearing the
+                // hex error must let that banner's owner re-show it and keep OK
+                // disabled when the filament set is still incompatible.
+                update_compatibility_warning();
                 Layout();
             }
         });
@@ -1282,6 +1276,11 @@ void MixedFilamentDialog::build_ui()
     m_btn_confirm->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
         if (m_current_mode == MODE_CYCLE) {
             validate_cycle_pattern();
+            if (!m_btn_confirm->IsEnabled()) return;
+        }
+        if (m_current_mode == MODE_MATCH) {
+            validate_match_hex();
+            if (m_match_hex_error) return;
             if (!m_btn_confirm->IsEnabled()) return;
         }
         collect_result();
@@ -2847,8 +2846,8 @@ void MixedFilamentDialog::build_swatch_grid()
                     }
                 }
                 if (m_match_gradient_selector && cand.n_rows >= 3 && m_match_tri_indices.size() >= 2) {
-                    int ia = std::clamp(m_match_tri_indices[0], 0, (int)m_filament_colours.size() - 1);
-                    int ib = std::clamp(m_match_tri_indices[1], 0, (int)m_filament_colours.size() - 1);
+                    int ia = std::clamp(cand.rows[0], 0, (int)m_filament_colours.size() - 1);
+                    int ib = std::clamp(cand.rows[1], 0, (int)m_filament_colours.size() - 1);
                     m_match_gradient_selector->set_colors(
                         parse_mixed_color(m_filament_colours[ia]),
                         parse_mixed_color(m_filament_colours[ib]));
@@ -3039,6 +3038,7 @@ void MixedFilamentDialog::on_mode_changed(int mode_index)
             }
             if (m_match_target_picker) m_match_target_picker->SetBackgroundColour(default_target);
             if (m_match_hex_input) m_match_hex_input->ChangeValue(default_target.GetAsString(wxC2S_HTML_SYNTAX).Mid(1));
+            m_match_hex_applied = default_target; // programmatic write: field now matches it
             m_match_state_persisted = true;
             rebuild_match_legend();
         }
@@ -3254,6 +3254,45 @@ void MixedFilamentDialog::validate_cycle_pattern()
         m_cycle_card->Thaw();
         m_cycle_card->Refresh();
     }
+}
+
+// Commit the match-mode target hex field: apply it to the picker/panel when it
+// parses and differs from the last applied target, or flag the error state
+// otherwise. Shared by the Enter handler, the focus-loss handler and the OK
+// button (main thread only, GUI state access).
+void MixedFilamentDialog::validate_match_hex()
+{
+    if (!m_match_hex_input) return;
+
+    wxString val = m_match_hex_input->GetValue();
+    val.Trim(true).Trim(false);
+    wxColour parsed;
+    if (!try_parse_color_match_hex(val, parsed)) {
+        m_match_hex_error = true;
+        if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
+        set_error(_L("Please enter a valid 6-digit Hex value."));
+        return;
+    }
+
+    m_match_hex_error = false;
+    if (m_match_hex_wrapper) m_match_hex_wrapper->Refresh();
+
+    // An unchanged target must not commit: re-applying it would re-issue a
+    // search for the stale field text (overwriting the panel's target and the
+    // restored tri state) and would clear an unrelated error banner (e.g. the
+    // filament-compatibility one) without re-evaluating it.
+    if (parsed == m_match_hex_applied) return;
+
+    m_match_hex_applied = parsed;
+    if (m_match_target_picker) {
+        m_match_target_picker->SetBackgroundColour(parsed);
+        m_match_target_picker->Refresh();
+    }
+    if (m_match_panel) m_match_panel->set_target_color(parsed);
+    // Re-evaluate the dialog gates instead of blindly enabling: the compatibility
+    // check re-shows its own banner and disables OK when needed.
+    update_compatibility_warning();
+    Layout();
 }
 
 void MixedFilamentDialog::update_preview()

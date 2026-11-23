@@ -3,6 +3,8 @@
 
 #include "DeviceManager.hpp"
 
+#include <wx/dataview.h>
+
 namespace Slic3r { 
 namespace GUI {
 

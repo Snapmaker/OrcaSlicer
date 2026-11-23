@@ -5,6 +5,7 @@
 #include "libslic3r/ProjectTask.hpp"
 #include "DeviceManager.hpp"
 #include "GUI.hpp"
+#include "slic3r/GUI/wxExtensions.hpp"  // ImageTransientPopup（原经传递引入，显式化）
 #include <wx/panel.h>
 #include <wx/bitmap.h>
 #include <wx/image.h>

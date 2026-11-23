@@ -23,6 +23,9 @@
 #include "../Utils/PrintHost.hpp"
 #include "slic3r/GUI/SSWCP.hpp"
 #include "slic3r/GUI/PrinterWebView.hpp"
+#ifdef __APPLE__
+#include "slic3r/Utils/MacUninstallWatcher.hpp"
+#endif
 #include <wx/app.h>
 #include <wx/colour.h>
 #include <wx/font.h>
@@ -37,6 +40,7 @@
 #include <stack>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
@@ -241,6 +245,40 @@ public:
     }
 };
 
+/**
+ * One entry of GUI_App's colour-mode bookkeeping: the colour a window had before it was
+ * darkened, plus what the dark pass actually wrote.
+ *
+ * `original` is restored on the way back only while the window still carries `applied` - the
+ * value this walk wrote. Something else can overwrite a colour during a dark session
+ * (StateColor-driven widgets do it themselves, e.g. SpinInput::Enable() paints the disabled
+ * palette into its text control), and rewriting `original` then would put the colour of the
+ * previous state back on the widget. When `applied` no longer matches, the value whoever wrote
+ * it last is kept and only run through StateColor::lightModeColorFor(): that maps a dark colour
+ * back to its light counterpart, which is identity for a colour that has no dark counterpart -
+ * a widget whose StateColor carries no dark entry already holds the light value.
+ *
+ * `handle` is the identity used to answer "is this entry about the window I found?". Unlike
+ * the colour values (which are shared by many windows: every label without an own colour is
+ * darkened to the same one) it usually distinguishes a recycled address from the original
+ * window. It is a mitigation, not a proof - MSW reuses HWND values - so an address and its
+ * handle both being recycled is accepted as a (low probability) wrong-colour case.
+ * An entry recorded while the window had no handle (0) cannot be identified at all and is
+ * discarded on the way back rather than trusted; that window then goes through
+ * StateColor::lightModeColorFor() like a window that was never recorded.
+ *
+ * `theme_enabled` remembers wxWindowBase::GetThemeEnabled(): clearing the explicit colours
+ * makes the wx setters call SetThemeEnabled(true), which a freshly created window does not
+ * have (it starts with false), so the value is put back when the colours are cleared.
+ */
+struct DarkModeColourReminder
+{
+    wxColour  original;                    ///< Colour before darkening; invalid = the window had no own colour.
+    wxColour  applied;                     ///< Colour this walk wrote; the restore trusts `original` only while it matches.
+    wxUIntPtr handle{ 0 };                 ///< Native handle when recorded (0 = the window had none yet).
+    bool      theme_enabled{ false };      ///< GetThemeEnabled() before the window was touched.
+};
+
 class GUI_App : public wxApp
 {
 public:
@@ -374,6 +412,39 @@ private:
     boost::thread    m_sync_update_thread;
     std::shared_ptr<int> m_user_sync_token;
     bool             m_is_dark_mode{ false };
+    // Colours a window had before it was re-coloured for dark mode. StateColor's
+    // light<->dark table is not one-to-one (several light colours share one dark
+    // value), so mapping the dark colour back picks a neighbour and leaves tinted
+    // strips behind, e.g. on the labels of the Preferences page. Restoring exactly
+    // what we replaced keeps a light/dark round trip lossless.
+    // See DarkModeColourReminder for how an entry is tied to a window. An invalid
+    // `original` means "the window had no own colour" and is restored by clearing the
+    // explicit colour again.
+    std::unordered_map<wxWindow*, DarkModeColourReminder> m_dark_mode_orig_bg;
+    std::unordered_map<wxWindow*, DarkModeColourReminder> m_dark_mode_orig_fg;
+    // Windows whose wxEVT_DESTROY handler has already been bound. A separate set is
+    // needed because the colour maps above are emptied on the way back to light, so
+    // "no entry" cannot be used to mean "not bound yet" - that would bind one more
+    // handler per dark/light cycle. Entries are removed by the destroy handler, and by the
+    // pruning step at the end of a colour-mode switch walk (Windows only, where the walk
+    // visits every live window). A stale colour entry does not drop the marker: the marker
+    // describes the handler attached to that address, not the entry.
+    //
+    // Residual, accepted: if our handler never ran for an address (a later handler that does
+    // not Skip() suppressed it - the InfoDialog handler in GUI_App.cpp:2852 is one) and the
+    // address is reused, the new window does not get its own handler and its colour entries
+    // cannot be erased at that address. On Windows the next switch walk prunes them; on the
+    // other ports the address stays like that for the rest of the process (bounded by the
+    // number of such addresses, and the entries are only ever compared, never dereferenced).
+    std::unordered_set<wxWindow*> m_dark_mode_bound;
+    // Tracks the OK/Cancel buttons whose hover/focus handlers UpdateDarkUI() has already
+    // bound. Those four handlers call back into a captured lambda that re-applies the
+    // button's colours, and wx cannot unbind a lambda, so without this guard every pass of
+    // the walk would add another four. The walk visits every live window on each colour-mode
+    // switch (and, on Windows, every top level window), so the count would otherwise grow
+    // with the number of switches. Cleanup follows m_dark_mode_bound: the destroy handler
+    // erases the entry and the Windows pruning step drops addresses the walk no longer sees.
+    std::unordered_set<wxWindow*> m_mark_button_bound;
     bool             m_adding_script_handler { false };
     bool             m_side_popup_status{false};
     bool             m_show_http_errpr_msgdlg{false};
@@ -864,6 +935,9 @@ private:
     boost::optional<Semver> m_last_config_version;
     bool                    m_config_corrupted { false };
     std::string             m_open_method;
+#ifdef __APPLE__
+    MacUninstallWatcherRegistration m_uninstall_watcher_registration;
+#endif
     Gateway::AccountSnapshot   m_gateway_account;
     std::atomic<std::uint64_t> m_gateway_account_refresh_generation{0};
     std::vector<std::thread>   m_gateway_account_refresh_workers;

@@ -1,0 +1,37 @@
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/widgets/**'
+      - 'scripts/check_widgets_deps.py'
+      - 'scripts/widgets_boundary_config.json'
+      - 'scripts/widgets_gui_allowlist.txt'
+      - '.github/workflows/widgets-deps-gate.yml'
+  pull_request:
+    paths:
+      - 'src/widgets/**'
+      - 'scripts/check_widgets_deps.py'
+      - 'scripts/widgets_boundary_config.json'
+      - 'scripts/widgets_gui_allowlist.txt'
+      - '.github/workflows/widgets-deps-gate.yml'
+  workflow_dispatch: # allows for manual dispatch
+
+name: "Widgets deps gate"
+permissions: {}
+
+jobs:
+  widgets-deps-check:
+    name: No libslic3r_gui includes in src/widgets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # KR3: GitHub mirror of the .gitlab-ci.yml widgets-deps-check job;
+      # same script, so local / GitLab CI / GitHub always agree.
+      - name: Check widgets decoupling from libslic3r_gui
+        run: python scripts/check_widgets_deps.py

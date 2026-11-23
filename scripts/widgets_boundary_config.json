@@ -1,0 +1,10 @@
+{
+  "_comment": "Widgets decoupling boundary (KR3). Consumed by scripts/check_widgets_deps.py; allowlist_file keeps the transition header allowlist (delete lines as includes get extracted). Paths are repo-root-relative with forward slashes.",
+
+  "watch_dir": "src/widgets",
+  "include_check": {
+    "forbidden_substring": "slic3r/GUI/",
+    "scan_extensions": [".h", ".hpp", ".hh", ".c", ".cpp", ".cc", ".cxx", ".m", ".mm"]
+  },
+  "allowlist_file": "scripts/widgets_gui_allowlist.txt"
+}

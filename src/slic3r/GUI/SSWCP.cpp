@@ -2671,12 +2671,17 @@ nlohmann::json SSWCP::build_filament_mapping_json(const std::string& filename, c
             if (const auto* filament_colour_opt = full_config.option<ConfigOptionStrings>("filament_colour"))
                 filament_count = std::max(filament_count, filament_colour_opt->values.size());
             filament_types.reserve(filament_count);
+            const auto*        filament_is_support_opt = full_config.option<ConfigOptionBools>("filament_is_support");
+            std::vector<int>   filament_is_support(filament_count, 0);
             for (size_t i = 0; i < filament_count; ++i) {
                 std::string filament_type = filament_type_opt->get_at(int(i));
                 boost::trim(filament_type);
                 filament_types.emplace_back(std::move(filament_type));
+                if (filament_is_support_opt != nullptr && i < filament_is_support_opt->values.size() && filament_is_support_opt->values[i])
+                    filament_is_support[i] = 1;
             }
             response["filament_type"] = filament_types;
+            response["filament_is_support"] = filament_is_support;
         }
 
         SSWCPProtocol::append_flow_type_fields(response, full_config, GUI::FlowType::nozzle_volume_types());
@@ -2898,12 +2903,17 @@ void SSWCP_MachineOption_Instance::sw_GetFileFilamentMapping()
             }
 
             filament_types.reserve(filament_count);
+            const auto*      filament_is_support_opt = full_config.option<ConfigOptionBools>("filament_is_support");
+            std::vector<int> filament_is_support(filament_count, 0);
             for (size_t i = 0; i < filament_count; ++i) {
                 std::string filament_type = filament_type_opt->get_at(int(i));
                 boost::trim(filament_type);
                 filament_types.emplace_back(std::move(filament_type));
+                if (filament_is_support_opt != nullptr && i < filament_is_support_opt->values.size() && filament_is_support_opt->values[i])
+                    filament_is_support[i] = 1;
             }
             response["filament_type"] = filament_types;
+            response["filament_is_support"] = filament_is_support;
         }
 
         SSWCPProtocol::append_flow_type_fields(response, full_config, GUI::FlowType::nozzle_volume_types());

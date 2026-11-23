@@ -44,6 +44,7 @@
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 namespace Slic3r { namespace Gateway {
@@ -443,6 +444,36 @@ PortOwnerTakeoverResult ConnectionProcessManager::terminate_port_owner(std::uint
 }
 
 std::vector<std::string> ConnectionProcessManager::build_arguments(const std::string& locale) { return {"--locale=" + locale, "--orca"}; }
+
+std::string ConnectionProcessManager::gateway_locale(const std::string& orca_language, const std::string& region)
+{
+    std::string normalized_language = orca_language;
+    std::transform(normalized_language.begin(), normalized_language.end(), normalized_language.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    std::replace(normalized_language.begin(), normalized_language.end(), '_', '-');
+
+    const std::size_t separator         = normalized_language.find('-');
+    const std::string language          = separator == std::string::npos ? normalized_language : normalized_language.substr(0, separator);
+    const std::string language_variant  = separator == std::string::npos ? std::string{} : normalized_language.substr(separator + 1);
+    const std::size_t variant_separator = language_variant.find('-');
+    const std::string primary_variant   = variant_separator == std::string::npos ? language_variant :
+                                                                                   language_variant.substr(0, variant_separator);
+    const std::string normalized_region = region == "CN" ? "CN" : "US";
+
+    static const std::unordered_set<std::string> shipped_languages{
+        "ca", "cs", "de", "en", "es", "fr", "hu", "it", "ja", "ko", "lt", "nl", "pl", "pt", "ru", "sv", "tr", "uk", "zh",
+    };
+    if (language == "zh") {
+        if (primary_variant == "hant" || primary_variant == "tw" || primary_variant == "hk" || primary_variant == "mo")
+            return "zh-Hant-" + normalized_region;
+        return "zh-" + normalized_region;
+    }
+
+    if (shipped_languages.count(language) == 0)
+        return "en-" + normalized_region;
+
+    return language + "-" + normalized_region;
+}
 
 std::string_view ConnectionProcessManager::cli_executable_name()
 {

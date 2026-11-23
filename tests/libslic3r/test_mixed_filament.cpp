@@ -3332,6 +3332,96 @@ TEST_CASE("mixed_filaments_using_physical finds multiple pattern dependents for 
 }
 
 // ============================================================================
+// [MixedFilament][ConfigRemap] — feature-filament option remap (req. 7)
+// ============================================================================
+
+TEST_CASE("build_delete_filament_id_remap maps deleted ids to the merge target", "[MixedFilament][ConfigRemap]")
+{
+    // 5 filaments; #3 merges into #5, which becomes #4 after the deletion.
+    const std::vector<unsigned int> remap = build_delete_filament_id_remap(5, 3, 4);
+    REQUIRE(remap.size() == 6);
+    CHECK(remap[0] == 0);
+    CHECK(remap[1] == 1);
+    CHECK(remap[2] == 2);
+    CHECK(remap[3] == 4); // merged source follows its post-delete target
+    CHECK(remap[4] == 3); // later ids shift down
+    CHECK(remap[5] == 4);
+}
+
+TEST_CASE("Feature-filament options follow deletion and merge remaps", "[MixedFilament][ConfigRemap]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.option<ConfigOptionInt>("support_filament", true)->value           = 3;
+    config.option<ConfigOptionInt>("support_interface_filament", true)->value = 4;
+
+    SECTION("deleting the selected support filament resets it to default")
+    {
+        const std::vector<unsigned int> remap = build_delete_filament_id_remap(5, 3, 0);
+        remap_dynamic_config_feature_filament_ids(config, remap, 4);
+        CHECK_FALSE(config.has("support_filament"));
+        CHECK(config.opt_int("support_interface_filament") == 3);
+    }
+
+    SECTION("deleting another filament shifts both support selections")
+    {
+        const std::vector<unsigned int> remap = build_delete_filament_id_remap(5, 2, 0);
+        remap_dynamic_config_feature_filament_ids(config, remap, 4);
+        CHECK(config.opt_int("support_filament") == 2);
+        CHECK(config.opt_int("support_interface_filament") == 3);
+    }
+
+    SECTION("merging the selected support filament retargets it")
+    {
+        const std::vector<unsigned int> remap = build_delete_filament_id_remap(5, 3, 4);
+        remap_dynamic_config_feature_filament_ids(config, remap, 4);
+        CHECK(config.opt_int("support_filament") == 4);
+        CHECK(config.opt_int("support_interface_filament") == 3);
+    }
+
+    SECTION("merging another filament keeps tracking the selected filament")
+    {
+        // #2 merges into #4; post-deletion #4 becomes #3.
+        const std::vector<unsigned int> remap = build_delete_filament_id_remap(5, 2, 3);
+        remap_dynamic_config_feature_filament_ids(config, remap, 4);
+        CHECK(config.opt_int("support_filament") == 2);
+        CHECK(config.opt_int("support_interface_filament") == 3);
+    }
+}
+
+TEST_CASE("Complete process configs keep feature-filament keys after deletion", "[MixedFilament][ConfigRemap]")
+{
+    DynamicPrintConfig config = DynamicPrintConfig::full_print_config();
+    config.option<ConfigOptionInt>("support_filament", true)->value           = 3;
+    config.option<ConfigOptionInt>("support_interface_filament", true)->value = 4;
+
+    SECTION("deleting the selected support filament resets it to the defined default")
+    {
+        const std::vector<unsigned int> remap = build_delete_filament_id_remap(5, 3, 0);
+        remap_complete_config_feature_filament_ids(config, remap, 4);
+        CHECK(config.has("support_filament"));
+        CHECK(config.opt_int("support_filament") == 0);
+        CHECK(config.opt_int("support_interface_filament") == 3);
+    }
+
+    SECTION("merging the selected support filament keeps the target id")
+    {
+        const std::vector<unsigned int> remap = build_delete_filament_id_remap(5, 3, 4);
+        remap_complete_config_feature_filament_ids(config, remap, 4);
+        CHECK(config.opt_int("support_filament") == 4);
+        CHECK(config.opt_int("support_interface_filament") == 3);
+    }
+
+    SECTION("one-based feature keys fall back to their own default")
+    {
+        config.option<ConfigOptionInt>("wall_filament", true)->value = 1;
+        const std::vector<unsigned int> remap = build_delete_filament_id_remap(5, 1, 0);
+        remap_complete_config_feature_filament_ids(config, remap, 4);
+        CHECK(config.has("wall_filament"));
+        CHECK(config.opt_int("wall_filament") == 1);
+    }
+}
+
+// ============================================================================
 // [MixedFilament][Merge] — MERGE-REGRESS regression tests
 // ============================================================================
 

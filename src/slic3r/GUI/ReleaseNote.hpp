@@ -37,6 +37,7 @@
 #include "Widgets/ScrolledWindow.hpp"
 #include <wx/hashmap.h>
 #include <wx/webview.h>
+#include <wx/timer.h>
 
 namespace Slic3r { namespace GUI {
 
@@ -86,11 +87,19 @@ public:
     ~UpdateVersionDialog();
 
     wxWebView* CreateTipView(wxWindow* parent);
-    void OnLoaded(wxWebViewEvent& event);
     void OnTitleChanged(wxWebViewEvent& event);
     void OnError(wxWebViewEvent& event);
+    // True when nav_url is this dialog's own shell page; compares the file name
+    // (case-folded, fragment/query stripped) instead of the full URI.
+    bool is_shell_page_url(const wxString& nav_url) const;
+    // Plain-text fallback for a webview shell page that never became ready.
+    void show_plain_text_fallback();
+    void on_webview_watchdog();
     bool ShowReleaseNote(std::string content);
     void RunScript(std::string script);
+    // Push the pending markdown into the webview once its shell page is ready;
+    // no-op when called before the page finished loading.
+    void inject_release_note();
     void on_dpi_changed(const wxRect& suggested_rect) override;
     void update_version_info(wxString release_note, wxString version);
     std::vector<std::string> splitWithStl(std::string str, std::string pattern);
@@ -111,8 +120,15 @@ public:
     CheckBox*         m_cb_stable_only;
     Button*           m_button_download;
     Button*           m_button_cancel;
-    std::string       url_line;
     bool              isModal = true;
+    // Markdown (UTF-8) to push into the webview; kept so a page reload re-injects it.
+    std::string       m_pending_release_note;
+    // Shell page reported its summary height (numeric document.title); safe to RunScript.
+    bool              m_webview_loaded{false};
+    // One-shot watchdog armed in update_version_info: falls back to the plain-text
+    // page when the shell page never reports readiness.
+    wxTimer           m_webview_fallback_timer;
+    bool              m_webview_fallback_shown{false};
 };
 
 class SecondaryCheckDialog : public DPIFrame

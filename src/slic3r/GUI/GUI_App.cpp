@@ -17,6 +17,9 @@
 #include "slic3r/GUI/SSWCP.hpp"
 #include "slic3r/GUI/DownloadManager.hpp"
 #include "slic3r/Utils/PresetUpdater.hpp"
+#ifdef __APPLE__
+#include "slic3r/Utils/MacUninstallWatcher.hpp"
+#endif
 #include "slic3r/Config/Version.hpp"
 #include "libslic3r/MixedFilament.hpp"
 
@@ -89,6 +92,7 @@
 
 #include "GUI.hpp"
 #include "GUI_Utils.hpp"
+#include "widgets/UiAppearance.hpp"
 #include "3DScene.hpp"
 #include "MainFrame.hpp"
 #include "Plater.hpp"
@@ -1316,6 +1320,13 @@ void GUI_App::shutdown(bool isRecreate)
 {
     BOOST_LOG_TRIVIAL(info) << "GUI_App::shutdown enter";
 
+#ifdef __APPLE__
+    if (!isRecreate)
+    {
+        m_uninstall_watcher_registration.stop();
+    }
+#endif
+
     if (!m_is_recreating_gui)
         m_is_closing = true;
     stop_gateway_service();
@@ -2072,6 +2083,9 @@ void GUI_App::init_networking_callbacks()
 
 GUI_App::~GUI_App()
 {
+#ifdef __APPLE__
+    m_uninstall_watcher_registration.stop();
+#endif
     GUI_App::m_app_alive.store(false);
     // Close the check-then-act window of the m_app_alive guards in the
     // version-check Http callbacks: drain every callback that already passed
@@ -2405,8 +2419,43 @@ void GUI_App::init_single_instance_checker(const std::string &name, const std::s
     m_single_instance_checker = std::make_unique<wxSingleInstanceChecker>(boost::nowide::widen(name), boost::nowide::widen(path));
 }
 
+namespace {
+// Appearance seam for the widgets static library: forwards every query to
+// the existing GUI_App implementation, so the main application behaves
+// exactly as before (see Widgets/UiAppearance.hpp).
+class GuiAppAppearance : public Slic3r::GUI::UiAppearance
+{
+public:
+    int em_unit() const override { return wxGetApp().em_unit(); }
+    int em_unit_of(wxWindow *win) const override
+    {
+        if (!win)
+            return 0;
+        wxTopLevelWindow *toplevel = Slic3r::GUI::find_toplevel_parent(win);
+        if (auto *dlg = dynamic_cast<Slic3r::GUI::DPIDialog *>(toplevel))
+            return dlg->em_unit();
+        if (auto *frame = dynamic_cast<Slic3r::GUI::DPIFrame *>(toplevel))
+            return frame->em_unit();
+        return 0;
+    }
+    bool dark_mode() const override { return wxGetApp().dark_mode(); }
+    bool menu_dark_mode() const override { return Slic3r::GUI::check_dark_mode(); }
+    void update_dark_ui(wxWindow *win, bool highlited) const override { wxGetApp().UpdateDarkUI(win, highlited); }
+    const wxFont &bold_font() const override { return wxGetApp().bold_font(); }
+    const wxFont &normal_font() const override { return wxGetApp().normal_font(); }
+    wxWindow *mainframe() const override { return wxGetApp().mainframe; }
+    int dpi_for_window(wxWindow *win) const override { return Slic3r::GUI::get_dpi_for_window(win); }
+    wxFont default_font_for_dpi(wxWindow *win, int dpi) const override { return Slic3r::GUI::get_default_font_for_dpi(win, dpi); }
+    void update_dark_config() const override { Slic3r::GUI::update_dark_config(); }
+};
+} // namespace
+
 bool GUI_App::OnInit()
 {
+    // Install the appearance seam before any widget is created.
+    static GuiAppAppearance s_ui_appearance;
+    Slic3r::GUI::set_ui_appearance(&s_ui_appearance);
+
     try {
         return on_init_inner();
     } catch (const std::exception& e) {
@@ -2418,6 +2467,9 @@ bool GUI_App::OnInit()
 
 int GUI_App::OnExit()
 {
+#ifdef __APPLE__
+    m_uninstall_watcher_registration.stop();
+#endif
     WidgetInspector::disable();
 
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
@@ -2640,6 +2692,10 @@ bool GUI_App::on_init_inner()
     if (!start_gateway_service())
         BOOST_LOG_TRIVIAL(warning) << "failed to start connection gateway during application startup";
     profiler.mark("gateway_service.start");
+#ifdef __APPLE__
+    m_uninstall_watcher_registration.start();
+    profiler.mark("macos uninstall watcher");
+#endif
 #ifdef _MSW_DARK_MODE
 
 #ifndef __WINDOWS__
@@ -3456,6 +3512,196 @@ static bool is_default(wxWindow* win)
 }
 #endif
 
+#ifdef __WINDOWS__
+// Colours of a wxDataViewCtrl that live outside the window attributes and therefore do not
+// follow a colour-mode switch: the alternate row colour used for the odd rows (the wx
+// generic data view paints them from its own m_alternateRowColour, not from the window
+// background) and the native column header, themed through NppDarkMode.
+//
+// The header helper is state driven (SetDarkListViewHeader() reads IsEnabled() and passes
+// L"ItemsView" or nullptr to SetWindowTheme, GetTextColor() returns the system text colour
+// when disabled), so running this on the way back restores the light header as well. The
+// alternate row colour is NOT state driven: it is the caller's m_color_highlight_default,
+// which only init_label_colours() updates - at start-up and from the colour-mode switch
+// itself, so the value handed in is always the one for the current mode.
+// Returns true when anything was (re)applied.
+static bool update_dark_dataview(wxDataViewCtrl* dvc, const wxColour& alternate_row_colour, const wxFont& header_font)
+{
+    bool changed = false;
+
+    if (dvc->HasFlag(wxDV_ROW_LINES) && dvc->GetAlternateRowColour() != alternate_row_colour) {
+        dvc->SetAlternateRowColour(alternate_row_colour);
+        changed = true;
+    }
+
+#ifdef _MSW_DARK_MODE
+    if (!dvc->HasFlag(wxDV_NO_HEADER) && dvc->GenericGetHeader() != nullptr) {
+        HWND hwnd_header = static_cast<HWND>(dvc->GenericGetHeader()->GetHandle());
+        hwnd_header = GetWindow(hwnd_header, GW_CHILD);
+        if (hwnd_header)
+            NppDarkMode::SetDarkListViewHeader(hwnd_header);
+        wxItemAttr attr;
+        attr.SetTextColour(NppDarkMode::GetTextColor());
+        attr.SetFont(header_font);
+        dvc->SetHeaderAttr(attr);
+        // No readable state here: wxDataViewCtrl exposes only SetHeaderAttr(), and
+        // NppDarkMode has no getter, so this is unconditional. The call is idempotent; the
+        // extra Refresh() is the price of not missing a mode change.
+        changed = true;
+    }
+#endif //_MSW_DARK_MODE
+
+    return changed;
+}
+#endif // __WINDOWS__
+
+// Dark counterpart of a foreground colour, kept readable against the dark background of
+// the same widget: the table alone can land on a colour too close to that background.
+static wxColour dark_mode_foreground(const wxColour& bg_col, const wxColour& light_fg_col)
+{
+    wxColour fg_col = StateColor::darkModeColorFor(light_fg_col);
+    const auto fg_l = StateColor::GetLightness(fg_col);
+
+    // fallback and sanity check with LAB
+    // color difference of less than 2 or 3 is not normally visible, and even less than 30-40 doesn't stand out
+    if (StateColor::GetColorDifference(bg_col, fg_col) < 10)
+        fg_col = StateColor::SetLightness(fg_col, 90);
+    // some of the stock colors have a lightness of ~49
+    if (fg_l < 45)
+        fg_col = StateColor::SetLightness(fg_col, 70);
+    // at this point it shouldn't be possible that fg_col is the same as bg_col, but let's be safe
+    if (fg_col == bg_col)
+        fg_col = StateColor::SetLightness(fg_col, 70);
+
+    return fg_col;
+}
+
+// Restores the colours a window had before it was darkened, using the reminders collected on
+// the way in. Returns true when a colour actually changed (the caller then repaints).
+// A stale entry (see same_window()) does not touch m_dark_mode_bound: that set describes the
+// destroy handler attached to an address, not the entry, and a lambda cannot be unbound.
+static bool restore_dark_mode_colours(wxWindow* window,
+                                      std::unordered_map<wxWindow*, DarkModeColourReminder>& orig_bg,
+                                      std::unordered_map<wxWindow*, DarkModeColourReminder>& orig_fg)
+{
+    bool changed = false;
+
+    const wxColour  current_bg = window->GetBackgroundColour();
+    const wxColour  current_fg = window->GetForegroundColour();
+    const wxUIntPtr current_handle = reinterpret_cast<wxUIntPtr>(window->GetHandle());
+
+    // Does this entry describe *this* window? An entry normally dies with the window
+    // (wxEVT_DESTROY), but wx stops dispatching dynamic handlers at the first one that does
+    // not Skip(), so a handler bound after ours can suppress that cleanup and a new window
+    // can be allocated at the same address. The colour values cannot tell the two apart -
+    // the dark values are shared by many windows - so the entry carries the native handle.
+    // A window that had no handle when it was recorded cannot be identified at all; its entry
+    // is discarded rather than trusted: writing a dead window's colour onto a new one in that
+    // address is the residual-tint class this change exists to remove.
+    auto same_window = [&current_handle](const DarkModeColourReminder& reminder) {
+        return reminder.handle != 0 && reminder.handle == current_handle;
+    };
+
+    // --- foreground ---
+    // The theme flag belongs to the window, not to one channel: read it from whichever reminder
+    // exists, because a window can have been darkened in the foreground only (a background the
+    // table does not remap, e.g. the #009688 button, is left alone and therefore never recorded).
+    DarkModeColourReminder theme_reminder{};
+    bool has_theme_reminder = false;
+
+    auto it_fg = orig_fg.find(window);
+    if (it_fg != orig_fg.end()) {
+        const DarkModeColourReminder reminder = it_fg->second;
+        orig_fg.erase(it_fg);
+        if (same_window(reminder) && reminder.applied == current_fg) {
+            // Only a reminder that belongs to this window may dictate the theme flag, and the
+            // exact colour is trustworthy only while the window still carries what we wrote -
+            // a widget that repainted itself from its own StateColor table during the dark
+            // session (SpinInput::Enable() does exactly that for its text control) must not be
+            // restored to the snapshot taken before that.
+            theme_reminder = reminder;
+            has_theme_reminder = true;
+            const wxColour restore = reminder.original.IsOk() ? reminder.original : wxNullColour;
+            if (restore != current_fg) {
+                window->SetForegroundColour(restore);
+                changed = true;
+            }
+        }
+        else {
+            // Entry belongs to another window, or this window re-coloured itself: the marker
+            // stays (it describes the handler attached to this address), and the colour falls
+            // back to the state-aware reverse table.
+            const wxColour fg_col = StateColor::lightModeColorFor(current_fg);
+            if (fg_col != current_fg) {
+                window->SetForegroundColour(fg_col);
+                changed = true;
+            }
+        }
+    }
+    else {
+        const wxColour fg_col = StateColor::lightModeColorFor(current_fg);
+        if (fg_col != current_fg) {
+            window->SetForegroundColour(fg_col);
+            changed = true;
+        }
+    }
+
+    // --- background ---
+    auto it_bg = orig_bg.find(window);
+    wxColour bg_col;
+    if (it_bg != orig_bg.end()) {
+        const DarkModeColourReminder reminder = it_bg->second;
+        orig_bg.erase(it_bg);
+        if (same_window(reminder) && reminder.applied == current_bg) {
+            // As for the foreground: the theme flag and the exact colour are only taken when the
+            // window still carries what this walk wrote.
+            theme_reminder = reminder;
+            has_theme_reminder = true;
+            bg_col = reminder.original.IsOk() ? reminder.original : wxNullColour;
+        }
+        else {
+            // Entry belongs to another window, or the window re-coloured itself: the marker
+            // stays and the colour goes through the state-aware reverse table.
+            bg_col = StateColor::lightModeColorFor(current_bg);
+        }
+    }
+    else
+        bg_col = StateColor::lightModeColorFor(current_bg);
+
+    if (bg_col != current_bg) {
+        window->SetBackgroundColour(bg_col);
+        changed = true;
+    }
+
+    // Clearing an explicit colour makes the wx setters call SetThemeEnabled(true), while a
+    // freshly created window starts with theme support off. Put the recorded value back so a
+    // light/dark round trip does not leave the widget behind in a different drawing mode.
+    if (changed && has_theme_reminder && window->GetThemeEnabled() != theme_reminder.theme_enabled)
+        window->SetThemeEnabled(theme_reminder.theme_enabled);
+
+    return changed;
+}
+
+// True only while update_ui_from_settings() walks the existing windows for a colour-mode
+// switch. That walk repaints every window it visits, and it has to do so even when no colour
+// was written here, for two reasons:
+// - some colours are computed at paint time only (the controls below that return early keep
+//   their palette in a StateColor table), and their pixels are stale after a switch;
+// - a window's colours may already have been applied before the walk arrives -
+//   MainFrame::on_sys_color_changed() calls UpdateDarkUI(m_tabpanel) itself, through
+//   force_color_changed() which runs earlier on this path.
+// Calls from anywhere else (creation path, or widgets that call UpdateDarkUI() from their own
+// paint handler, e.g. TabButtonsListCtrl::OnPaint) refresh only when a colour was written,
+// because a Refresh() there would schedule yet another paint.
+static bool g_dark_mode_switching = false;
+
+// Repaint a window that the colour-mode walk visited but did not re-colour itself.
+static void repaint_on_switch(wxWindow* window)
+{
+    if (g_dark_mode_switching)
+        window->Refresh();
+}
+
 void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool just_font/* = false*/)
 {
     // SideButton manages its own per-state colors via StateColor and adapts
@@ -3465,12 +3711,18 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
     // touch it permanently flattens the enabled/disabled/hover colors —
     // seen when toggling dark mode off: the slice/print buttons keep a
     // washed-out single background until the app restarts.
-    if (dynamic_cast<SideButton*>(window))
+    // Nothing to re-colour here, but the pixels are from the previous mode until the
+    // control paints again, so the switch walk still invalidates it.
+    if (dynamic_cast<SideButton*>(window)) {
+        repaint_on_switch(window);
         return;
+    }
 
     if (wxButton *btn = dynamic_cast<wxButton*>(window)) {
-        if (btn->GetWindowStyleFlag() & wxBU_AUTODRAW)
+        if (btn->GetWindowStyleFlag() & wxBU_AUTODRAW) {
+            repaint_on_switch(window);
             return;
+        }
         else {
 #ifdef _WIN32
             if (btn->GetId() == wxID_OK || btn->GetId() == wxID_CANCEL) {
@@ -3490,11 +3742,34 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
                 };
 
                 // hovering
-                btn->Bind(wxEVT_ENTER_WINDOW, [mark_button](wxMouseEvent& event) { mark_button(true); event.Skip(); });
-                btn->Bind(wxEVT_LEAVE_WINDOW, [mark_button, btn](wxMouseEvent& event) { mark_button(is_focused(btn->GetHWND())); event.Skip(); });
-                // focusing
-                btn->Bind(wxEVT_SET_FOCUS, [mark_button](wxFocusEvent& event) { mark_button(true); event.Skip(); });
-                btn->Bind(wxEVT_KILL_FOCUS, [mark_button](wxFocusEvent& event) { mark_button(false); event.Skip(); });
+                // Bound once per button: the walk reaches the same OK/Cancel button on every
+                // colour-mode switch (and now every live window, not just the main frame), so
+                // re-binding each time would pile up four handlers per switch and wx cannot
+                // unbind a lambda. mark_button() below still runs on every pass, which is what
+                // repaints the button with the current mode's colours.
+                //
+                // The marker takes its destroy handler here, next to the insert, and not in
+                // remember(): remember() only runs when a colour actually changed, so in light
+                // mode a button would be marked without anything ever clearing the mark, and a
+                // later button allocated at that address would find the mark and never get its
+                // handlers.
+                if (m_mark_button_bound.find(btn) == m_mark_button_bound.end()) {
+                    m_mark_button_bound.insert(btn);
+                    btn->Bind(wxEVT_ENTER_WINDOW, [mark_button](wxMouseEvent& event) { mark_button(true); event.Skip(); });
+                    btn->Bind(wxEVT_LEAVE_WINDOW,
+                              [mark_button, btn](wxMouseEvent& event) { mark_button(is_focused(btn->GetHWND())); event.Skip(); });
+                    // focusing
+                    btn->Bind(wxEVT_SET_FOCUS, [mark_button](wxFocusEvent& event) { mark_button(true); event.Skip(); });
+                    btn->Bind(wxEVT_KILL_FOCUS, [mark_button](wxFocusEvent& event) { mark_button(false); event.Skip(); });
+                    // Drop the marker with the button. Same two guards as the colour handler in
+                    // remember(): only the window's own destroy (child destroys propagate), and
+                    // never after ~GUI_App has started tearing the members down.
+                    btn->Bind(wxEVT_DESTROY, [this, btn](wxWindowDestroyEvent& e) {
+                        if (e.GetEventObject() == btn && m_app_alive.load())
+                            m_mark_button_bound.erase(btn);
+                        e.Skip();
+                    });
+                }
 
                 is_focused_button = is_focused(btn->GetHWND());
                 is_default_button = is_default(btn);
@@ -3505,13 +3780,17 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
     }
 
     if (Button* btn = dynamic_cast<Button*>(window)) {
-        if (btn->GetWindowStyleFlag() & wxBU_AUTODRAW)
+        if (btn->GetWindowStyleFlag() & wxBU_AUTODRAW) {
+            repaint_on_switch(window);
             return;
+        }
     }
 
 
     /*if (m_is_dark_mode != dark_mode() )
         m_is_dark_mode = dark_mode();*/
+
+    bool colors_changed = false;
 
     if (m_is_dark_mode) {
 
@@ -3519,61 +3798,115 @@ void GUI_App::UpdateDarkUI(wxWindow* window, bool highlited/* = false*/, bool ju
         auto bg_col = StateColor::darkModeColorFor(orig_col);
         // there are cases where the background color of an item is bright, specifically:
         // * the background color of a button: #009688  -- 73
+        // Remember exactly what this window had: the reverse lookup used on the way back
+        // cannot reproduce it, because the table is not one-to-one (the entries
+        // {"#DFDFDF", "#3E3E45"} and {"#E8E8E8", "#3E3E45"} in
+        // src/slic3r/GUI/Widgets/StateColor.cpp share one dark value). A window with no
+        // own background/foreground (most labels) is recorded as "no colour", so the
+        // light branch clears the explicit colour again instead of freezing the
+        // inherited default into a strip that a freshly created dialog does not have.
+        //
+        // The entries are keyed by the window pointer, so they must die with the window:
+        // wxEVT_DESTROY is the choke point every teardown path goes through. The handler
+        // is bound at most once per window - m_dark_mode_bound tracks that separately,
+        // because the colour maps are emptied on the way back to light and "no entry"
+        // therefore cannot stand for "not bound yet".
+        //
+        // wx stops dispatching an event at the first dynamic handler that does not call
+        // Skip(), so a handler bound after ours on the same window can hide this one and
+        // leave the entry behind. InfoDialog in this file binds one such handler
+        // (GUI_App.cpp:2852, a bare lambda with no e.Skip()).
+        auto remember = [this](wxWindow* w, std::unordered_map<wxWindow*, DarkModeColourReminder>& map,
+                               const wxColour& original, const wxColour& applied) {
+            const wxUIntPtr handle = reinterpret_cast<wxUIntPtr>(w->GetHandle());
+            auto it = map.find(w);
+            // Refresh the entry when this address now belongs to another window (different
+            // handle) or had none yet; a plain re-visit keeps the original it was darkened
+            // from. The marker stays authoritative for "a destroy handler is attached to this
+            // address": re-binding would only pile up handlers, because wx cannot unbind a
+            // lambda and the handler of a destroyed window is gone with the window object.
+            if (it == map.end() || it->second.handle != handle)
+                map[w] = DarkModeColourReminder{original, applied, handle, w->GetThemeEnabled()};
+            if (m_dark_mode_bound.find(w) != m_dark_mode_bound.end())
+                return;
+            m_dark_mode_bound.insert(w);
+            w->Bind(wxEVT_DESTROY, [this, w](wxWindowDestroyEvent& e) {
+                // wxWindowDestroyEvent propagates from child windows too; only the
+                // window's own destroy may drop its entry.
+                if (e.GetEventObject() != w) {
+                    e.Skip();
+                    return;
+                }
+                // Windows can outlive ~GUI_App's teardown of the members below: stop
+                // touching them as soon as the app is being destroyed.
+                if (!m_app_alive.load()) {
+                    e.Skip();
+                    return;
+                }
+                m_dark_mode_orig_bg.erase(w);
+                m_dark_mode_orig_fg.erase(w);
+                m_dark_mode_bound.erase(w);
+                // m_mark_button_bound is not erased here: the marker is added together with its
+                // own destroy handler in the OK/Cancel branch of UpdateDarkUI(), which runs
+                // whether or not a colour changed, so it owns its cleanup.
+                e.Skip();
+            });
+        };
+
         if (bg_col != orig_col) {
+            remember(window, m_dark_mode_orig_bg, window->UseBgCol() ? orig_col : wxColour(), bg_col);
             window->SetBackgroundColour(bg_col);
+            colors_changed = true;
         }
 
         orig_col = window->GetForegroundColour();
-        auto fg_col = StateColor::darkModeColorFor(orig_col);
-        auto fg_l = StateColor::GetLightness(fg_col);
+        const wxColour fg_col = dark_mode_foreground(bg_col, orig_col);
 
-        auto color_difference = StateColor::GetColorDifference(bg_col, fg_col);
-
-        // fallback and sanity check with LAB
-        // color difference of less than 2 or 3 is not normally visible, and even less than 30-40 doesn't stand out
-        if (color_difference < 10) {
-            fg_col = StateColor::SetLightness(fg_col, 90);
+        if (fg_col != orig_col) {
+            remember(window, m_dark_mode_orig_fg,
+                     window->UseForegroundColour() ? orig_col : wxColour(), fg_col);
+            window->SetForegroundColour(fg_col);
+            colors_changed = true;
         }
-        // some of the stock colors have a lightness of ~49
-        if (fg_l < 45) {
-            fg_col = StateColor::SetLightness(fg_col, 70);
-        }
-        // at this point it shouldn't be possible that fg_col is the same as bg_col, but let's be safe
-        if (fg_col == bg_col) {
-            fg_col = StateColor::SetLightness(fg_col, 70);
-        }
-
-        window->SetForegroundColour(fg_col);
     }
     else {
-        auto original_col = window->GetBackgroundColour();
-        auto bg_col = StateColor::lightModeColorFor(original_col);
-
-        if (bg_col != original_col) {
-            window->SetBackgroundColour(bg_col);
-        }
-
-        original_col = window->GetForegroundColour();
-        auto fg_col = StateColor::lightModeColorFor(original_col);
-
-        if (fg_col != original_col) {
-            window->SetForegroundColour(fg_col);
-        }
+        colors_changed |= restore_dark_mode_colours(window, m_dark_mode_orig_bg, m_dark_mode_orig_fg);
     }
+
+    // SetBackgroundColour()/SetForegroundColour() only store the colour
+    // (wxWindowBase::SetBackgroundColour() assigns the value and returns, it does not
+    // repaint); a window that is already on screen keeps painting the old pixels until
+    // something invalidates it, so a colour-mode switch has to ask for a repaint.
+#ifdef __WINDOWS__
+    // A data view keeps the alternate row colour and the native header outside the window
+    // attributes, see update_dark_dataview().
+    if (wxDataViewCtrl* dvc = dynamic_cast<wxDataViewCtrl*>(window))
+        colors_changed |= update_dark_dataview(dvc, m_color_highlight_default, m_normal_font);
+#endif
+
+    if (colors_changed || g_dark_mode_switching)
+        window->Refresh();
 }
 
 // recursive function for scaling fonts for all controls in Window
-static void update_dark_children_ui(wxWindow* window, bool just_buttons_update = false)
+// `visited` (optional) makes one traversal visit every window at most once, which matters
+// for the colour-mode switch: a top level window can be the descendant of another top
+// level window, and a dialog created with the main frame as parent is registered in its
+// child list on wxMSW, so the same subtree can be reachable from more than one root.
+static void update_dark_children_ui(wxWindow* window, bool just_buttons_update = false,
+                                    std::unordered_set<wxWindow*>* visited = nullptr)
 {
     /*bool is_btn = dynamic_cast<wxButton*>(window) != nullptr;
     is_btn = false;*/
     if (!window) return;
+    if (visited != nullptr && !visited->insert(window).second)
+        return;
 
     wxGetApp().UpdateDarkUI(window);
 
     auto children = window->GetChildren();
     for (auto child : children) {
-        update_dark_children_ui(child);
+        update_dark_children_ui(child, just_buttons_update, visited);
     }
 }
 
@@ -3610,23 +3943,11 @@ void GUI_App::UpdateFrameDarkUI(wxFrame* dlg)
 void GUI_App::UpdateDVCDarkUI(wxDataViewCtrl* dvc, bool highlited/* = false*/)
 {
 #ifdef __WINDOWS__
+    // Everything colour related - background/foreground, the native column header and
+    // the alternate row colour - is applied by UpdateDarkUI(), so that a control created
+    // in one mode and a runtime colour-mode switch end up in the same state. Only the
+    // border style is specific to the creation path.
     UpdateDarkUI(dvc, highlited ? dark_mode() : false);
-#ifdef _MSW_DARK_MODE
-    //dvc->RefreshHeaderDarkMode(&m_normal_font);
-    HWND hwnd;
-    if (!dvc->HasFlag(wxDV_NO_HEADER)) {
-        hwnd = (HWND) dvc->GenericGetHeader()->GetHandle();
-        hwnd = GetWindow(hwnd, GW_CHILD);
-        if (hwnd != NULL)
-            NppDarkMode::SetDarkListViewHeader(hwnd);
-        wxItemAttr attr;
-        attr.SetTextColour(NppDarkMode::GetTextColor());
-        attr.SetFont(m_normal_font);
-        dvc->SetHeaderAttr(attr);
-    }
-#endif //_MSW_DARK_MODE
-    if (dvc->HasFlag(wxDV_ROW_LINES))
-        dvc->SetAlternateRowColour(m_color_highlight_default);
     if (dvc->GetBorder() != wxBORDER_SIMPLE)
         dvc->SetWindowStyle(dvc->GetWindowStyle() | wxBORDER_SIMPLE);
 #endif
@@ -4135,8 +4456,60 @@ void GUI_App::update_ui_from_settings()
             mainframe->force_color_changed();
             update_scrolls(mainframe);
             update_scrolls(&mainframe->m_settings_dialog);
-#endif //_MSW_DARK_MODE
-            update_dark_children_ui(mainframe);
+#endif // __WINDOWS__
+            // Top level windows that are not the main frame: their client area is not part
+            // of the main frame's child tree, so it has to be recoloured explicitly, and
+            // their title bar needs the dark-mode flag re-applied (DWM draws it, so no
+            // window colour or repaint reaches it; force_color_changed() only does the
+            // main frame). Both steps are kept in one loop so a window's title bar and
+            // client area can never end up in different modes.
+            // Windows-only on purpose: the whole colour-mode path that this fixes (title
+            // bar, data view header, alternate row colour) is Windows-only, and dark mode
+            // on the other ports has never been exercised. Walking extra top level windows
+            // there would change behaviour on platforms nobody has tested.
+            // One visit per window per switch: the main frame is walked first, then every
+            // top level window that the walk did not reach yet (a parented dialog is part
+            // of its parent's child list on wxMSW, which is a per-port fact, so dedup on
+            // what was actually visited instead of on the parent chain).
+            std::unordered_set<wxWindow*> visited;
+            // The walk below allocates (map insertions, Bind), so it can throw. Clear the flag
+            // from a destructor rather than from the next statement: an exception would otherwise
+            // leave it set, and from then on every UpdateDarkUI() called from a paint handler
+            // (TabButtonsListCtrl::OnPaint, Tabbook.cpp) would repaint on every pass.
+            const struct SwitchingScope
+            {
+                SwitchingScope() { g_dark_mode_switching = true; }
+                ~SwitchingScope() { g_dark_mode_switching = false; }
+            } switching_scope;
+            update_dark_children_ui(mainframe, false, &visited);
+#ifdef __WINDOWS__
+            for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
+                wxTopLevelWindow* tlw = dynamic_cast<wxTopLevelWindow*>(node->GetData());
+                if (!tlw || tlw == mainframe)
+                    continue;
+                if (tlw->GetHandle() != nullptr)
+                    NppDarkMode::SetDarkTitleBar(static_cast<HWND>(tlw->GetHandle()));
+                update_dark_children_ui(tlw, false, &visited);
+            }
+#endif // __WINDOWS__
+            // g_dark_mode_switching is cleared by switching_scope's destructor.
+            // A reminder whose key is not in the visited set belongs to a window that this walk
+            // cannot reach any more: either it is gone (its destroy handler was suppressed by a
+            // later handler that did not Skip() - InfoDialog binds one), or it is a top level
+            // window outside the main frame's tree, which only the Windows-only loop above
+            // visits. Pruning is therefore Windows-only as well - elsewhere "not visited" does
+            // not mean "dead", and dropping a live window's reminder would send it through the
+            // reverse table (the lossy path this change removes).
+#ifdef __WINDOWS__
+            for (auto it = m_dark_mode_orig_bg.begin(); it != m_dark_mode_orig_bg.end();)
+                it = visited.find(it->first) == visited.end() ? m_dark_mode_orig_bg.erase(it) : std::next(it);
+            for (auto it = m_dark_mode_orig_fg.begin(); it != m_dark_mode_orig_fg.end();)
+                it = visited.find(it->first) == visited.end() ? m_dark_mode_orig_fg.erase(it) : std::next(it);
+            for (auto it = m_dark_mode_bound.begin(); it != m_dark_mode_bound.end();)
+                it = visited.find(*it) == visited.end() ? m_dark_mode_bound.erase(it) : std::next(it);
+            for (auto it = m_mark_button_bound.begin(); it != m_mark_button_bound.end();)
+                it = visited.find(*it) == visited.end() ? m_mark_button_bound.erase(it) : std::next(it);
+#endif // __WINDOWS__
         }
     }
 
@@ -5820,17 +6193,8 @@ std::string GUI_App::gateway_locale() const
     if (locale.empty())
         locale = into_u8(current_language_code_safe());
 
-    const std::size_t separator = locale.find_first_of("-_");
-    std::string       language  = separator == std::string::npos ? locale : locale.substr(0, separator);
-    std::transform(language.begin(), language.end(), language.begin(), [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (language != "zh")
-        language = "en";
-
     std::string region = app_config != nullptr ? app_config->get_country_code() : "US";
-    if (region != "CN")
-        region = "US";
-
-    return language + "-" + region;
+    return Gateway::ConnectionProcessManager::gateway_locale(locale, region);
 }
 
 bool GUI_App::start_gateway_service(bool restart)

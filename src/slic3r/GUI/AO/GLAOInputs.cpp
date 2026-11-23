@@ -193,13 +193,19 @@ bool GLAOInputs::depth_source_changed(unsigned int source, bool& context_lost) c
     GLint saved_draw_fbo = 0, samples = 0;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &saved_draw_fbo);
     // GL_SAMPLES describes the draw framebuffer, even though depth is copied from the read framebuffer.
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, source);
+    const bool rebind = source != static_cast<GLuint>(saved_draw_fbo);
+    if (rebind)
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, source);
     glGetIntegerv(GL_SAMPLES, &samples);
     const bool query_failed = consume_errors(&context_lost);
     if (context_lost)
         return false;
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, saved_draw_fbo);
-    return !consume_errors(&context_lost) && !query_failed && samples != m_samples;
+    if (rebind) {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, saved_draw_fbo);
+        if (consume_errors(&context_lost))
+            return false;
+    }
+    return !query_failed && samples != m_samples;
 }
 
 bool GLAOInputs::capture_depth(const AOFrameInput& input)

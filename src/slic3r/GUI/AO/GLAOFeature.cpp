@@ -170,22 +170,30 @@ GLAOFeature::Preparation GLAOFeature::prepare(const AOExecutionRequest& request,
     const int w = input.viewport[2], h = input.viewport[3];
     if (w <= 0 || h <= 0)
         return Preparation::Failed;
-    // Keep the caller's scene target and bindings intact through every allocation path.
-    AOGLStateGuard state;
-    bool           pending_loss = false;
-    consume_errors(&pending_loss);
-    const bool depth_source_changed = depth_source_failed && !pending_loss && m_inputs.depth_source_changed(input.source, pending_loss);
-    if (pending_loss) {
-        state.forget_context();
+    const auto report_context_loss = [&]() {
         fail("OpenGL context lost");
         if (observer)
             observer->stage_failed(AOStage::AOBegin, m_failure, AOStatus::ContextLost);
         return Preparation::ContextLost;
-    }
+    };
     if (depth_source_failed) {
-        if (!depth_source_changed)
+        // The depth probe restores its own binding. Only snapshot other GL state if we retry.
+        bool pending_loss = false;
+        consume_errors(&pending_loss);
+        const bool changed = !pending_loss && m_inputs.depth_source_changed(input.source, pending_loss);
+        if (pending_loss)
+            return report_context_loss();
+        if (!changed)
             return Preparation::Failed;
         m_failure.clear();
+    }
+    // Keep the caller's scene target and bindings intact through every allocation path.
+    AOGLStateGuard state;
+    bool           pending_loss = false;
+    consume_errors(&pending_loss);
+    if (pending_loss) {
+        state.forget_context();
+        return report_context_loss();
     }
     if (!catalog.common_ready()) {
         fail("a required common AO shader is unavailable", FailureScope::Common);

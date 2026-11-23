@@ -467,7 +467,8 @@ static void collect_filament_slots_from_config(
 
 static void collect_filament_slots_from_model_config(
     const ModelConfig& config,
-    int num_filaments, std::set<int>& used_slots_0_based)
+    int num_filaments, std::set<int>& used_slots_0_based,
+    bool collect_support_keys = true)
 {
     // Primary filament (extruder)
     if (config.has("extruder"))
@@ -488,6 +489,9 @@ static void collect_filament_slots_from_model_config(
     };
     for (const char* key : feature_keys)
     {
+        if (!collect_support_keys &&
+            (strcmp(key, "support_filament") == 0 || strcmp(key, "support_interface_filament") == 0))
+            continue;
         if (config.has(key))
         {
             const int val = config.opt_int(key);
@@ -497,21 +501,99 @@ static void collect_filament_slots_from_model_config(
     }
 }
 
+/// \brief Read a global process value from the authoritative edited preset.
+/// \details The Plater working config (Plater::config()) must NOT be the source
+///          for per-plate gate checks: object-scope edits forward their
+///          aggregated "global + object override" copy through
+///          TabPrintModel::on_value_change -> TabPrint::update() ->
+///          MainFrame::on_config_changed -> Plater::on_config_change, which
+///          writes every diff key back into the working config. A
+///          support_filament set on ONE object therefore pollutes the working
+///          config and would be applied to EVERY plate by the gates. The
+///          edited preset is the authoritative global source the slicing
+///          pipeline starts from; keys absent from the preset fall back to
+///          the compiled-in default from print_config_def.
+/// \param[in] key       Print config key.
+/// \param[in] fallback  Value used when neither preset nor def provides one.
+/// \return The resolved global value.
+static bool global_process_preset_bool(const std::string& key, bool fallback)
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (bundle != nullptr) {
+        const ConfigOptionBool* option = bundle->prints.get_edited_preset().config.option<ConfigOptionBool>(key);
+        if (option != nullptr)
+            return option->value;
+    }
+    const ConfigOptionDef* def = print_config_def.get(key);
+    if (def != nullptr && def->default_value.get() != nullptr) {
+        const ConfigOptionBool* def_option = dynamic_cast<const ConfigOptionBool*>(def->default_value.get());
+        if (def_option != nullptr)
+            return def_option->value;
+    }
+    return fallback;
+}
+
+/// \brief Integer variant of global_process_preset_bool.
+static int global_process_preset_int(const std::string& key, int fallback)
+{
+    PresetBundle* bundle = wxGetApp().preset_bundle;
+    if (bundle != nullptr) {
+        const ConfigOptionInt* option = bundle->prints.get_edited_preset().config.option<ConfigOptionInt>(key);
+        if (option != nullptr)
+            return option->value;
+    }
+    const ConfigOptionDef* def = print_config_def.get(key);
+    if (def != nullptr && def->default_value.get() != nullptr) {
+        const ConfigOptionInt* def_option = dynamic_cast<const ConfigOptionInt*>(def->default_value.get());
+        if (def_option != nullptr)
+            return def_option->value;
+    }
+    return fallback;
+}
+
+/// \brief Resolve a global filament-feature slot (1-based) from the edited preset.
+/// \return 1-based slot, or 0 when the value is unset/out of range ("Default").
+static int global_filament_feature_slot(const std::string& key, int num_filaments)
+{
+    const int slot = global_process_preset_int(key, 0);
+    if (slot >= 1 && slot <= num_filaments)
+        return slot;
+    return 0;
+}
+
+/// \brief Whether support/raft is effectively generated for the given object.
+/// \details Effective value = object override if present, otherwise the global
+///          (edited preset) value. Support filaments only influence the slice
+///          when support or raft is actually generated; collecting them from
+///          an object with an inert leftover override is a false positive.
+static bool model_object_support_active(
+    const ModelConfig& object_config, bool global_enable_support, int global_raft_layers)
+{
+    const bool enable_support = object_config.has("enable_support") ?
+        object_config.get().opt_bool("enable_support") : global_enable_support;
+    if (enable_support)
+        return true;
+    const int raft_layers = object_config.has("raft_layers") ?
+        object_config.get().opt_int("raft_layers") : global_raft_layers;
+    return raft_layers > 0;
+}
+
 /// \brief Collect the 0-based filament slots actually used by objects on the given plate.
 /// \details Mirrors the slot-collection block of Plater::check_filament_temp_mixing so that
 ///          cold-plate incompatibility checking uses the same definition of "used filament".
 ///          Includes: plate config, per-object/volume configs, height-range modifier configs
-///          (layer_config_ranges), plus Plater working config
-///          (wipe_tower / support / wall / infill defaults when any object uses extruder=0).
-/// \param[in]  plate                 Non-null target plate.
-/// \param[in]  num_filaments         Total number of filaments in the current configuration.
-/// \param[in]  plater_working_config The Plater's current working config (this->config()).
-/// \param[in]  full_cfg              Merged full config (for resolving the global default extruder).
-/// \param[out] used_slots_0_based    Populated with every 0-based filament slot referenced on the plate.
+///          (layer_config_ranges), plus global feature defaults from the authoritative
+///          edited preset (wipe tower always; support only when support/raft is generated
+///          on the plate; wall / infill defaults when any object uses extruder=0).
+///          The Plater working config is deliberately NOT consulted: it is polluted by
+///          object-scope edits (see global_process_preset_bool).
+/// \param[in]  plate              Non-null target plate.
+/// \param[in]  num_filaments      Total number of filaments in the current configuration.
+/// \param[in]  full_cfg           Merged full config (for resolving the global default extruder).
+/// \param[out] used_slots_0_based Populated with every 0-based filament slot referenced on the plate.
 static void collect_used_filament_slots_on_plate(
     PartPlate* plate,
     int num_filaments,
-    const DynamicPrintConfig* plater_working_config,
     const DynamicPrintConfig& full_cfg,
     std::set<int>& used_slots_0_based)
 {
@@ -521,25 +603,36 @@ static void collect_used_filament_slots_on_plate(
     // Plate-local config
     collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
 
+    // Global support/raft state from the authoritative edited preset; see
+    // global_process_preset_bool for why the Plater working config must not
+    // be read here.
+    const bool global_enable_support = global_process_preset_bool("enable_support", false);
+    const int global_raft_layers = global_process_preset_int("raft_layers", 0);
+
     // Per-object + per-volume config
     bool uses_default_extruder = false;
+    bool support_active_on_plate = false;
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
         const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
         if (!model_object_is_on_plate(plate, obj_idx, model_object))
             continue;
-        collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
+        const bool support_active =
+            model_object_support_active(model_object->config, global_enable_support, global_raft_layers);
+        if (support_active)
+            support_active_on_plate = true;
+        collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based, support_active);
 
         // Height range modifiers override the extruder / feature filaments for
         // a z band; their configs live in layer_config_ranges, not in
         // object/volume configs.
         for (const auto& layer_range : model_object->layer_config_ranges)
-            collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based);
+            collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based, support_active);
 
         if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
             uses_default_extruder = true;
 
         for (const ModelVolume* model_volume : model_object->volumes) {
-            collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based);
+            collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based, support_active);
             for (int extruder_id : model_volume->get_extruders()) {
                 if (extruder_id >= 1 && extruder_id <= num_filaments)
                     used_slots_0_based.insert(extruder_id - 1);
@@ -547,28 +640,34 @@ static void collect_used_filament_slots_on_plate(
         }
     }
 
-    // Plater working config — global features (always apply) + feature-specific
-    // keys (only when at least one object uses the default extruder).
-    if (plater_working_config != nullptr) {
-        static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
-        for (const char* key : always_collect) {
-            const ConfigOptionInt* option = plater_working_config->option<ConfigOptionInt>(key);
-            if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                used_slots_0_based.insert(option->value - 1);
+    // Global feature filaments from the authoritative edited preset (see
+    // check_filament_temp_mixing for the rationale).
+    {
+        const int wipe_tower_slot = global_filament_feature_slot("wipe_tower_filament", num_filaments);
+        if (wipe_tower_slot >= 1)
+            used_slots_0_based.insert(wipe_tower_slot - 1);
+
+        if (support_active_on_plate) {
+            const int support_slot = global_filament_feature_slot("support_filament", num_filaments);
+            if (support_slot >= 1)
+                used_slots_0_based.insert(support_slot - 1);
+            const int support_interface_slot = global_filament_feature_slot("support_interface_filament", num_filaments);
+            if (support_interface_slot >= 1)
+                used_slots_0_based.insert(support_interface_slot - 1);
         }
 
         if (uses_default_extruder) {
             static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
             for (const char* key : default_keys) {
-                const ConfigOptionInt* option = plater_working_config->option<ConfigOptionInt>(key);
-                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                    used_slots_0_based.insert(option->value - 1);
+                const int slot = global_filament_feature_slot(key, num_filaments);
+                if (slot >= 1)
+                    used_slots_0_based.insert(slot - 1);
             }
         }
     }
 
     // Resolve the global default extruder if any object on this plate uses extruder=0.
-    // plater_working_config does not include "extruder"; read from full_cfg instead.
+    // The edited preset does not carry "extruder"; read from full_cfg instead.
     if (uses_default_extruder) {
         const ConfigOptionInt* extruder_opt = full_cfg.option<ConfigOptionInt>("extruder");
         if (extruder_opt != nullptr && extruder_opt->value >= 1 && extruder_opt->value <= num_filaments)
@@ -22606,20 +22705,34 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
         const int num_filaments = static_cast<int>(filament_type_option->values.size());
         collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
 
+        // Global support/raft state from the authoritative edited preset (see
+        // global_process_preset_bool: the Plater working config may carry
+        // object-scope overrides and must not be read here).
+        const bool global_enable_support = global_process_preset_bool("enable_support", false);
+        const int global_raft_layers = global_process_preset_int("raft_layers", 0);
+
         // ModelObject config
         bool uses_default_extruder = false;
+        bool support_active_on_plate = false;
         for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
         {
             const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
             if (!model_object_is_on_plate(plate, obj_idx, model_object))
                 continue;
-            collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
+            // Support filaments only count when this object actually
+            // generates support or raft; an inert leftover override must
+            // not pull its filament into the used set.
+            const bool support_active =
+                model_object_support_active(model_object->config, global_enable_support, global_raft_layers);
+            if (support_active)
+                support_active_on_plate = true;
+            collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based, support_active);
 
             // Height range modifiers override the extruder / feature filaments
             // for a z band; their configs live in layer_config_ranges, not in
             // object/volume configs.
             for (const auto& layer_range : model_object->layer_config_ranges)
-                collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based);
+                collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based, support_active);
 
             if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
                 uses_default_extruder = true;
@@ -22627,7 +22740,7 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
             // ModelVolume config
             for (const ModelVolume* model_volume : model_object->volumes)
             {
-                collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based);
+                collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based, support_active);
                 for (int extruder_id : model_volume->get_extruders())
                 {
                     if (extruder_id >= 1 && extruder_id <= num_filaments)
@@ -22636,21 +22749,27 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
             }
         }
 
-        // Collect from the Plater working config. The approach balances
-        // sensitivity against false positives:
-        // - Global features (wipe tower, support) always apply → always collected.
-        // - Feature-specific keys (wall_filament, infill) depend on the global
-        //   process defaults. They are only collected when at least one object
-        //   on the plate uses the default extruder (e=0), which means those
-        //   defaults WILL affect the actual slicing output.
+        // Global feature filaments, read from the authoritative edited preset.
+        // The Plater working config is polluted by object-scope edits (see
+        // global_process_preset_bool) and must not be used here.
+        // - wipe_tower_filament cannot be overridden per object → always applies.
+        // - support_filament / support_interface_filament are per-object
+        //   overridable; object overrides were collected above, so only the
+        //   global default for non-overriding objects is added here, and only
+        //   when support/raft is actually generated on this plate.
         {
-            // Always collect: features that cannot be overridden per-object.
-            static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
-            for (const char* key : always_collect)
+            const int wipe_tower_slot = global_filament_feature_slot("wipe_tower_filament", num_filaments);
+            if (wipe_tower_slot >= 1)
+                used_slots_0_based.insert(wipe_tower_slot - 1);
+
+            if (support_active_on_plate)
             {
-                const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
-                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                    used_slots_0_based.insert(option->value - 1);
+                const int support_slot = global_filament_feature_slot("support_filament", num_filaments);
+                if (support_slot >= 1)
+                    used_slots_0_based.insert(support_slot - 1);
+                const int support_interface_slot = global_filament_feature_slot("support_interface_filament", num_filaments);
+                if (support_interface_slot >= 1)
+                    used_slots_0_based.insert(support_interface_slot - 1);
             }
 
             // If any object uses e=0, the global process defaults for
@@ -22660,9 +22779,9 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
                 static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
                 for (const char* key : default_keys)
                 {
-                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
-                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                        used_slots_0_based.insert(option->value - 1);
+                    const int slot = global_filament_feature_slot(key, num_filaments);
+                    if (slot >= 1)
+                        used_slots_0_based.insert(slot - 1);
                 }
             }
         }
@@ -22942,24 +23061,35 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
         const int num_filaments = static_cast<int>(filament_type_option->values.size());
         collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
 
+        // Global support/raft state from the authoritative edited preset; see
+        // global_process_preset_bool for why the Plater working config must
+        // not be read here.
+        const bool global_enable_support = global_process_preset_bool("enable_support", false);
+        const int global_raft_layers = global_process_preset_int("raft_layers", 0);
+
         bool uses_default_extruder = false;
+        bool support_active_on_plate = false;
         for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
             const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
             if (!model_object_is_on_plate(plate, obj_idx, model_object))
                 continue;
-            collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
+            const bool support_active =
+                model_object_support_active(model_object->config, global_enable_support, global_raft_layers);
+            if (support_active)
+                support_active_on_plate = true;
+            collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based, support_active);
 
             // Height range modifiers override the extruder / feature filaments
             // for a z band; their configs live in layer_config_ranges, not in
             // object/volume configs.
             for (const auto& layer_range : model_object->layer_config_ranges)
-                collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based);
+                collect_filament_slots_from_model_config(layer_range.second, num_filaments, used_slots_0_based, support_active);
 
             if (!model_object->config.has("extruder") || model_object->config.extruder() == 0)
                 uses_default_extruder = true;
 
             for (const ModelVolume* model_volume : model_object->volumes) {
-                collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based);
+                collect_filament_slots_from_model_config(model_volume->config, num_filaments, used_slots_0_based, support_active);
                 for (int extruder_id : model_volume->get_extruders()) {
                     if (extruder_id >= 1 && extruder_id <= num_filaments)
                         used_slots_0_based.insert(extruder_id - 1);
@@ -22967,20 +23097,28 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
             }
         }
 
+        // Global feature filaments from the authoritative edited preset (see
+        // check_filament_temp_mixing for the rationale).
         {
-            static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
-            for (const char* key : always_collect) {
-                const ConfigOptionInt* option = this->config()->option<ConfigOptionInt>(key);
-                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                    used_slots_0_based.insert(option->value - 1);
+            const int wipe_tower_slot = global_filament_feature_slot("wipe_tower_filament", num_filaments);
+            if (wipe_tower_slot >= 1)
+                used_slots_0_based.insert(wipe_tower_slot - 1);
+
+            if (support_active_on_plate) {
+                const int support_slot = global_filament_feature_slot("support_filament", num_filaments);
+                if (support_slot >= 1)
+                    used_slots_0_based.insert(support_slot - 1);
+                const int support_interface_slot = global_filament_feature_slot("support_interface_filament", num_filaments);
+                if (support_interface_slot >= 1)
+                    used_slots_0_based.insert(support_interface_slot - 1);
             }
 
             if (uses_default_extruder) {
                 static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
                 for (const char* key : default_keys) {
-                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
-                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                        used_slots_0_based.insert(option->value - 1);
+                    const int slot = global_filament_feature_slot(key, num_filaments);
+                    if (slot >= 1)
+                        used_slots_0_based.insert(slot - 1);
                 }
             }
         }
@@ -23103,7 +23241,7 @@ Plater::ColdPlateCompatResult Plater::get_cold_plate_compat_state(int plate_inde
     // Collect used slots once (shared with filament_temp_mixing for parity).
     std::set<int> used_slots_0_based;
     const int num_filaments = static_cast<int>(filament_type_option->values.size());
-    collect_used_filament_slots_on_plate(plate, num_filaments, this->config(), full_cfg, used_slots_0_based);
+    collect_used_filament_slots_on_plate(plate, num_filaments, full_cfg, used_slots_0_based);
     if (used_slots_0_based.empty())
         return result;
 

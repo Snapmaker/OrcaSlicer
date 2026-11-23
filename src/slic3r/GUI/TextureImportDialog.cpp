@@ -8,10 +8,6 @@
 #include "format.hpp"
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
-// Phase 3 restores these with the auto-mix feature:
-//   #include "ColorDecomposeDialog.hpp"
-//   #include "ColorDecomposeSupport.hpp"
-//   #include "libslic3r/ColorDecomposeRecipe.hpp"
 #include "libslic3r/MeshRepair.hpp"
 #include "libslic3r/Color.hpp"
 #include <optional>
@@ -420,7 +416,7 @@ static std::string texture_normalize_color_hex(std::string hex)
     if (hex.front() != '#')
         hex = "#" + hex;
     // Local copy of decompose_normalize_color_hex (upstream ColorDecomposeSupport.cpp):
-    // truncate to #RRGGBB and uppercase. Phase 3 restores the shared helper.
+    // truncate to #RRGGBB and uppercase.
     if (hex.size() >= 7)
         hex = hex.substr(0, 7);
     std::transform(hex.begin(), hex.end(), hex.begin(), [](unsigned char c) {
@@ -466,7 +462,7 @@ static bool texture_entry_official_basic(const TextureFilamentEntry& entry)
         return false;
     // Local stand-in for official_basic_type_from_preset_name
     // (upstream ColorDecomposeSupport): recognize the default virtual filament
-    // preset family. Phase 3 restores the full color-code table mapping.
+    // preset family.
     auto official_basic_type_from_preset_name = [](const std::string& name) -> std::string {
         return starts_with_preset_name(name, DEFAULT_VIRTUAL_FILAMENT_NAME)
             ? std::string(DEFAULT_VIRTUAL_FILAMENT_SHORT_TYPE) : std::string();
@@ -607,8 +603,7 @@ public:
 
         // "+ Add Material" opens a native colour picker. Fork adaptation: upstream uses its
         // WebView-based ColorPickerDialog here, which is not ported; wxColourDialog covers the
-        // same pick-a-colour flow with the fork's standard native picker. The "Decompose
-        // Color" entry is Phase 3 (auto-mix) and stays absent meanwhile.
+        // same pick-a-colour flow with the fork's standard native picker.
         const bool add_enabled = !m_can_add_filament || m_can_add_filament();
         auto* add_label = new wxStaticText(this, wxID_ANY, _L("+ Add Material"));
         wxFont af = add_label->GetFont();
@@ -905,9 +900,9 @@ private:
 };
 
 // ============================================================
-// AutoMixSelectPopup (upstream :921-1037) returns in Phase 3 with the
-// auto-mix feature; show_auto_mix_popup()/apply_auto_standard_mix() are
-// stubbed meanwhile and m_btn_auto_mix stays hidden.
+// AutoMixSelectPopup (upstream :921-1037) is not ported;
+// show_auto_mix_popup()/apply_auto_standard_mix() are stubbed and
+// m_btn_auto_mix stays hidden.
 // ============================================================
 
 // ============================================================
@@ -2184,7 +2179,7 @@ TextureImportDialog::~TextureImportDialog()
 int TextureImportDialog::ShowModal()
 {
     if (m_state == TextureImportState::Idle && m_painted.face_colors.empty()) {
-        start_computation(get_original_color_count() <= 4, true);
+        start_computation(get_original_color_count() < 4, true);
 
         while (m_initial_computation_pending) {
             if (auto* event_loop = wxEventLoopBase::GetActive())
@@ -2590,8 +2585,8 @@ void TextureImportDialog::build_mapping_panel(wxWindow* parent, wxSizer* sizer)
 
     header_sizer->AddStretchSpacer();
 
-    // Phase 3: the auto-mix button is created for layout stability but stays
-    // hidden until AutoMixSelectPopup returns (upstream :2095-2123).
+    // The auto-mix button is created for layout stability but stays hidden
+    // until AutoMixSelectPopup is ported (upstream :2095-2123).
     m_btn_auto_mix = new Button(parent, _L("Auto mix"));
     {
         wxFont btn_font = m_btn_auto_mix->GetFont();
@@ -3544,33 +3539,26 @@ void TextureImportDialog::dismiss_filament_popup()
 
 void TextureImportDialog::show_auto_mix_popup()
 {
-    // Phase 3 stub - AutoMixSelectPopup (upstream :2986-3023) returns with the
-    // ColorDecompose port. The trigger button stays hidden meanwhile.
 }
 
 void TextureImportDialog::dismiss_auto_mix_popup()
 {
-    // Phase 3 stub - see show_auto_mix_popup().
 }
 
 void TextureImportDialog::set_auto_mix_mode(TextureAutoMixMode mode)
 {
-    // Phase 3 stub - see show_auto_mix_popup().
     (void) mode;
 }
 
 void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
 {
-    // Phase 3 stub - full body (upstream :3245-3297) needs
-    // Slic3r::lookup_standard_recipe / ColorDecomposeRecipe, ported with the
-    // auto-mix feature.
     (void) mode;
 }
 
 void TextureImportDialog::reset_auto_mix()
 {
-    // Phase 3 stub - with apply_auto_standard_mix() stubbed, m_auto_mix_applied
-    // never becomes true and the reset button stays hidden (upstream :3299-3327).
+    // apply_auto_standard_mix() never flips m_auto_mix_applied, so the reset
+    // button stays hidden (upstream :3299-3327).
 }
 
 void TextureImportDialog::update_auto_mix_reset_visibility()
@@ -3585,7 +3573,6 @@ void TextureImportDialog::update_auto_mix_reset_visibility()
 
 bool TextureImportDialog::add_decomposed_mixed_filament(size_t row_index)
 {
-    // Phase 3 stub - full body (upstream :3339-...) needs ColorDecomposeSupport.
     (void) row_index;
     return false;
 }

@@ -11705,8 +11705,8 @@ bool Plater::priv::run_textured_mesh_import_dialog(Slic3r::Model& loaded_model, 
         filament_entries.reserve(total);
         for (size_t i = 0; i < total; ++i) {
             TextureFilamentEntry entry;
-            // Fork has no filament_is_mixed option (upstream marks ExistingMixed here);
-            // mixed filaments return with Phase 3, so every project filament is physical.
+            // Fork has no filament_is_mixed option (upstream marks ExistingMixed here),
+            // so every project filament is physical.
             entry.kind = TextureFilamentKind::ExistingPhysical;
             entry.dialog_index = (int)filament_entries.size();
             entry.project_config_index = i;
@@ -11832,7 +11832,7 @@ void Plater::priv::apply_textured_mesh_import_result(Slic3r::Model& loaded_model
         ++new_physical_order;
     }
 
-    // Phase 3: upstream creates pending *mixed* filaments here
+    // Upstream creates pending *mixed* filaments here
     // (create_mixed_filament_from_result, MixedFilamentResult). The fork dialog cannot produce
     // mixed filaments yet (no auto-mix UI), so result.new_mixed_filaments is always empty.
 

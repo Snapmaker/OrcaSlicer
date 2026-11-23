@@ -1656,6 +1656,9 @@ struct GapPreviewState {
     // Number of merge_events currently reflected in display_face_colors.
     int                                        applied_events = 0;
     double                                     gap_total_area = 0.0;
+    // Largest merge percent that keeps every palette color alive (computed with
+    // the patch set); the slider is clamped to this when applying.
+    double                                     max_merge_percent = kGapAreaMaxPercent;
     std::vector<std::array<std::size_t, 3>>    simplified_face_colors;
     std::vector<std::array<std::size_t, 3>>    simplified_cluster_colors;
     std::vector<std::array<std::size_t, 3>>    display_face_colors;
@@ -1923,6 +1926,47 @@ void build_gap_merge_events(
     }
 }
 
+// Largest merge percent whose event prefix keeps every palette color alive.
+// Colors never revive once emptied (no region carries them, so they can never
+// be a merge target again), which makes the safe prefixes a contiguous range:
+// a single counting walk over the event list finds the first event that would
+// empty a color, and that event's key_area bounds the safe threshold. Pure
+// bookkeeping — the display colors are never touched.
+double palette_safe_gap_cap(const GapPreviewState& state)
+{
+    if (state.merge_events.empty() || state.gap_total_area <= 0.0)
+        return kGapAreaMaxPercent;
+
+    std::map<std::array<std::size_t, 3>, std::size_t> color_face_count;
+    for (const auto& color : state.simplified_face_colors)
+        ++color_face_count[color];
+
+    const int npatches = (int)state.color_patches.size();
+    for (size_t ei = 0; ei < state.merge_events.size(); ++ei) {
+        const GapMergeEvent& ev = state.merge_events[ei];
+        if (ev.from_color == ev.to_color)
+            continue;
+        std::size_t member_faces = 0;
+        for (int m = ev.member_begin; m < ev.member_end; ++m) {
+            const int pid = state.merge_members[m];
+            if (pid >= 0 && pid < npatches)
+                member_faces += state.color_patches[pid].patch_faces.size();
+        }
+        auto it = color_face_count.find(ev.from_color);
+        if (it == color_face_count.end() || it->second <= member_faces) {
+            // This event would empty from_color: stop before it. A threshold at
+            // exactly key_area selects the prefix below it (lower_bound counts
+            // key_area < threshold), so floor to hundredths to stay safe even
+            // when adjacent events share a key_area.
+            const double percent = std::floor(ev.key_area / state.gap_total_area * 100.0 * 100.0) / 100.0;
+            return std::clamp(percent, 0.0, kGapAreaMaxPercent);
+        }
+        it->second                      -= member_faces;
+        color_face_count[ev.to_color]   += member_faces;
+    }
+    return kGapAreaMaxPercent;
+}
+
 void build_gap_preview_regions(
     GapPreviewState& state,
     const Slic3r::PaintedMesh& painted,
@@ -1935,6 +1979,7 @@ void build_gap_preview_regions(
         state.gap_total_area += patch.patch_area;
     build_gap_merge_events(state, std::move(shared),
                            (kGapAreaMaxPercent / 100.0) * state.gap_total_area);
+    state.max_merge_percent = palette_safe_gap_cap(state);
 }
 
 std::unique_ptr<GapPreviewState> make_gap_preview_state(const Slic3r::PaintedMesh& painted)
@@ -2408,10 +2453,25 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
     smooth_sizer->Add(m_smooth_spin, 0, wxALIGN_CENTER_VERTICAL);
     sizer->Add(smooth_sizer, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
 
+    wxBoxSizer* gap_header_sizer = new wxBoxSizer(wxHORIZONTAL);
     wxStaticText* lbl_gap = new wxStaticText(parent, wxID_ANY, _L("Gap Area") + " (%)");
     lbl_gap->SetForegroundColour(label_fg);
     lbl_gap->SetFont(lbl_gap->GetFont().Bold());
-    sizer->Add(lbl_gap, 0, wxBOTTOM, FromDIP(4));
+    gap_header_sizer->Add(lbl_gap, 0, wxALIGN_CENTER_VERTICAL);
+    gap_header_sizer->AddStretchSpacer();
+
+    m_keep_colors_cb = new wxCheckBox(parent, wxID_ANY, _L("Keep Colors"));
+    m_keep_colors_cb->SetToolTip(_L("Merge gaps without reducing the selected color count; "
+                                    "an excessive Gap Area is capped to the largest value that keeps every color"));
+    m_keep_colors_cb->SetForegroundColour(label_fg);
+    m_keep_colors_cb->SetValue(true);
+    m_keep_colors_cb->Bind(wxEVT_CHECKBOX, &TextureImportDialog::on_keep_colors_toggled, this);
+    gap_header_sizer->Add(m_keep_colors_cb, 0, wxALIGN_CENTER_VERTICAL);
+    // Hidden for now: the default (checked) behaviour — an excessive Gap Area
+    // rolls back to the largest value that keeps every color — is unconditional.
+    // Show the checkbox again to let the user turn the constraint off.
+    m_keep_colors_cb->Hide();
+    sizer->Add(gap_header_sizer, 0, wxEXPAND | wxBOTTOM, FromDIP(4));
 
     wxBoxSizer* gap_sizer = new wxBoxSizer(wxHORIZONTAL);
     m_gap_slider = new AccentSlider(parent, gap_value_to_slider(m_param_gap_area), 0,
@@ -2654,6 +2714,8 @@ void TextureImportDialog::update_ui_for_state()
         m_gap_slider->Enable(!computing);
     if (m_gap_spin)
         m_gap_spin->Enable(!computing);
+    if (m_keep_colors_cb)
+        m_keep_colors_cb->Enable(!computing);
     m_btn_apply->Enable(!computing);
     m_btn_color_4->Enable(!computing);
     m_btn_color_8->Enable(!computing);
@@ -2849,13 +2911,19 @@ void TextureImportDialog::on_computation_complete(wxCommandEvent&)
     // value (a recompute keeps the user's gap setting — fork divergence,
     // upstream resets the slider instead) and fold the merged colors into
     // m_painted BEFORE the match chain below, so matching, rows and the
-    // filament-map view are all built on the final merged palette.
+    // filament-map view are all built on the final merged palette. The merge
+    // must not reduce the palette, so the threshold snaps down to the largest
+    // value keeping every color alive, and the slider follows.
     {
         std::unique_ptr<GapPreviewState> pending_gap;
         {
             std::lock_guard<std::mutex> lock(m_result_mutex);
             pending_gap = std::move(m_pending_gap_preview);
         }
+        const double cap = m_keep_colors
+            ? (pending_gap ? pending_gap->max_merge_percent : kGapAreaMaxPercent)
+            : kGapAreaMaxPercent;
+        set_gap_value(std::min(m_param_gap_area, cap), true);
         install_gap_preview(std::move(pending_gap));
         fold_gap_into_painted();
     }
@@ -2907,6 +2975,7 @@ void TextureImportDialog::on_computation_complete(wxCommandEvent&)
     m_applied_color_count = m_param_color_count;
     m_applied_smooth      = m_param_smooth;
     m_applied_gap_area    = m_param_gap_area;
+    m_applied_keep_colors = m_keep_colors;
 
     set_state(TextureImportState::Ready);
     update_drop_warning_visibility();
@@ -4422,6 +4491,13 @@ void TextureImportDialog::on_gap_spin_commit()
     // apply_gap_area();  // Apply-gated, see on_gap_slider_changed.
 }
 
+void TextureImportDialog::on_keep_colors_toggled(wxCommandEvent&)
+{
+    m_keep_colors = !m_keep_colors_cb || m_keep_colors_cb->GetValue();
+    // Apply-gated like the gap value itself: toggling marks the params dirty.
+    update_confirm_button_state();
+}
+
 void TextureImportDialog::on_apply_clicked(wxCommandEvent&)
 {
     // Full recompute when the clustering inputs changed (or there is nothing
@@ -4434,11 +4510,19 @@ void TextureImportDialog::on_apply_clicked(wxCommandEvent&)
     }
 
     // Gap-only change: replay the precomputed merge list at the new threshold
-    // and fold it into m_painted without re-running the clustering.
+    // and fold it into m_painted without re-running the clustering. With Keep
+    // Colors the merge must not reduce the palette, so the threshold snaps
+    // down to the largest value keeping every color alive, and the slider
+    // follows; without it the merge may absorb whole colors and the count
+    // slider syncs to the merged result.
+    const double cap = m_keep_colors ? gap_preview().max_merge_percent : kGapAreaMaxPercent;
+    set_gap_value(std::min(m_param_gap_area, cap), true);
     apply_gap_area();
     commit_gap_area_to_painted();
+    // Same value as the clustering output when Keep Colors is on (no change).
     set_color_count_value(visible_simplified_color_count(), true);
     m_applied_gap_area    = m_param_gap_area;
+    m_applied_keep_colors = m_keep_colors;
     m_applied_color_count = m_param_color_count;
     m_applied_smooth      = m_param_smooth;
     update_confirm_button_state();
@@ -4523,7 +4607,8 @@ bool TextureImportDialog::is_params_dirty() const
         return false;
     return m_param_color_count != m_applied_color_count
         || m_param_smooth      != m_applied_smooth
-        || m_param_gap_area    != m_applied_gap_area;
+        || m_param_gap_area    != m_applied_gap_area
+        || m_keep_colors       != m_applied_keep_colors;
 }
 
 void TextureImportDialog::update_drop_warning_visibility()

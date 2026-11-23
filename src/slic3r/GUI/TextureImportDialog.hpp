@@ -305,6 +305,7 @@ private:
     void on_smooth_spin_text_changed(wxCommandEvent& evt);
     void on_gap_slider_changed(wxCommandEvent& evt);
     void on_gap_spin_commit();
+    void on_keep_colors_toggled(wxCommandEvent& evt);
     void on_apply_clicked(wxCommandEvent& evt);
     void on_auto_merge_toggled(wxCommandEvent& evt);
     void highlight_view_button(int view_index);
@@ -411,6 +412,7 @@ private:
     SpinInput*    m_smooth_spin    = nullptr;
     AccentSlider* m_gap_slider     = nullptr;
     TextInput*    m_gap_spin       = nullptr;
+    wxCheckBox*   m_keep_colors_cb = nullptr;
     Button*       m_btn_apply      = nullptr;
 
     wxCheckBox*           m_auto_merge_cb = nullptr;
@@ -441,10 +443,14 @@ private:
     // Gap merge threshold in percent of total mesh area, 0..5. 0 disables merging.
     // Stored as double; the slider works in hundredths (0..500), the spin shows %.2f.
     double m_param_gap_area   = 0.0;
+    // When set, gap merging must keep every palette color alive: an excessive
+    // threshold is capped to the largest value that preserves the color count.
+    bool   m_keep_colors      = true;
 
     int   m_applied_color_count = -1;
     int   m_applied_smooth      = -1;
     double m_applied_gap_area   = 0.0;
+    bool   m_applied_keep_colors = true;
     wxStaticText* m_hint_label      = nullptr;
     wxStaticText* m_lbl_color_counts = nullptr;
 

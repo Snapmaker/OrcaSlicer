@@ -163,6 +163,9 @@ static std::vector<Vec3i32> face_neighbors_from_faces(const std::vector<stl_tria
 // boundary faces of the selection) are left for the caller's stitching step. Rules:
 //  - original vertices lying on the patch boundary (an edge with no second selected
 //    face) keep their coordinates unchanged (weight 1 on themselves),
+//  - vertices referenced by faces OUTSIDE the selection (the vertex_boundary_extra
+//    flag) are treated like boundary vertices and stay fixed: moving them would
+//    deform the untouched part of the mesh,
 //  - a new vertex inserted on such a boundary edge is placed at the exact midpoint of
 //    the two endpoints, so the subdivided boundary stays on the original edge; the
 //    same midpoint rule applies to any interior edge whose both endpoints are boundary
@@ -178,7 +181,8 @@ static std::vector<Vec3i32> face_neighbors_from_faces(const std::vector<stl_tria
 static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_vertex>&                    vertices,
                                                           const std::vector<stl_triangle_vertex_indices>&  faces,
                                                           const std::vector<char>&                         subdivide_face,
-                                                          std::map<std::pair<uint32_t, uint32_t>, uint32_t>* edge_new_vertex_out = nullptr)
+                                                          std::map<std::pair<uint32_t, uint32_t>, uint32_t>* edge_new_vertex_out = nullptr,
+                                                          const std::vector<char>*                         vertex_boundary_extra = nullptr)
 {
     const size_t vertex_count = vertices.size();
     const size_t face_count   = faces.size();
@@ -214,6 +218,11 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
                 vertex_on_boundary[b] = 1;
             }
         }
+    }
+    if (vertex_boundary_extra != nullptr) {
+        // Vertices referenced by faces outside the selection stay fixed as well.
+        for (size_t v = 0; v < vertex_count; ++v)
+            vertex_on_boundary[v] |= (*vertex_boundary_extra)[v];
     }
 
     for (size_t face = 0; face < face_count; ++face) {
@@ -265,6 +274,25 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
 
     // Reposition the original vertices: boundary vertices stay fixed, interior vertices
     // follow the standard Loop weights.
+    //
+    // The Loop position is only a suggestion: around a concave boundary (e.g. a fan
+    // filling a notch) it can fall outside the local star of the vertex, and moving
+    // there flips the incident faces. Clamp the displacement so that every incident
+    // selected face keeps its current orientation: the oriented area of a face is
+    // linear in the displacement (only one corner moves at a time), so the largest
+    // safe fraction follows directly from the area at the two endpoints.
+    //
+    // Vertex -> incident selected faces, built once for the clamps below. The faces
+    // keep their orientation across the loop: each vertex is clamped against the
+    // positions of the other corners AFTER their own clamps were applied.
+    std::vector<std::vector<int>> vertex_faces(vertex_count);
+    for (size_t face = 0; face < face_count; ++face) {
+        const stl_triangle_vertex_indices& tri = faces[face];
+        vertex_faces[size_t(tri[0])].push_back(int(face));
+        vertex_faces[size_t(tri[1])].push_back(int(face));
+        vertex_faces[size_t(tri[2])].push_back(int(face));
+    }
+
     for (size_t v = 0; v < vertex_count; ++v) {
         if (vertex_on_boundary[v])
             continue;
@@ -275,7 +303,34 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
         stl_vertex    sum = stl_vertex::Zero();
         for (uint32_t nb : vertex_neighbors[v])
             sum += vertices[nb];
-        out.vertices[v] = (1.f - float(n) * beta) * vertices[v] + beta * sum;
+        const stl_vertex loop_pos = (1.f - float(n) * beta) * vertices[v] + beta * sum;
+        const stl_vertex orig     = out.vertices[v];
+
+        // Largest displacement fraction that keeps every incident face oriented the
+        // way it is now (0 = the vertex must not move at all).
+        double t = 1.;
+        for (int f : vertex_faces[v]) {
+            const stl_triangle_vertex_indices& tri = faces[size_t(f)];
+            Vec3d corner[3], moved[3];
+            for (int i = 0; i < 3; ++i) {
+                corner[i] = out.vertices[size_t(tri[i])].cast<double>();
+                moved[i]  = (size_t(tri[i]) == v) ? loop_pos.cast<double>() : corner[i];
+            }
+            const Vec3d   n  = (corner[1] - corner[0]).cross(corner[2] - corner[0]);
+            const double  a0 = n.squaredNorm(); // current oriented area along its own normal, > 0
+            const double  a1 = n.dot((moved[1] - moved[0]).cross(moved[2] - moved[0]));
+            if (a0 <= 0.) {
+                // Degenerate incident face: any move is unsafe, keep the vertex put.
+                t = 0.;
+                break;
+            }
+            if (a1 < 0.) {
+                // a(t) = a0 + t * (a1 - a0); a(t) > 0 <=> t < a0 / (a0 - a1).
+                // Shave off a margin so the sliver stays strictly positive.
+                t = std::min(t, a0 / (a0 - a1) * 0.9999);
+            }
+        }
+        out.vertices[v] = (orig + (loop_pos - orig) * float(t)).eval();
     }
 
     if (edge_new_vertex_out != nullptr)
@@ -292,6 +347,11 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
     // subdivision and its edge pairing, so duplicates or non-manifold edges outside the
     // selection cannot break this algorithm - untouched faces are appended verbatim.
     // The vertex array is kept untouched as well: original vertex indexes are preserved.
+    // The patch BOUNDARY, however, is detected against the full mesh (see the
+    // neighborhood pass below): an edge paired inside the selection that still has
+    // incident faces outside it, and any vertex referenced by unselected faces, are
+    // degraded to boundary treatment so the untouched geometry keeps its exact
+    // coordinates.
     std::vector<char> is_selected(origin.indices.size(), 0);
     for (uint32_t facet : facet_indices)
         if (facet < origin.indices.size())
@@ -338,6 +398,60 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
     const std::vector<stl_vertex>& vertices = origin.vertices;
 
     auto selected_ff_index = face_neighbors_from_faces(selected_faces);
+
+    // ---- Neighborhood detection: the patch boundary must respect the FULL mesh,
+    // not just the selection. Without this, the subdivision would move geometry
+    // that the untouched faces still reference and tear them off. ----
+
+    // Any vertex referenced by a face OUTSIDE the selection stays fixed: moving it
+    // would deform the untouched geometry (e.g. two meshes touching at one vertex).
+    std::vector<char> vertex_touched_by_unselected(vertices.size(), 0);
+    for (size_t i = 0; i < origin.indices.size(); ++i) {
+        if (is_selected[i])
+            continue;
+        const stl_triangle_vertex_indices& face = origin.indices[i];
+        vertex_touched_by_unselected[size_t(face(0))] = 1;
+        vertex_touched_by_unselected[size_t(face(1))] = 1;
+        vertex_touched_by_unselected[size_t(face(2))] = 1;
+    }
+
+    // An edge paired inside the selection may still have incident faces outside it
+    // (a non-manifold input edge, e.g. a flap attached to a tetrahedron edge). Left
+    // paired, the subdivision would replace the edge by a Loop point off the
+    // original edge line and move its endpoints, tearing the flap. Degrade such
+    // edges to patch boundary on BOTH paired sides (each slot is checked against
+    // the same key set, so the pair is cleared symmetrically): the existing
+    // boundary rules then keep the endpoints fixed and the shared edge unsplit.
+    std::map<std::pair<uint32_t, uint32_t>, uint32_t> outside_edge_count;
+    for (const auto& face : origin.indices) {
+        const uint32_t v[3] = {uint32_t(face(0)), uint32_t(face(1)), uint32_t(face(2))};
+        for (int j = 0; j < 3; ++j) {
+            const uint32_t a = std::min(v[j], v[(j + 1) % 3]);
+            const uint32_t b = std::max(v[j], v[(j + 1) % 3]);
+            ++outside_edge_count[{a, b}];
+        }
+    }
+    for (const auto& face : selected_faces) {
+        const uint32_t v[3] = {uint32_t(face(0)), uint32_t(face(1)), uint32_t(face(2))};
+        for (int j = 0; j < 3; ++j) {
+            const uint32_t a = std::min(v[j], v[(j + 1) % 3]);
+            const uint32_t b = std::max(v[j], v[(j + 1) % 3]);
+            --outside_edge_count[{a, b}];
+        }
+    }
+    for (size_t face = 0; face < selected_faces.size(); ++face) {
+        const stl_triangle_vertex_indices& tri = selected_faces[face];
+        for (int j = 0; j < 3; ++j) {
+            if (selected_ff_index[face][j] < 0)
+                continue;
+            const uint32_t a = uint32_t(tri[j]);
+            const uint32_t b = uint32_t(tri[(j + 1) % 3]);
+            const auto key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
+            const auto it  = outside_edge_count.find(key);
+            if (it != outside_edge_count.end() && it->second > 0)
+                selected_ff_index[face][j] = -1;
+        }
+    }
 
     // For every selected face record the slots of its inner edges (edges shared with
     // another selected face), indexed by face: an entry holding all three slots marks
@@ -387,7 +501,7 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
     // Edge -> index of the vertex the subdivision inserted on that edge (the edges of
     // the split faces; the split-face edges shared with boundary faces are included).
     std::map<std::pair<uint32_t, uint32_t>, uint32_t> edge_new_vertex;
-    indexed_triangle_set                              its = loop_subdivide_fixed_boundary(vertices, selected_faces, subdivide_face, &edge_new_vertex);
+    indexed_triangle_set                              its = loop_subdivide_fixed_boundary(vertices, selected_faces, subdivide_face, &edge_new_vertex, &vertex_touched_by_unselected);
 
     // Midpoints manually created for inner edges that never entered the subdivided patch
     // (both incident faces are boundary faces); cached so that boundary faces sharing such

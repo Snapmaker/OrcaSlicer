@@ -2077,6 +2077,16 @@ bool MainFrame::get_enable_print_status()
 {
     bool enable = true;
 
+    // An imported gcode.3mf (m_exported_file) and a standalone G-code file
+    // opened in the viewer (m_only_gcode) carry no model objects, so every
+    // action behind the print button (print / send / export) bails out early
+    // in the Plater. Keep the button disabled instead of letting clicks
+    // silently do nothing.
+    if (m_plater->only_gcode_mode() || m_plater->using_exported_file()) {
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ": in gcode/exported 3mf mode, return false!";
+        return false;
+    }
+
     PartPlateList &part_plate_list = m_plater->get_partplate_list();
     PartPlate *current_plate = part_plate_list.get_curr_plate();
     bool is_all_plates = wxGetApp().plater()->get_preview_canvas3D()->is_all_plates_selected();

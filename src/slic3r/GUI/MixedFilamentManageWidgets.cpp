@@ -251,10 +251,12 @@ void BatchSwatchGrid::on_paint(wxPaintEvent&)
             else
                 paint_clr_swatch(dc, size, swatch.color, swatch.label, wxGetApp().dark_mode(), padding);
             const wxColour text = swatch.color.GetLuminance() > 0.5 ? wxColour(50, 58, 61) : *wxWHITE;
-            dc.SetPen(wxPen(text, FromDIP(2)));
-            if (m_marks[index] < 0)
-                dc.DrawLine(size.x - FromDIP(9), FromDIP(4), size.x - FromDIP(4), FromDIP(9));
-            else if (m_marks[index] > 0) {
+            if (m_marks[index] < 0) {
+                // Corner-to-corner diagonal removal slash, stroke-width 2.
+                dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#000000")), FromDIP(2)));
+                dc.DrawLine(padding, padding, size.x - padding, size.y - padding);
+            } else if (m_marks[index] > 0) {
+                dc.SetPen(wxPen(text, FromDIP(2)));
                 const int cx = size.x / 2, cy = size.y / 2, r = size.x / 4;
                 dc.DrawLine(cx - r, cy, cx + r, cy);
                 dc.DrawLine(cx, cy - r, cx, cy + r);
@@ -312,7 +314,7 @@ void BatchSwatchGrid::on_key_down(wxKeyEvent& event)
 }
 
 BatchCheckBox::BatchCheckBox(wxWindow* parent, std::function<void()> on_clicked)
-    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(parent->FromDIP(16), parent->FromDIP(16)), wxBORDER_NONE | wxWANTS_CHARS)
+    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxSize(parent->FromDIP(18), parent->FromDIP(18)), wxBORDER_NONE | wxWANTS_CHARS)
     , m_on_clicked(std::move(on_clicked))
 {
     rescale();
@@ -350,17 +352,19 @@ void BatchCheckBox::on_paint(wxPaintEvent&)
     dc.SetBackground(wxBrush(GetParent() ? GetParent()->GetBackgroundColour() : StateColor::darkModeColorFor(*wxWHITE)));
     dc.Clear();
 
-    // Checkbox border (adaptive color on dark mode and hover)
-    wxColor border_color;
-    if (wxGetApp().dark_mode()) {
-        border_color = m_hovered ? *wxWHITE : wxColor(80, 80, 80);
-    } else {
-        border_color = m_hovered ? wxColor(26, 26, 26) : wxColor(204, 204, 204);
-    }
+    // Checkbox border (dark mode via the gDarkColors table). Hover must not
+    // darken the border: the near-black hover outline read as an unintended
+    // black ring around the select-all/semi-select boxes.
+    const wxColor border_color = StateColor::darkModeColorFor(wxColour("#D1D5DC"));
 
-    dc.SetPen(wxPen(border_color, FromDIP(1)));
+    // Inset the stroke by half its width so it never straddles the window edge:
+    // a clipped, edge-straddling stroke squared off the rounded corners and left
+    // what looked like an extra ring outside them.
+    const int pen_w = FromDIP(1);
+    const int inset = (pen_w + 1) / 2;
+    dc.SetPen(wxPen(border_color, pen_w));
     dc.SetBrush(*wxTRANSPARENT_BRUSH);
-    dc.DrawRoundedRectangle(0, 0, s.x, s.y, FromDIP(2));
+    dc.DrawRoundedRectangle(inset, inset, s.x - 2 * inset, s.y - 2 * inset, FromDIP(2));
 
     if (m_state == 1) {
         // State 1: Box
@@ -609,8 +613,99 @@ void CollapsibleSubSection::rescale()
 
 void BatchCheckBox::rescale()
 {
-    SetMinSize(FromDIP(wxSize(16, 16)));
+    SetMinSize(FromDIP(wxSize(18, 18)));
     SetSize(GetMinSize());
+}
+
+BatchPillButton::BatchPillButton(wxWindow* parent, const wxString& label, std::function<void()> on_clicked)
+    : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE | wxWANTS_CHARS)
+    , m_on_clicked(std::move(on_clicked))
+    , m_label(label)
+{
+    SetBackgroundStyle(wxBG_STYLE_PAINT);
+    SetCursor(wxCursor(wxCURSOR_HAND));
+    SetDoubleBuffered(true);
+    rescale();
+
+    Bind(wxEVT_PAINT, &BatchPillButton::on_paint, this);
+    Bind(wxEVT_ENTER_WINDOW, &BatchPillButton::on_enter, this);
+    Bind(wxEVT_LEAVE_WINDOW, &BatchPillButton::on_leave, this);
+    Bind(wxEVT_LEFT_UP, &BatchPillButton::on_left_up, this);
+    Bind(wxEVT_KEY_DOWN, [this](wxKeyEvent& event) {
+        if (event.GetKeyCode() == WXK_SPACE || event.GetKeyCode() == WXK_RETURN) {
+            if (m_on_clicked)
+                m_on_clicked();
+        } else
+            event.Skip();
+    });
+}
+
+void BatchPillButton::update_min_size()
+{
+    wxClientDC dc(this);
+    dc.SetFont(::Label::Body_10);
+    const wxSize text = dc.GetTextExtent(m_label);
+    SetMinSize(wxSize(text.x + 2 * FromDIP(8), FromDIP(20)));
+    SetSize(GetMinSize());
+}
+
+void BatchPillButton::set_label(const wxString& label)
+{
+    if (m_label == label)
+        return;
+    m_label = label;
+    update_min_size();
+    Refresh();
+}
+
+void BatchPillButton::set_style(const wxColour& background, const wxColour& background_hover, const wxColour& text)
+{
+    m_background       = background;
+    m_background_hover = background_hover;
+    m_text_color       = text;
+    Refresh();
+}
+
+void BatchPillButton::rescale() { update_min_size(); }
+
+void BatchPillButton::on_paint(wxPaintEvent&)
+{
+    wxPaintDC    pdc(this);
+    wxGCDC       dc(pdc);
+    const wxSize s = GetClientSize();
+
+    dc.SetBackground(wxBrush(GetParent() ? GetParent()->GetBackgroundColour() : StateColor::darkModeColorFor(*wxWHITE)));
+    dc.Clear();
+
+    dc.SetPen(*wxTRANSPARENT_PEN);
+    dc.SetBrush(wxBrush(m_hovered ? m_background_hover : m_background));
+    dc.DrawRoundedRectangle(0, 0, s.x, s.y, s.y / 2);
+
+    dc.SetFont(::Label::Body_10);
+    dc.SetTextForeground(m_text_color);
+    const wxSize text = dc.GetTextExtent(m_label);
+    dc.DrawText(m_label, (s.x - text.x) / 2, (s.y - text.y) / 2);
+}
+
+void BatchPillButton::on_enter(wxMouseEvent& event)
+{
+    m_hovered = true;
+    Refresh();
+    event.Skip();
+}
+
+void BatchPillButton::on_leave(wxMouseEvent& event)
+{
+    m_hovered = false;
+    Refresh();
+    event.Skip();
+}
+
+void BatchPillButton::on_left_up(wxMouseEvent& event)
+{
+    if (m_on_clicked)
+        m_on_clicked();
+    event.Skip();
 }
 
 } // namespace Slic3r::GUI

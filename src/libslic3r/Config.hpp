@@ -1676,7 +1676,7 @@ class ConfigOptionEnumsGenericTempl : public ConfigOptionInts
 public:
     ConfigOptionEnumsGenericTempl(const t_config_enum_values *keys_map = nullptr) : keys_map(keys_map) {}
     explicit ConfigOptionEnumsGenericTempl(const t_config_enum_values *keys_map, size_t size, int value) : ConfigOptionInts(size, value), keys_map(keys_map) {}
-    explicit ConfigOptionEnumsGenericTempl(std::initializer_list<int> il) : ConfigOptionInts(std::move(il)), keys_map(keys_map) {}
+    explicit ConfigOptionEnumsGenericTempl(std::initializer_list<int> il) : ConfigOptionInts(std::move(il)), keys_map(nullptr) {}
     explicit ConfigOptionEnumsGenericTempl(const std::vector<int> &vec) : ConfigOptionInts(vec) {}
     explicit ConfigOptionEnumsGenericTempl(std::vector<int> &&vec) : ConfigOptionInts(std::move(vec)) {}
 
@@ -1700,7 +1700,11 @@ public:
         if (rhs->type() != this->type())
             throw ConfigurationError("ConfigOptionEnumGeneric: Assigning an incompatible type");
         // rhs could be of the following type: ConfigOptionEnumsGeneric
-        this->values = dynamic_cast<const ConfigOptionEnumsGenericTempl *>(rhs)->values;
+        const auto *rhs_enums = dynamic_cast<const ConfigOptionEnumsGenericTempl *>(rhs);
+        this->values = rhs_enums->values;
+        // Static configs copy the definition's default into a member that has no map yet.
+        if (this->keys_map == nullptr)
+            this->keys_map = rhs_enums->keys_map;
     }
 
     std::string serialize() const override
@@ -1743,6 +1747,14 @@ public:
                     continue;
                 }
             }
+            else if (this->keys_map == nullptr) {
+                // No enum map (option created from a bare default): accept the numeric form.
+                try {
+                    this->values.push_back(std::stoi(item_str));
+                } catch (const std::exception &) {
+                    return false;
+                }
+            }
             else {
                 auto it = this->keys_map->find(item_str);
                 if (it == this->keys_map->end())
@@ -1761,6 +1773,10 @@ private:
                 ss << "nil";
             else
                 throw ConfigurationError("Serializing NaN");
+        }
+        else if (this->keys_map == nullptr) {
+            // No enum map (option created from a bare default): write the numeric form.
+            ss << v;
         }
         else {
             for (const auto& kvp : *this->keys_map)

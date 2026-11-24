@@ -364,8 +364,10 @@ void CStackWalker::GetModuleInformation(LPMODULE_INFO pmi)
 
 	if (dwInfoSize > 0)
 	{
-		LPVOID lpData = new byte[dwInfoSize];
-		ZeroMemory(lpData, dwInfoSize * sizeof(byte));
+		// BYTE (windef.h) rather than `byte`: rpcndr.h's `byte` typedef is excluded by
+		// WIN32_LEAN_AND_MEAN, which libslic3r now passes on the command line.
+		LPVOID lpData = new BYTE[dwInfoSize];
+		ZeroMemory(lpData, dwInfoSize * sizeof(BYTE));
 
 		if (GetFileVersionInfo(pmi->szModulePath, dwHandle, dwInfoSize, lpData) > 0 )
 		{

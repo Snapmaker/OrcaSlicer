@@ -15913,6 +15913,115 @@ msgstr "  • 接触面图案 → 交叠直线\n"
 msgid "  • Interface spacing: %.2f → 0 mm\n"
 msgstr "  • 接触面间距：%.2f → 0 mm\n"
 
+msgid "+ Add Material"
+msgstr "+ 添加材料"
+
+msgid "Applying texture colors..."
+msgstr "正在应用纹理颜色..."
+
+msgid "Auto-merge same filament"
+msgstr "自动合并相同耗材丝"
+
+msgid "Automatically determine the optimal color count only and recompute filament mapping"
+msgstr "仅自动确定最佳颜色数量，并重新计算耗材丝映射"
+
+msgid "Automatically merge identical filaments into existing filaments in the project"
+msgstr "自动将相同的耗材丝合并到项目中已有的耗材丝"
+
+msgid "Choose the one-click auto-mix mode for texture color import"
+msgstr "选择纹理颜色导入的一键自动混色模式"
+
+msgid "Color Count"
+msgstr "颜色数量"
+
+msgid "Computation failed. Please adjust parameters and retry."
+msgstr "计算失败。请调整参数后重试。"
+
+msgid "Convert texture to painting using the specified color count and smooth level"
+msgstr "使用指定的颜色数量和平滑等级将纹理转换为涂色"
+
+msgid "Filament Mapping"
+msgstr "耗材丝映射"
+
+msgid "Import Model"
+msgstr "导入模型"
+
+msgid "Import without repair"
+msgstr "不修复直接导入"
+
+msgid "Matching textures to filaments"
+msgstr "正在将纹理匹配到耗材丝"
+
+msgid "Mesh repair"
+msgstr "网格修复"
+
+msgid "Multi-Color"
+msgstr "多色"
+
+msgid "New Mixed Filaments"
+msgstr "新混合耗材丝"
+
+msgid "New Physical Filaments"
+msgstr "新物理耗材丝"
+
+msgid "Processed multi-color model"
+msgstr "处理后的多色模型"
+
+msgid "Project Mixed Filaments"
+msgstr "项目混合耗材丝"
+
+msgid "Project Physical Filaments"
+msgstr "项目物理耗材丝"
+
+msgid "Reminder: parameters changed, click Apply to take effect"
+msgstr "提醒：参数已更改，单击“应用”后生效"
+
+msgid "Repair and import"
+msgstr "修复并导入"
+
+msgid "Reset filament mapping to the state before one-click mixing"
+msgstr "将耗材丝映射重置为一键混色之前的状态"
+
+msgid "Skip Matching"
+msgstr "跳过匹配"
+
+msgid "Skip filament mapping and import as a single-color model"
+msgstr "跳过耗材丝映射，作为单色模型导入"
+
+msgid "Smooth Level"
+msgstr "平滑等级"
+
+msgid "The mesh has non-manifold geometry or open boundaries. You can import it as-is or repair it before importing."
+msgstr "网格存在非流形几何体或开放边界。您可以按原样导入，或在导入前进行修复。"
+
+#, c-format, boost-format
+msgid "The project supports up to %d filament. Extra filaments will be discarded."
+msgid_plural "The project supports up to %d filaments. Extra filaments will be discarded."
+msgstr[0] "项目最多支持 %d 卷耗材，多余的将被丢弃。"
+
+msgid "Texture Import Warning"
+msgstr "纹理导入警告"
+
+msgid "Texture colors applied."
+msgstr "纹理颜色已应用。"
+
+msgid "Texture import failed. The model appears to contain texture data, but the texture import process could not be completed. The model will be imported as geometry only."
+msgstr "纹理导入失败。模型似乎包含纹理数据，但纹理导入过程无法完成。模型将仅作为几何体导入。"
+
+msgid "Updating 3D view..."
+msgstr "正在更新 3D 视图..."
+
+msgid "Your input texture model"
+msgstr "您输入的纹理模型"
+
+msgid "Auto mix"
+msgstr "自动混色"
+
+msgid "Computing texture colors..."
+msgstr "正在计算纹理颜色..."
+
+msgid "Repairing mesh"
+msgstr "正在修复网格"
 msgid "Enable Snapmaker Space"
 msgstr "开启模型站"
 

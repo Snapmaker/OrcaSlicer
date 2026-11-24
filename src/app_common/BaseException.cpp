@@ -1,4 +1,5 @@
 #include "BaseException.h"
+#include <algorithm>
 #include <iomanip>
 #include <string>
 #include <sstream>
@@ -314,7 +315,9 @@ BOOL CBaseException::GetLogicalAddress(
 	for (unsigned i = 0; i < pNtHdr->FileHeader.NumberOfSections; i++, pSection++ )
 	{
 		DWORD sectionStart = pSection->VirtualAddress;
-		DWORD sectionEnd = sectionStart + max(pSection->SizeOfRawData, pSection->Misc.VirtualSize);
+		// (std::max): app_common does not inherit the NOMINMAX that libslic3r exports,
+		// so the windows.h max macro can be live here; the parens suppress it.
+		DWORD sectionEnd = sectionStart + (std::max)(pSection->SizeOfRawData, pSection->Misc.VirtualSize);
 
 		if ( (rva >= sectionStart) && (rva <= sectionEnd) )
 		{

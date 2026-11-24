@@ -1,9 +1,9 @@
 #ifdef WIN32
     // Why?
     #define _WIN32_WINNT 0x0502
-    // The standard Windows includes.
-    #define WIN32_LEAN_AND_MEAN
-    #define NOMINMAX
+    // The standard Windows includes. WIN32_LEAN_AND_MEAN / NOMINMAX are not defined here
+    // anymore: libslic3r passes both as PUBLIC definitions, so every TU of this target
+    // already gets them from the command line (defining them again is a C4005 redefinition).
     #include <Windows.h>
     #include <wchar.h>
     #ifdef SLIC3R_GUI

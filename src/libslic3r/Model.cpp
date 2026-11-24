@@ -11,6 +11,8 @@
 #include "TriangleSelector.hpp"
 
 #include "Format/AMF.hpp"
+#include "Format/AssimpImport.hpp"
+#include "TexturePainting.hpp"
 #include "Format/svg.hpp"
 // BBS
 #include "FaceDetector.hpp"
@@ -97,6 +99,8 @@ Model& Model::assign_copy(const Model &rhs)
     this->md_name = rhs.md_name;
     this->md_value = rhs.md_value;
 
+    this->texture_mesh = rhs.texture_mesh;
+
     return *this;
 }
 
@@ -131,6 +135,8 @@ Model& Model::assign_copy(Model &&rhs)
     this->mk_version = rhs.mk_version;
     this->md_name = rhs.md_name;
     this->md_value = rhs.md_value;
+
+    this->texture_mesh = std::move(rhs.texture_mesh);
     this->backup_path = std::move(rhs.backup_path);
     this->object_backup_id_map = std::move(rhs.object_backup_id_map);
     this->next_object_backup_id = rhs.next_object_backup_id;
@@ -220,6 +226,27 @@ Model Model::read_from_step(const std::string&                                  
     return model;
 }
 
+// Build a plain geometry ModelObject from a textured mesh. The texture itself is carried
+// separately on Model::texture_mesh and consumed by the texture import dialog.
+static void add_textured_mesh_to_model(Model& model, const TexturedMesh& tex_mesh, const std::string& input_file)
+{
+    std::string object_name = boost::filesystem::path(input_file).filename().string();
+
+    indexed_triangle_set its;
+    its.vertices.resize(tex_mesh.vertices.size());
+    for (size_t i = 0; i < tex_mesh.vertices.size(); ++i)
+        its.vertices[i] = Vec3f(tex_mesh.vertices[i][0], tex_mesh.vertices[i][1], tex_mesh.vertices[i][2]);
+    its.indices.resize(tex_mesh.indices.size());
+    for (size_t i = 0; i < tex_mesh.indices.size(); ++i)
+        its.indices[i] = Vec3i32(tex_mesh.indices[i][0], tex_mesh.indices[i][1], tex_mesh.indices[i][2]);
+
+    its_merge_vertices(its);
+    its_remove_degenerate_faces(its);
+    its_compactify_vertices(its);
+
+    model.add_object(object_name.c_str(), input_file.c_str(), TriangleMesh(std::move(its)));
+}
+
 // BBS: add part plate related logic
 // BBS: backup & restore
 // Loading model from a file, it may be a simple geometry file as STL or OBJ, however it may be a project file as well.
@@ -234,8 +261,7 @@ Model Model::read_from_file(const std::string&                                  
                             Import3mfProgressFn                                 proFn,
                             ImportstlProgressFn                                 stlFn,
                             BBLProject *                                        project,
-                            int                                                 plate_id,
-                            ObjImportColorFn                                    objFn)
+                            int                                                 plate_id)
 {
     Model model;
 
@@ -265,32 +291,125 @@ Model Model::read_from_file(const std::string&                                  
         result = load_stl(input_file.c_str(), &model, nullptr, stlFn,256);
     else if (boost::algorithm::iends_with(input_file, ".obj")) {
         ObjInfo                 obj_info;
-        result = load_obj(input_file.c_str(), &model, obj_info, message);
-        if (result){
-            unsigned int first_extruder_id;
+        ObjParser::MtlData      mtl_data;
+        result = load_obj(input_file.c_str(), &model, obj_info, message, nullptr, &mtl_data);
+        // Keep the model's own UV channel on the volume, whatever the colour import then does with
+        // the mesh: it is the layout the model was authored against. load_obj() fills obj_info.uvs
+        // per face of the mesh it built, in the same order (and only when every face named a known
+        // material, hence the size check). V is flipped on the way in, to the convention the
+        // texture samplers expect - the same flip obj_to_textured_mesh() does for the colour importer.
+        if (result && !obj_info.uvs.empty() && !model.objects.empty() && !model.objects.back()->volumes.empty()) {
+            ModelVolume                &volume = *model.objects.back()->volumes[0];
+            const indexed_triangle_set &its    = volume.mesh().its;
+            if (obj_info.uvs.size() == its.indices.size()) {
+                volume.texture_uv.resize(its.indices.size() * 3);
+                for (size_t fi = 0; fi < obj_info.uvs.size(); ++fi)
+                    for (int k = 0; k < 3; ++k)
+                        volume.texture_uv[fi * 3 + size_t(k)] =
+                            Vec2f(obj_info.uvs[fi][size_t(k)].x(), 1.f - obj_info.uvs[fi][size_t(k)].y());
+            }
+        }
+        if (result && obj_info.has_uv_png && !obj_info.uvs.empty() && !model.objects.empty()
+                     && !model.objects.back()->volumes.empty()) {
+            // Textured OBJ: hand the mesh + materials to the texture-to-color importer
+            // first, in the file's own frame. The Y-up -> Z-up rotation below runs only
+            // when the texture actually loads: rotating on a failed texture load would
+            // silently tip over a pure-geometry model (has_uv_png is set from the mtl
+            // naming a map_Kd, regardless of whether the texture file exists).
+            auto tex_mesh = std::make_shared<TexturedMesh>();
+            std::string obj_dir = boost::filesystem::path(input_file).parent_path().string();
+            const bool to_tex_ok = obj_to_textured_mesh(obj_info,
+                    model.objects.back()->volumes[0]->mesh().its,
+                    mtl_data, obj_dir, *tex_mesh);
+            if (to_tex_ok) {
+                // Same mapping as AssimpImport: (x, y, z) -> (x, -z, y).
+                // +Y up goes to +Z up, and +Z forward goes to scene front (-Y).
+                // Both the volume meshes and the textured mesh must move into the same
+                // frame, or the painted result would land rotated against the geometry.
+                const Eigen::Matrix3d y_up_to_z_up = (Eigen::Matrix3d() <<
+                    1.0, 0.0,  0.0,
+                    0.0, 0.0, -1.0,
+                    0.0, 1.0,  0.0).finished();
+                for (ModelObject* obj : model.objects) {
+                    if (obj == nullptr)
+                        continue;
+                    for (ModelVolume* volume : obj->volumes)
+                        if (volume != nullptr && !volume->mesh().empty())
+                            volume->transform_this_mesh(y_up_to_z_up, false);
+                    obj->invalidate_bounding_box();
+                }
+                const Eigen::Matrix3f rot_f = y_up_to_z_up.cast<float>();
+                for (auto& v : tex_mesh->vertices) {
+                    const Eigen::Vector3f p = rot_f * Eigen::Vector3f(v[0], v[1], v[2]);
+                    v = {p[0], p[1], p[2]};
+                }
+                model.texture_mesh = tex_mesh;
+            }
+        }
+        else if (result && !model.objects.empty() && !model.objects.back()->volumes.empty()) {
+            // Vertex-colour and MTL face-colour OBJs also go through the texture-to-color
+            // importer (as precomputed per-face colors), matching the textured branch.
+            auto build_tex_mesh_geometry = [&]() {
+                auto tex_mesh = std::make_shared<TexturedMesh>();
+                const auto& its = model.objects.back()->volumes[0]->mesh().its;
+                tex_mesh->vertices.resize(its.vertices.size());
+                for (size_t i = 0; i < its.vertices.size(); ++i)
+                    tex_mesh->vertices[i] = {its.vertices[i].x(), its.vertices[i].y(), its.vertices[i].z()};
+                tex_mesh->indices.resize(its.indices.size());
+                for (size_t i = 0; i < its.indices.size(); ++i)
+                    tex_mesh->indices[i] = {its.indices[i][0], its.indices[i][1], its.indices[i][2]};
+                return tex_mesh;
+            };
             if (obj_info.vertex_colors.size() > 0) {
-                std::vector<unsigned int> vertex_filament_ids;
-                if (objFn) { // 1.result is ok and pop up a dialog
-                    objFn(obj_info.vertex_colors, false, vertex_filament_ids, first_extruder_id);
-                    if (vertex_filament_ids.size() > 0) {
-                        result = obj_import_vertex_color_deal(vertex_filament_ids, first_extruder_id, & model);
+                auto tex_mesh = build_tex_mesh_geometry();
+                const auto& its = model.objects.back()->volumes[0]->mesh().its;
+                tex_mesh->precomputed_face_colors.resize(its.indices.size());
+                for (size_t i = 0; i < its.indices.size(); ++i) {
+                    const auto& f = its.indices[i];
+                    auto avg = [&](int ch) -> std::size_t {
+                        float v = (obj_info.vertex_colors[f[0]][ch]
+                                 + obj_info.vertex_colors[f[1]][ch]
+                                 + obj_info.vertex_colors[f[2]][ch]) / 3.0f * 255.0f;
+                        return (std::size_t) std::clamp(v, 0.0f, 255.0f);
+                    };
+                    tex_mesh->precomputed_face_colors[i] = {avg(0), avg(1), avg(2)};
+                }
+                tex_mesh->precomputed_vertex_colors = obj_info.vertex_colors;
+                model.texture_mesh = tex_mesh;
+            } else if (obj_info.face_colors.size() > 0 && obj_info.has_uv_png == false) {
+                auto tex_mesh = build_tex_mesh_geometry();
+                const size_t nf = tex_mesh->indices.size();
+                tex_mesh->precomputed_face_colors.resize(nf);
+                for (size_t i = 0; i < nf; ++i) {
+                    if (i < obj_info.face_colors.size()) {
+                        const auto& c = obj_info.face_colors[i];
+                        tex_mesh->precomputed_face_colors[i] = {
+                            (std::size_t) std::clamp(c[0] * 255.0f, 0.0f, 255.0f),
+                            (std::size_t) std::clamp(c[1] * 255.0f, 0.0f, 255.0f),
+                            (std::size_t) std::clamp(c[2] * 255.0f, 0.0f, 255.0f)
+                        };
+                    } else {
+                        tex_mesh->precomputed_face_colors[i] = {128, 128, 128};
                     }
                 }
-            } else if (obj_info.face_colors.size() > 0 && obj_info.has_uv_png == false) { // mtl file
-                std::vector<unsigned int> face_filament_ids;
-                if (objFn) { // 1.result is ok and pop up a dialog
-                    objFn(obj_info.face_colors, obj_info.is_single_mtl, face_filament_ids, first_extruder_id);
-                    if (face_filament_ids.size() > 0) {
-                        result = obj_import_face_color_deal(face_filament_ids, first_extruder_id, &model);
-                    }
-                }
-            } /*else if (obj_info.has_uv_png && obj_info.uvs.size() > 0) {
-                boost::filesystem::path full_path(input_file);
-                std::string             obj_directory = full_path.parent_path().string();
-                obj_info.obj_dircetory = obj_directory;
-                result = false;
-                message = _L("Importing obj with png function is developing.");
-            }*/
+                model.texture_mesh = tex_mesh;
+            }
+        }
+    }
+    else if (boost::algorithm::iends_with(input_file, ".glb") ||
+             boost::algorithm::iends_with(input_file, ".gltf") ||
+             boost::algorithm::iends_with(input_file, ".fbx")) {
+        // These formats can carry material/texture data, so they go through the textured
+        // import path: the geometry becomes a normal object and the texture is handed to
+        // the texture-to-color dialog via Model::texture_mesh.
+        auto tex_mesh = std::make_shared<TexturedMesh>();
+        result = load_assimp_textured_model(input_file, *tex_mesh, &message);
+        if (result) {
+            model.texture_mesh = tex_mesh;
+            add_textured_mesh_to_model(model, *tex_mesh, input_file);
+        } else if (!message.empty()) {
+            BOOST_LOG_TRIVIAL(error) << "Assimp: failed to load model: " << message
+                                     << ", path=" << input_file;
         }
     }
     else if (boost::algorithm::iends_with(input_file, ".svg"))
@@ -709,6 +828,7 @@ void Model::clear_objects()
     this->objects.clear();
     object_backup_id_map.clear();
     next_object_backup_id = 1;
+    texture_mesh.reset();
 }
 
 // BBS: backup, reuse objects
@@ -1192,6 +1312,7 @@ void Model::set_backup_path(std::string const& path)
 
 void Model::load_from(Model& model)
 {
+    this->texture_mesh.reset();
     set_backup_path(model.get_backup_path());
     model.backup_path.clear();
     object_backup_id_map = model.object_backup_id_map;

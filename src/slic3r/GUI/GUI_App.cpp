@@ -4993,6 +4993,13 @@ struct VersionCheckCbScope {
 void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
 {
     std::string update_url = app_config->get_version_upgrade_url();
+#if defined(__linux__)
+    // No static manifest is published for Linux (/upgrade/orca/linux/<lang>/version.json
+    // returns 404), so Linux asks GitHub for the latest stable release instead. An explicit
+    // "orca_upgrade_url" override still wins.
+    if (app_config->get("orca_upgrade_url").empty())
+        update_url = "https://api.github.com/repos/Snapmaker/OrcaSlicer/releases/latest";
+#endif
 
     AppConfig* app_config = wxGetApp().app_config;
 
@@ -5024,6 +5031,44 @@ void GUI_App::check_new_version_sf(bool show_tips, bool by_user)
           }
         try {
             json jsonObj = json::parse(body);
+#if defined(__linux__)
+            // GitHub "latest release" object (see update_url above); /releases/latest never
+            // returns a draft or a pre-release, which matches the stable-only rule below.
+            if (jsonObj.is_object() && jsonObj.contains("tag_name")) {
+                auto str_field = [&jsonObj](const char* key) -> std::string {
+                    auto it = jsonObj.find(key);
+                    return it != jsonObj.end() && it->is_string() ? it->get<std::string>() : std::string();
+                };
+                std::string tag = str_field("tag_name"); // "v2.4.1"
+                if (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V'))
+                    tag.erase(0, 1);
+                std::regex  matcher("[0-9]+\\.[0-9]+(\\.[0-9]+)*(-[A-Za-z0-9]+)?(\\+[A-Za-z0-9]+)?");
+                Semver      server_version = get_version(tag, matcher);
+                std::string release_url    = str_field("html_url");
+                if (!server_version.valid() || release_url.empty()) {
+                    BOOST_LOG_TRIVIAL(error) << "check_new_version_sf: unusable GitHub release, tag_name `" << tag << "`";
+                    return;
+                }
+                if (get_version(Snapmaker_VERSION, matcher) >= server_version) {
+                    if (by_user)
+                        this->no_new_version();
+                    return;
+                }
+                version_info.force_upgrade = false;
+                version_info.version_str   = tag;
+                // Release page: the update dialog's Download button opens this in the browser.
+                version_info.url           = release_url;
+                // The release body is Markdown and the dialog shows plain text, so show the title only.
+                version_info.description   = str_field("name");
+
+                wxCommandEvent* evt = new wxCommandEvent(EVT_SLIC3R_VERSION_ONLINE);
+                evt->SetString(version_info.url);
+                if (by_user)
+                    evt->SetInt(UPDATE_BY_USER);
+                GUI::wxGetApp().QueueEvent(evt);
+                return;
+            }
+#endif
             auto errCode = jsonObj["code"];
             if (errCode != 200)
                 return;

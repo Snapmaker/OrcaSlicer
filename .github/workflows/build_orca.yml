@@ -262,7 +262,9 @@ jobs:
           rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/*
           cp -R "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app" "${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/"
           ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/Applications
-          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
+          # Size from apparent bytes: -srcfolder sizes from allocated blocks and fails with ENOSPC on sparse files.
+          SIZE_MB=$(( $(du -sAk ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg | cut -f1) / 1024 * 12 / 10 + 64 ))
+          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -size "${SIZE_MB}m" -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
           codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg"
           
           # Create separate Snapmaker_Orca_profile_validator DMG if the app exists
@@ -271,7 +273,9 @@ jobs:
             rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/*
             cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/
             ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/Applications
-            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
+            # Size from apparent bytes: -srcfolder sizes from allocated blocks and fails with ENOSPC on sparse files.
+            SIZE_MB=$(( $(du -sAk ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg | cut -f1) / 1024 * 12 / 10 + 64 ))
+            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -size "${SIZE_MB}m" -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
             codesign --deep --force --verbose --options runtime --timestamp --entitlements ${{ github.workspace }}/scripts/disable_validation.entitlements --sign "$CERTIFICATE_ID" "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
           fi
           
@@ -294,7 +298,9 @@ jobs:
           rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/*
           cp -R "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker Orca.app" "${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/"
           ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg/Applications
-          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -ov -format UDZO Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
+          # Size from apparent bytes: -srcfolder sizes from allocated blocks and fails with ENOSPC on sparse files.
+          SIZE_MB=$(( $(du -sAk ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg | cut -f1) / 1024 * 12 / 10 + 64 ))
+          hdiutil create -volname "Snapmaker_Orca" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_dmg -size "${SIZE_MB}m" -ov -format UDZO Snapmaker_Orca_Mac_universal_${{ env.ver }}.dmg
           
           # Create separate Snapmaker_Orca_profile_validator DMG if the app exists
           if [ -f "${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app/Contents/MacOS/Snapmaker_Orca_profile_validator" ]; then
@@ -302,7 +308,9 @@ jobs:
             rm -rf ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/*
             cp -R ${{ github.workspace }}/build/universal/Snapmaker_Orca/Snapmaker_Orca_profile_validator.app ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/
             ln -sfn /Applications ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg/Applications
-            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
+            # Size from apparent bytes: -srcfolder sizes from allocated blocks and fails with ENOSPC on sparse files.
+            SIZE_MB=$(( $(du -sAk ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg | cut -f1) / 1024 * 12 / 10 + 64 ))
+            hdiutil create -volname "Snapmaker_Orca Profile Validator" -srcfolder ${{ github.workspace }}/build/universal/Snapmaker_Orca_profile_validator_dmg -size "${SIZE_MB}m" -ov -format UDZO "${{ github.workspace }}/Snapmaker_Orca_profile_validator_Mac_universal_${{ env.ver }}.dmg"
           fi
 
       - name: Upload artifacts mac

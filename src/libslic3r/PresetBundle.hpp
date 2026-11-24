@@ -44,6 +44,15 @@ struct ConnectMachineInfo
 
 namespace Slic3r {
 
+// The filament list of a project, which lives outside the Undo / Redo stack.
+struct FilamentProjectState
+{
+    std::vector<std::string>              filament_presets;
+    std::vector<std::vector<std::string>> ams_multi_color_filment;
+    MixedFilamentManager                  mixed_filaments;
+    DynamicPrintConfig                    project_config;
+};
+
 // Bundle of Print + Filament + Printer presets.
 class PresetBundle
 {
@@ -380,6 +389,13 @@ public:
         m_last_filament_id_remap.clear();
         return out;
     }
+
+    FilamentProjectState        capture_filament_project_state() const;
+    // Only project_keys are restored from state.project_config (see changed_filament_project_keys),
+    // so project options edited since the capture keep their value.
+    void                        restore_filament_project_state(const FilamentProjectState &state, const t_config_option_keys &project_keys);
+    // Keys whose value differs between the two states, including keys only one of them has.
+    static t_config_option_keys changed_filament_project_keys(const FilamentProjectState &a, const FilamentProjectState &b);
 
     // Update the is_compatible flag of all print and filament presets depending on whether they are marked
     // as compatible with the currently selected printer (and print in case of filament presets).

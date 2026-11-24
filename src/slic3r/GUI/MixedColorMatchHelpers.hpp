@@ -132,7 +132,8 @@ MixedColorMatchRecipeResult build_best_color_match_recipe(
     const wxColour                 &target_color,
     int                             min_component_percent = 0,
     int                             max_component_percent = 100,
-    bool                            check_compatible = true);
+    bool                            check_compatible = true,
+    int                             max_components = 3);   // 4 enables the quad search (palette mode)
 
 // ---- display context helpers ----
 MixedFilamentDisplayContext build_mixed_filament_display_context(
@@ -228,6 +229,14 @@ struct BatchMatchResult
     // launch_background_match worker lambda (value projection -- treat as derived
     // data, do not mutate elsewhere).
     std::vector<std::string>       recommended_physical_family_names;
+
+    // ---- CMYK palette conversion mode ----
+    // Set by Sidebar::convert_to_cmyk_palette. The palette filaments are APPENDED to the
+    // project as physical slots (N+1..N+k, N = filament count before conversion); recipe
+    // component ids are already shifted by N. Cleanup then drops every original filament.
+    bool                           is_palette_mode = false;
+    std::vector<std::string>       palette_hex;            // size k, "#RRGGBB"
+    std::vector<std::string>       palette_preset_names;   // size k, may contain empty strings
 };
 
 /// Extract all unique colors from a multi-color 3D model.
@@ -244,7 +253,8 @@ BatchMatchResult batch_match_model_colors(
     int                                          max_component_percent = 100,
     std::shared_ptr<std::atomic<bool>>           cancel_token = nullptr,
     std::function<void(int,int)>                 progress_callback = nullptr,
-    bool                                         check_compatible = true);
+    bool                                         check_compatible = true,
+    int                                          max_components = 3);
 
 #if 0 // Dead code — no deduplication is performed (explicit policy since phase2)
 /// Deduplicate mappings where matched colors are visually close (ΔE < 1.5).

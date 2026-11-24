@@ -1,6 +1,6 @@
 #include "HighFlowCompat.hpp"
 
-#include "libslic3r/AllowlistManager.hpp"
+#include "libslic3r/FilamentRulesManager.hpp"
 
 #include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/trim.hpp>
@@ -59,7 +59,7 @@ bool matches_list_entry(const std::string &value, const std::string &entry)
     return !normalized_entry.empty() && value.find(normalized_entry) != std::string::npos;
 }
 
-bool is_listed(const std::string &name, const AllowlistManager::StringList &list)
+bool is_listed(const std::string &name, const FilamentRulesManager::StringList &list)
 {
     return std::any_of(list.begin(), list.end(), [&name](const std::string &entry) {
         return matches_list_entry(name, entry);
@@ -91,8 +91,8 @@ CompatibilityResult check(const std::string &filament_type, const std::string &p
     const std::string type = normalize(filament_type);
     const std::string name = normalize(preset_name);
 
-    AllowlistManager &manager = AllowlistManager::instance();
-    const AllowlistManager::StringList unavailable_filaments = manager.get_list("high_flow", "unavailable_filaments");
+    FilamentRulesManager &manager = FilamentRulesManager::instance();
+    const FilamentRulesManager::StringList unavailable_filaments = manager.get_list("high_flow", "unavailable_filaments");
     if (is_listed(name, unavailable_filaments))
         return { CompatibilityLevel::Unsupported, display_name_without_vendor(preset_name) };
 
@@ -100,7 +100,7 @@ CompatibilityResult check(const std::string &filament_type, const std::string &p
         has_material_token(type, "gf") || has_material_token(name, "gf"))
         return { CompatibilityLevel::NotRecommended, "CF/GF filaments" };
 
-    const AllowlistManager::StringList not_recommended_filaments = manager.get_list("high_flow", "not_recommended_filaments");
+    const FilamentRulesManager::StringList not_recommended_filaments = manager.get_list("high_flow", "not_recommended_filaments");
     if (is_listed(name, not_recommended_filaments))
         return { CompatibilityLevel::NotRecommended, display_name_without_vendor(preset_name) };
 

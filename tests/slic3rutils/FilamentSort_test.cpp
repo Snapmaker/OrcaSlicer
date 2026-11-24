@@ -53,7 +53,7 @@ TEST_CASE("FilamentOrder parses valid configuration and matches vendor and produ
     REQUIRE_FALSE(order.empty());
     CHECK(order.rank("Snapmaker", "PLA Matte") == 0);
     CHECK(order.rank("sNaPmAkEr", "PLA SnapSpeed") == 1);
-    // Product names are authored in both the preset files and filament_allow_list.json, so a casing drift
+    // Product names are authored in both the preset files and filament_rules.json, so a casing drift
     // must not drop the entry: they match case-insensitively, like the vendor key.
     CHECK(order.rank("Snapmaker", "pla matte") == 0);
     CHECK(order.rank("Snapmaker", "Pla sNApsPeed") == 1);
@@ -214,14 +214,14 @@ TEST_CASE("filament_product_key strips the vendor prefix and the printer suffix"
     CHECK(filament_product_key("SingleWord", "") == "SingleWord");
 }
 
-TEST_CASE("choose_allow_list_copy prefers the deployed user copy", "[GUI][FilamentSort]")
+TEST_CASE("choose_rules_copy prefers the deployed user copy", "[GUI][FilamentSort]")
 {
-    const std::filesystem::path user_copy    = "system/Snapmaker/filament/filament_allow_list.json";
-    const std::filesystem::path shipped_copy = "resources/profiles/Snapmaker/filament/filament_allow_list.json";
+    const std::filesystem::path user_copy    = "system/Snapmaker/filament/filament_rules.json";
+    const std::filesystem::path shipped_copy = "resources/profiles/Snapmaker/filament/filament_rules.json";
 
-    CHECK(choose_allow_list_copy(user_copy, shipped_copy, true) == user_copy);
+    CHECK(choose_rules_copy(user_copy, shipped_copy, true) == user_copy);
     // A missing user copy falls back to the shipped one instead of leaving the order unconfigured.
-    CHECK(choose_allow_list_copy(user_copy, shipped_copy, false) == shipped_copy);
+    CHECK(choose_rules_copy(user_copy, shipped_copy, false) == shipped_copy);
 }
 
 TEST_CASE("is_snapmaker_vendor matches the vendor label case-insensitively", "[GUI][FilamentSort]")
@@ -305,7 +305,7 @@ TEST_CASE("the shipped allow-list parses and orders the Snapmaker products", "[G
     // directory. A typo in it (schema version, vendor key, syntax) would otherwise drop the whole
     // vendor order at runtime without any visible error.
     std::string         reason;
-    const FilamentOrder order = FilamentOrder::from_file(FILAMENT_ALLOW_LIST_FILE, &reason);
+    const FilamentOrder order = FilamentOrder::from_file(FILAMENT_RULES_FILE, &reason);
     INFO("loader reason: " << reason);
     REQUIRE_FALSE(order.empty());
 

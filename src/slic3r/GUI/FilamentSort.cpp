@@ -19,7 +19,7 @@ namespace
 constexpr const char *g_snapmaker_vendor = "Snapmaker";
 constexpr const char *g_generic_vendor   = "Generic";
 constexpr const char *g_undefined_vendor = "(Undefined)";
-constexpr int         g_allowlist_schema_version = 1;
+constexpr int         g_rules_schema_version = 1;
 
 /** @brief Removes leading and trailing whitespace. */
 std::string trimmed(std::string value)
@@ -91,7 +91,7 @@ FilamentOrder FilamentOrder::from_stream(std::istream &stream)
     const auto schema_version = root.find("schema_version");
     const auto sections_node  = root.find("sections");
     if (schema_version == root.end() || !schema_version->is_number_integer() ||
-        *schema_version != g_allowlist_schema_version || sections_node == root.end() || !sections_node->is_object())
+        *schema_version != g_rules_schema_version || sections_node == root.end() || !sections_node->is_object())
         return FilamentOrder{};
 
     const auto order_node = sections_node->find("filament_order");
@@ -148,7 +148,7 @@ size_t FilamentOrder::rank(const std::string &vendor, const std::string &filamen
 
         for (size_t index = 0; index < vendor_order.second.size(); ++index)
         {
-            // Product names are authored both in the preset files and in filament_allow_list.json, so they match
+            // Product names are authored both in the preset files and in filament_rules.json, so they match
             // case-insensitively like the vendor key above: a casing drift must not silently drop an entry.
             if (wxString::FromUTF8(vendor_order.second[index].c_str())
                     .CmpNoCase(wxString::FromUTF8(filament_product.c_str())) == 0)
@@ -250,9 +250,9 @@ std::string filament_product_key(const std::string &preset_name, const std::stri
     return trimmed(product);
 }
 
-std::filesystem::path choose_allow_list_copy(const std::filesystem::path &user_copy,
-                                             const std::filesystem::path &shipped_copy,
-                                             bool                         user_copy_exists)
+std::filesystem::path choose_rules_copy(const std::filesystem::path &user_copy,
+                                        const std::filesystem::path &shipped_copy,
+                                        bool                         user_copy_exists)
 {
     return user_copy_exists ? user_copy : shipped_copy;
 }

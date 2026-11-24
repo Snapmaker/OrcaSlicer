@@ -7,12 +7,12 @@
 
 namespace Slic3r {
 
-class AllowlistManager
+class FilamentRulesManager
 {
 public:
     using StringList = std::list<std::string>;
 
-    static AllowlistManager& instance();
+    static FilamentRulesManager& instance();
     static void uninit();
 
     StringList get_list(const std::string& section, const std::string& key) const;
@@ -29,13 +29,13 @@ private:
     using Section = std::unordered_map<std::string, StringList>;
     using Sections = std::unordered_map<std::string, Section>;
 
-    AllowlistManager() = default;
-    ~AllowlistManager() = default;
+    FilamentRulesManager() = default;
+    ~FilamentRulesManager() = default;
 
-    AllowlistManager(const AllowlistManager&) = delete;
-    AllowlistManager& operator=(const AllowlistManager&) = delete;
+    FilamentRulesManager(const FilamentRulesManager&) = delete;
+    FilamentRulesManager& operator=(const FilamentRulesManager&) = delete;
 
-    static AllowlistManager& raw_instance();
+    static FilamentRulesManager& raw_instance();
 
     void init();
     void release();

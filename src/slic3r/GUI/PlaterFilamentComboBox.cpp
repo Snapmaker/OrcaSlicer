@@ -155,7 +155,7 @@ private:
 namespace
 {
 
-constexpr const char *g_allow_list_file_name = "filament_allow_list.json";
+constexpr const char *g_rules_file_name = "filament_rules.json";
 constexpr const char *g_snapmaker_vendor    = "Snapmaker";
 constexpr const char *g_bambu_vendor        = "Bambu";
 constexpr const char *g_bambu_lab_vendor    = "Bambu Lab";
@@ -172,10 +172,10 @@ wxWindow *scroll_parent(wxWindow *window)
     return nullptr;
 }
 
-std::filesystem::path filament_allow_list_path()
+std::filesystem::path filament_rules_path()
 {
     const std::filesystem::path user_path = std::filesystem::u8path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR /
-                                            g_snapmaker_vendor / "filament" / g_allow_list_file_name;
+                                            g_snapmaker_vendor / "filament" / g_rules_file_name;
 
     std::error_code filesystem_error;
     const bool      user_copy_exists = std::filesystem::exists(user_path, filesystem_error);
@@ -184,14 +184,14 @@ std::filesystem::path filament_allow_list_path()
                                    << filesystem_error.message();
 
     const std::filesystem::path shipped_path = std::filesystem::u8path(Slic3r::resources_dir()) / "profiles" /
-                                               g_snapmaker_vendor / "filament" / g_allow_list_file_name;
-    return choose_allow_list_copy(user_path, shipped_path, user_copy_exists);
+                                               g_snapmaker_vendor / "filament" / g_rules_file_name;
+    return choose_rules_copy(user_path, shipped_path, user_copy_exists);
 }
 
-/** @brief Loads the vendor filament order once from the user or resource allow-list path. */
+/** @brief Loads the vendor filament order once from the user or resource filament rules path. */
 FilamentOrder load_filament_order()
 {
-    const std::filesystem::path path = filament_allow_list_path();
+    const std::filesystem::path path = filament_rules_path();
 
     // The reason is logged together with the path so a missing file and a rejected file stay
     // distinguishable in the log.

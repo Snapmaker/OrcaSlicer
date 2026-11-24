@@ -1,5 +1,6 @@
 #include "PrintConfig.hpp"
 #include "ProjectSchemaVersion.hpp"
+#include "FilamentRulesManager.hpp"
 #include "ClipperUtils.hpp"
 #include "Config.hpp"
 #include "format.hpp"
@@ -7548,29 +7549,15 @@ const char* flow_support_key(ConfigFlowDomain domain)
     }
 }
 
+static std::vector<std::string> flow_variant_list(const char *list_name)
+{
+    const FilamentRulesManager::StringList list = FilamentRulesManager::instance().get_list("flow_variants", list_name);
+    return std::vector<std::string>(list.begin(), list.end());
+}
+
 const std::vector<std::string>& filament_flow_variant_options()
 {
-    static const std::vector<std::string> options {
-        "filament_flow_ratio",
-        "enable_pressure_advance",
-        "pressure_advance",
-        "nozzle_temperature_initial_layer",
-        "nozzle_temperature",
-        "filament_max_volumetric_speed",
-        "fan_min_speed",
-        "fan_max_speed",
-        "additional_cooling_fan_speed",
-        "filament_retraction_length",
-        "filament_retraction_speed",
-        "filament_deretraction_speed",
-        "filament_z_hop_types",
-        "filament_wipe_distance",
-        "filament_retract_length_toolchange",
-        "filament_multitool_ramming",
-        "filament_multitool_ramming_volume",
-        "filament_multitool_ramming_flow",
-        "filament_minimal_purge_on_wipe_tower",
-    };
+    static const std::vector<std::string> options = flow_variant_list("filament");
     return options;
 }
 
@@ -7582,66 +7569,7 @@ bool is_filament_flow_variant_option(const std::string &key)
 
 const std::vector<std::string>& process_flow_variant_options()
 {
-    // Keys whose values are arrayed per declared flow variant (standard / high_flow / ...).
-    // Effective value is resolved at read time via ConfigFlowDomain::Process.
-    // Ordered by logical group: speed, acceleration, jerk, volumetric-flow shaping.
-    // NOTE: keep in sync with the vector-typed defs in this file (coFloats / coFloatsOrPercents /
-    // coBools / coPercents / coInts). Once a key's reads/writes are migrated to
-    // get_value_at / process_flow_value, list it here.
-    static const std::vector<std::string> options {
-        // ---- speed (region / object / gcode / print) ----
-        "outer_wall_speed",
-        "inner_wall_speed",
-        "sparse_infill_speed",
-        "internal_solid_infill_speed",
-        "top_surface_speed",
-        "gap_infill_speed",
-        "bridge_speed",
-        "internal_bridge_speed",
-        "ironing_speed",
-        "small_perimeter_speed",
-        "small_perimeter_threshold",
-        "support_speed",
-        "support_interface_speed",
-        "initial_layer_speed",
-        "initial_layer_infill_speed",
-        "initial_layer_travel_speed",
-        "travel_speed",
-        "slow_down_layers",
-        "overhang_1_4_speed",
-        "overhang_2_4_speed",
-        "overhang_3_4_speed",
-        "overhang_4_4_speed",
-        "overhang_totally_speed",
-        "enable_overhang_speed",
-        "slowdown_for_curled_perimeters",
-        // ---- acceleration ----
-        "default_acceleration",
-        "outer_wall_acceleration",
-        "inner_wall_acceleration",
-        "top_surface_acceleration",
-        "initial_layer_acceleration",
-        "bridge_acceleration",
-        "travel_acceleration",
-        "travel_short_distance_acceleration",
-        "sparse_infill_acceleration",
-        "internal_solid_infill_acceleration",
-        "accel_to_decel_enable",
-        "accel_to_decel_factor",
-        // ---- jerk / junction deviation ----
-        "default_jerk",
-        "outer_wall_jerk",
-        "inner_wall_jerk",
-        "infill_jerk",
-        "top_surface_jerk",
-        "initial_layer_jerk",
-        "travel_jerk",
-        "default_junction_deviation",
-        // ---- volumetric flow shaping (pressure equalizer) ----
-        "max_volumetric_extrusion_rate_slope",
-        "max_volumetric_extrusion_rate_slope_segment_length",
-        "extrusion_rate_smoothing_external_perimeter_only",
-    };
+    static const std::vector<std::string> options = flow_variant_list("process");
     return options;
 }
 
@@ -7653,7 +7581,7 @@ bool is_process_flow_variant_option(const std::string &key)
 
 const std::vector<std::string>& machine_flow_variant_options()
 {
-    static const std::vector<std::string> options {};
+    static const std::vector<std::string> options = flow_variant_list("machine");
     return options;
 }
 

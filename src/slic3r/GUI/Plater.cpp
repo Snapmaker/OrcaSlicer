@@ -10904,8 +10904,12 @@ bool Plater::priv::run_textured_mesh_import_dialog(Slic3r::Model& loaded_model, 
             std::string name;
             if (i < preset_bundle.filament_presets.size()) {
                 auto* preset = preset_bundle.filaments.find_preset(preset_bundle.filament_presets[i]);
-                if (preset)
+                if (preset) {
                     name = preset->label(false);
+                    // The texture dialog merges auto-added filaments into an
+                    // existing one when type (preset) + color both match.
+                    entry.preset_name = preset->name;
+                }
             }
             if (name.empty())
                 name = into_u8(wxString::Format(_L("Filament %d"), int(i + 1)));

@@ -471,21 +471,53 @@ void c2_offset_setup(C2::ClipperOffset &co, float delta, JoinType joinType, doub
     }
 }
 
+// Whether a vertex of the path lies in the solid of the other paths, counted with the winding numbers the group offset
+// uses. A clockwise contour in a notch of another contour has the bounding box of a hole but lies outside the solid, and
+// offset as a hole it shrinks away. A vertex on the border of another path decides nothing and is skipped.
+static bool c2_path_in_solid(const C2::Paths64 &paths, const std::vector<C2::Rect64> &bounds, const std::vector<double> &areas, size_t idx)
+{
+    bool on_border_only = true;
+    for (const C2::Point64 &pt : paths[idx]) {
+        int  winding   = 0;
+        bool on_border = false;
+        for (size_t j = 0; j < paths.size() && ! on_border; ++ j) {
+            if (j == idx || ! bounds[j].Contains(bounds[idx]))
+                continue;
+            switch (C2::PointInPolygon(pt, paths[j])) {
+            case C2::PointInPolygonResult::IsOn:     on_border = true; break;
+            case C2::PointInPolygonResult::IsInside: winding += areas[j] > 0. ? 1 : -1; break;
+            default:                                 break;
+            }
+        }
+        if (on_border)
+            continue;
+        on_border_only = false;
+        if (winding != 0)
+            return true;
+    }
+    // Every vertex lies on the border of another path: take it for a hole, as the bounding boxes alone did.
+    return on_border_only;
+}
+
 // A single group offsets like Clipper1's path by path offset only if every CW path is a hole of a CCW path.
 bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &areas)
 {
-    std::vector<C2::Rect64> contours;
-    for (size_t i = 0; i < paths.size(); ++ i)
-        if (areas[i] > 0.)
-            contours.emplace_back(C2::GetBounds(paths[i]));
-    for (size_t i = 0; i < paths.size(); ++ i)
-        if (areas[i] < 0.) {
-            const C2::Rect64 hole = C2::GetBounds(paths[i]);
-            if (std::none_of(contours.begin(), contours.end(), [&hole](const C2::Rect64 &r) {
-                    return r.left < hole.left && r.right > hole.right && r.top < hole.top && r.bottom > hole.bottom;
-                }))
-                return false;
-        }
+    std::vector<C2::Rect64> bounds;
+    bounds.reserve(paths.size());
+    for (const C2::Path64 &path : paths)
+        bounds.emplace_back(C2::GetBounds(path));
+    for (size_t i = 0; i < paths.size(); ++ i) {
+        if (areas[i] >= 0.)
+            continue;
+        bool around = false;
+        for (size_t j = 0; j < paths.size(); ++ j)
+            if (areas[j] > 0. && bounds[j].left < bounds[i].left && bounds[j].right > bounds[i].right && bounds[j].top < bounds[i].top &&
+                bounds[j].bottom > bounds[i].bottom)
+                around = true;
+        // Not inside the bounding box of a contour, or not in the solid of the other paths: offset it on its own.
+        if (! around || ! c2_path_in_solid(paths, bounds, areas, i))
+            return false;
+    }
     return true;
 }
 

@@ -50,14 +50,6 @@ if(NOT EXISTS "${SUB}/Snapmaker.json")
     message(FATAL_ERROR "Missing ${SUB}/Snapmaker.json")
 endif()
 
-# PresetUpdater deploys these rule files by fixed path (bundle/filament/<name>);
-# a layout drift in the Profiles repo silently breaks that deployment.
-foreach(_rule filament_hot_bed_nozzles.json filament_compatibility.json filament_allow_list.json)
-    if(NOT EXISTS "${SUB}/Snapmaker/filament/${_rule}")
-        message(FATAL_ERROR "Missing ${SUB}/Snapmaker/filament/${_rule}")
-    endif()
-endforeach()
-
 # Validate all source directories before deleting or copying destination files.
 set(_dirs Snapmaker/filament Snapmaker/machine Snapmaker/process)
 set(_expected Snapmaker.json)

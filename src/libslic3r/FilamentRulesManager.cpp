@@ -1,4 +1,4 @@
-#include "AllowlistManager.hpp"
+#include "FilamentRulesManager.hpp"
 
 #include "Preset.hpp"
 #include "Utils.hpp"
@@ -12,42 +12,42 @@
 namespace Slic3r {
 namespace {
 
-constexpr const char* g_allowlist_file_name = "filament_allow_list.json";
+constexpr const char* g_rules_file_name = "filament_rules.json";
 constexpr const char* g_snapmaker_vendor_name = "Snapmaker";
 constexpr int         g_schema_version = 1;
 
-std::filesystem::path allowlist_path()
+std::filesystem::path rules_path()
 {
     std::filesystem::path system_path = std::filesystem::u8path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR /
-                                        g_snapmaker_vendor_name / "filament" / g_allowlist_file_name;
+                                        g_snapmaker_vendor_name / "filament" / g_rules_file_name;
     if (std::filesystem::exists(system_path))
         return system_path;
 
     return std::filesystem::u8path(Slic3r::resources_dir()) / "profiles" / g_snapmaker_vendor_name / "filament" /
-           g_allowlist_file_name;
+           g_rules_file_name;
 }
 
 } // namespace
 
-AllowlistManager& AllowlistManager::instance()
+FilamentRulesManager& FilamentRulesManager::instance()
 {
-    AllowlistManager& manager = raw_instance();
+    FilamentRulesManager& manager = raw_instance();
     manager.init();
     return manager;
 }
 
-void AllowlistManager::uninit()
+void FilamentRulesManager::uninit()
 {
     raw_instance().release();
 }
 
-AllowlistManager& AllowlistManager::raw_instance()
+FilamentRulesManager& FilamentRulesManager::raw_instance()
 {
-    static AllowlistManager* s_instance = new AllowlistManager();
+    static FilamentRulesManager* s_instance = new FilamentRulesManager();
     return *s_instance;
 }
 
-AllowlistManager::StringList AllowlistManager::get_list(const std::string& section, const std::string& key) const
+FilamentRulesManager::StringList FilamentRulesManager::get_list(const std::string& section, const std::string& key) const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_state != State::Initialized)
@@ -64,13 +64,13 @@ AllowlistManager::StringList AllowlistManager::get_list(const std::string& secti
     return list_it->second;
 }
 
-void AllowlistManager::init()
+void FilamentRulesManager::init()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_state != State::Uninitialized)
         return;
 
-    const std::filesystem::path path = allowlist_path();
+    const std::filesystem::path path = rules_path();
     Sections                   sections;
     std::string                error;
 
@@ -160,14 +160,14 @@ void AllowlistManager::init()
     if (m_state != State::Initialized)
     {
         m_state = State::Failed;
-        BOOST_LOG_TRIVIAL(error) << "AllowlistManager failed to load " << path.u8string() << ": " << error;
+        BOOST_LOG_TRIVIAL(error) << "FilamentRulesManager failed to load " << path.u8string() << ": " << error;
         return;
     }
 
-    BOOST_LOG_TRIVIAL(info) << "AllowlistManager loaded: " << path.u8string();
+    BOOST_LOG_TRIVIAL(info) << "FilamentRulesManager loaded: " << path.u8string();
 }
 
-void AllowlistManager::release()
+void FilamentRulesManager::release()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_state == State::Terminated)

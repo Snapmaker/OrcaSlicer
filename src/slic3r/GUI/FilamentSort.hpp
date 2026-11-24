@@ -116,10 +116,10 @@ std::string canonical_vendor(const std::string &vendor);
 /** @brief Returns the product name a configured order matches: the preset name without vendor prefix or printer suffix. */
 std::string filament_product_key(const std::string &preset_name, const std::string &vendor);
 
-/** @brief Reads the deployed user copy of the allow-list when it exists, otherwise the shipped resource copy. */
-std::filesystem::path choose_allow_list_copy(const std::filesystem::path &user_copy,
-                                             const std::filesystem::path &shipped_copy,
-                                             bool user_copy_exists);
+/** @brief Reads the deployed user copy of the filament rules when it exists, otherwise the shipped resource copy. */
+std::filesystem::path choose_rules_copy(const std::filesystem::path &user_copy,
+                                        const std::filesystem::path &shipped_copy,
+                                        bool user_copy_exists);
 
 } // namespace GUI
 } // namespace Slic3r

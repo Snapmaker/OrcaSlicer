@@ -132,8 +132,8 @@ set(lisbslic3r_sources
     Feature/Interlocking/VoxelUtils.cpp
     Feature/Interlocking/VoxelUtils.hpp
     FileParserError.hpp
-    AllowlistManager.cpp
-    AllowlistManager.hpp
+    FilamentRulesManager.cpp
+    FilamentRulesManager.hpp
     FilamentColorLibrary.cpp
     FilamentColorLibrary.hpp
     FilamentHotBedNozzleRules.cpp

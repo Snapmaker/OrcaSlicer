@@ -295,6 +295,146 @@ ExPolygons c2_to_expolygons(const C2::PolyTree64 &tree)
     return out;
 }
 
+// A vertex the path visits twice: Clipper1 split a contour touching itself at a vertex into two contours, Clipper2 keeps
+// it as one contour that passes through the vertex twice. Writes both positions, the earlier one first.
+static bool c2_repeated_vertex(const C2::Path64 &path, size_t &first, size_t &second)
+{
+    struct PointHash {
+        std::size_t operator()(const C2::Point64 &p) const
+        {
+            return std::hash<int64_t>{}(p.x) ^ (std::hash<int64_t>{}(p.y) << 1);
+        }
+    };
+    std::unordered_map<C2::Point64, size_t, PointHash> seen;
+    seen.reserve(path.size());
+    for (size_t i = 0; i < path.size(); ++ i)
+        if (! seen.emplace(path[i], i).second) {
+            first  = seen[path[i]];
+            second = i;
+            return true;
+        }
+    return false;
+}
+
+// Appends the simple loops of a contour that visits a vertex twice, the loop around the other ones first.
+static void c2_append_split_contour(C2::Paths64 &out, C2::Path64 &&contour)
+{
+    std::vector<C2::Path64> pending;
+    pending.emplace_back(std::move(contour));
+    while (! pending.empty()) {
+        C2::Path64 ring = std::move(pending.back());
+        pending.pop_back();
+        size_t first, second;
+        if (! c2_repeated_vertex(ring, first, second)) {
+            out.emplace_back(std::move(ring));
+            continue;
+        }
+        // The loop closing at the repeated vertex, and the rest of the contour, which still opens there.
+        C2::Path64 inner(ring.begin() + first, ring.begin() + second);
+        C2::Path64 outer(ring.begin() + second, ring.end());
+        outer.insert(outer.end(), ring.begin(), ring.begin() + first);
+        // A loop of less than three points is a spike out and back, it encloses nothing.
+        if (inner.size() >= 3)
+            pending.emplace_back(std::move(inner));
+        if (outer.size() >= 3)
+            pending.emplace_back(std::move(outer));
+    }
+}
+
+static void c2_split_repeated_vertices(C2::Paths64 &paths)
+{
+    C2::Paths64 out;
+    size_t      first, second;
+    for (C2::Path64 &path : paths)
+        if (c2_repeated_vertex(path, first, second))
+            c2_append_split_contour(out, std::move(path));
+        else
+            out.emplace_back(std::move(path));
+    paths = std::move(out);
+}
+
+// The polygons of a tree, outside in, and whether one of them visits a vertex twice.
+static void c2_tree_to_paths(const C2::PolyPath64 &node, C2::Paths64 &out, bool &repeated)
+{
+    size_t first, second;
+    repeated = repeated || c2_repeated_vertex(node.Polygon(), first, second);
+    out.push_back(node.Polygon());
+    for (const auto &child : node)
+        c2_tree_to_paths(*child, out, repeated);
+}
+
+// Whether the loop lies inside the contour. Loops of one result only touch, so the middle of an edge of the loop that is
+// clear of the contour decides for the whole loop.
+static bool c2_loop_inside(const Polygon &contour, const Polygon &loop)
+{
+    for (size_t i = 0; i < loop.size(); ++ i) {
+        const Point &a = loop[i];
+        const Point &b = loop[(i + 1) % loop.size()];
+        const Point  middle((a.x() + b.x()) / 2, (a.y() + b.y()) / 2);
+        if (contains(contour, middle, false))
+            return true;
+        if (! contains(contour, middle, true))
+            return false;
+    }
+    // The loop runs along the contour: go by the bounding boxes.
+    return contour.bounding_box().contains(loop.bounding_box());
+}
+
+// ExPolygons of simple loops that only touch each other: a clockwise loop is a hole of the smallest loop around it.
+static ExPolygons c2_loops_to_expolygons(Polygons &&loops)
+{
+    struct Loop
+    {
+        size_t      idx;
+        double      area;
+        BoundingBox bbox;
+    };
+    std::vector<Loop> sorted;
+    sorted.reserve(loops.size());
+    for (size_t i = 0; i < loops.size(); ++ i) {
+        const double area = loops[i].area();
+        sorted.push_back({ i, area < 0. ? - area : area, loops[i].bounding_box() });
+    }
+    std::sort(sorted.begin(), sorted.end(), [](const Loop &l, const Loop &r) { return l.area > r.area; });
+
+    // The loops around another one are the larger ones: they are nested, so the smallest of them is the one around it.
+    std::vector<size_t> parent(loops.size(), size_t(-1));
+    for (size_t i = 0; i < sorted.size(); ++ i)
+        for (size_t j = i; j > 0; -- j)
+            if (sorted[j - 1].bbox.contains(sorted[i].bbox) && c2_loop_inside(loops[sorted[j - 1].idx], loops[sorted[i].idx])) {
+                parent[sorted[i].idx] = sorted[j - 1].idx;
+                break;
+            }
+
+    ExPolygons out;
+    // The expolygon whose contour is the loop, for the counter-clockwise loops.
+    std::vector<size_t> owner(loops.size(), size_t(-1));
+    for (const Loop &loop : sorted) {
+        const size_t p = parent[loop.idx];
+        // A clockwise loop inside a counter-clockwise one is its hole, anything else is an expolygon of its own.
+        if (p != size_t(-1) && ! loops[loop.idx].is_counter_clockwise() && loops[p].is_counter_clockwise())
+            out[owner[p]].holes.push_back(std::move(loops[loop.idx]));
+        else {
+            out.emplace_back().contour = std::move(loops[loop.idx]);
+            owner[loop.idx] = out.size() - 1;
+        }
+    }
+    return out;
+}
+
+// c2_to_expolygons(), with the contours that visit a vertex twice split the way simplify_polygons() does.
+static ExPolygons c2_to_expolygons_split(const C2::PolyTree64 &tree)
+{
+    C2::Paths64 loops;
+    bool        repeated = false;
+    for (const auto &outer : tree)
+        c2_tree_to_paths(*outer, loops, repeated);
+    if (! repeated)
+        return c2_to_expolygons(tree);
+    c2_split_repeated_vertices(loops);
+    return c2_loops_to_expolygons(c2_to_polygons(loops));
+}
+
 template<class TOut>
 void c2_clip(C2::ClipType type, const C2::Paths64 &subject, const C2::Paths64 &clip, C2::FillRule fill, TOut &out)
 {
@@ -1017,11 +1157,13 @@ Polygons union_pt_chained_outside_in(const Polygons &subject)
     return retval;
 }
 
-// Clipper2 unions are strictly simple, like Clipper1's with StrictlySimple(true).
+// Clipper2 unions are strictly simple, like Clipper1's with StrictlySimple(true), but keep a contour that touches itself
+// at a vertex in one piece where Clipper1 split it into two.
 Polygons simplify_polygons(const Polygons &subject)
 {
     C2::Paths64 out;
     c2_clip(C2::ClipType::Union, to_paths64(ClipperUtils::PolygonsProvider(subject)), {}, C2::FillRule::NonZero, out);
+    c2_split_repeated_vertices(out);
     return c2_to_polygons(out);
 }
 
@@ -1029,7 +1171,7 @@ ExPolygons simplify_polygons_ex(const Polygons &subject)
 {
     C2::PolyTree64 out;
     c2_clip(C2::ClipType::Union, to_paths64(ClipperUtils::PolygonsProvider(subject)), {}, C2::FillRule::NonZero, out);
-    return c2_to_expolygons(out);
+    return c2_to_expolygons_split(out);
 }
 
 Polygons top_level_islands(const Slic3r::Polygons &polygons)

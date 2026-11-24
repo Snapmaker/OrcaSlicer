@@ -109,34 +109,140 @@ bool test_unchanged_agent()
                  "unchanged agent is not unloaded");
 }
 
-/** @brief Checks repeated lock errors reuse the same cleanup attempt until installation state changes. */
-bool test_confirmed_cleanup_retries()
+/** @brief Checks a confirmed cleanup stops after the command-failure retry limit without deleting. */
+bool test_command_failure_cap()
 {
-    const std::vector<CleanupResult> results{CleanupResult::LockBusy, CleanupResult::LockUnavailable,
+    unsigned attempts = 0;
+    unsigned waits = 0;
+    unsigned terminal_calls = 0;
+    CleanupResult terminal_result = CleanupResult::LockBusy;
+    SnapmakerUninstall::finish_confirmed_cleanup(
+        [&attempts]() { ++attempts; return CleanupResult::CommandFailed; },
+        [&waits](CleanupResult) { ++waits; },
+        [&terminal_calls, &terminal_result](CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
+        });
+    return check(attempts == 3 && waits == 2 && terminal_calls == 1 && terminal_result == CleanupResult::CommandFailed,
+                 "command failures reach the limit and end in one terminal self-removal");
+}
+
+/** @brief Checks a confirmed cleanup stops after the lock-busy retry limit without deleting. */
+bool test_lock_busy_cap()
+{
+    unsigned attempts = 0;
+    unsigned waits = 0;
+    unsigned terminal_calls = 0;
+    CleanupResult terminal_result = CleanupResult::CommandFailed;
+    SnapmakerUninstall::finish_confirmed_cleanup(
+        [&attempts]() { ++attempts; return CleanupResult::LockBusy; },
+        [&waits](CleanupResult) { ++waits; },
+        [&terminal_calls, &terminal_result](CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
+        });
+    return check(attempts == 15 && waits == 14 && terminal_calls == 1 && terminal_result == CleanupResult::LockBusy,
+                 "busy locks reach the limit and end in one terminal self-removal");
+}
+
+/** @brief Checks a confirmed cleanup stops after the lock-unavailable retry limit without deleting. */
+bool test_lock_unavailable_cap()
+{
+    unsigned attempts = 0;
+    unsigned waits = 0;
+    unsigned terminal_calls = 0;
+    CleanupResult terminal_result = CleanupResult::LockBusy;
+    SnapmakerUninstall::finish_confirmed_cleanup(
+        [&attempts]() { ++attempts; return CleanupResult::LockUnavailable; },
+        [&waits](CleanupResult) { ++waits; },
+        [&terminal_calls, &terminal_result](CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
+        });
+    return check(attempts == 3 && waits == 2 && terminal_calls == 1 && terminal_result == CleanupResult::LockUnavailable,
+                 "unavailable locks reach the limit and end in one terminal self-removal");
+}
+
+/** @brief Checks each retry counter is monotonic: interleaved failures still terminate. */
+bool test_mixed_failures_are_monotonic()
+{
+    const std::vector<CleanupResult> results{CleanupResult::CommandFailed, CleanupResult::LockBusy,
                                              CleanupResult::CommandFailed, CleanupResult::LockBusy,
-                                             CleanupResult::InstallationChanged};
+                                             CleanupResult::CommandFailed};
     std::size_t attempts = 0;
-    std::vector<CleanupResult> waits;
+    unsigned waits = 0;
+    unsigned terminal_calls = 0;
+    CleanupResult terminal_result = CleanupResult::LockBusy;
     SnapmakerUninstall::finish_confirmed_cleanup(
         [&results, &attempts]()
         {
             const std::size_t index = attempts++;
-            return index < results.size() ? results[index] : CleanupResult::InstallationChanged;
+            return index < results.size() ? results[index] : CleanupResult::CommandFailed;
         },
-        [&waits](CleanupResult result) { waits.push_back(result); });
-    return check(attempts == results.size() && waits == std::vector<CleanupResult>(results.begin(), results.end() - 1),
-                 "one confirmed cleanup retries lock and command failures, then stops on installation change");
+        [&waits](CleanupResult) { ++waits; },
+        [&terminal_calls, &terminal_result](CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
+        });
+    return check(attempts == results.size() && waits == results.size() - 1 && terminal_calls == 1 &&
+                 terminal_result == CleanupResult::CommandFailed,
+                 "mixed failures accumulate per kind and stop at the command-failure limit on the fifth attempt");
 }
 
-/** @brief Checks a restored installation cancels the pending cleanup without another retry. */
-bool test_cleanup_cancelled_by_installation_change()
+/** @brief Checks interleaved unavailable locks and command failures keep separate retry counters. */
+bool test_mixed_lu_cf_are_monotonic()
+{
+    const std::vector<CleanupResult> results{CleanupResult::LockUnavailable, CleanupResult::CommandFailed,
+                                             CleanupResult::LockUnavailable, CleanupResult::CommandFailed,
+                                             CleanupResult::LockUnavailable};
+    std::size_t attempts = 0;
+    unsigned waits = 0;
+    unsigned terminal_calls = 0;
+    CleanupResult terminal_result = CleanupResult::CommandFailed;
+    SnapmakerUninstall::finish_confirmed_cleanup(
+        [&results, &attempts]()
+        {
+            const std::size_t index = attempts++;
+            return index < results.size() ? results[index] : CleanupResult::CommandFailed;
+        },
+        [&waits](CleanupResult) { ++waits; },
+        [&terminal_calls, &terminal_result](CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
+        });
+    return check(attempts == 5 && waits == 4 && terminal_calls == 1 &&
+                 terminal_result == CleanupResult::LockUnavailable,
+                 "interleaved command failures do not reset the unavailable-lock counter");
+}
+
+/** @brief Checks a custom policy binds each failure kind to its own retry limit. */
+bool test_custom_policy_command_cap()
 {
     unsigned attempts = 0;
     unsigned waits = 0;
+    unsigned terminal_calls = 0;
+    CleanupResult terminal_result = CleanupResult::LockBusy;
+    SnapmakerUninstall::CleanupRetryPolicy policy;
+    policy.max_command_failures = 2;
+    policy.max_lock_busy        = 15;
+    policy.max_lock_unavailable = 3;
     SnapmakerUninstall::finish_confirmed_cleanup(
-        [&attempts]() { ++attempts; return CleanupResult::InstallationChanged; },
-        [&waits](CleanupResult) { ++waits; });
-    return check(attempts == 1 && waits == 0, "restored installation cancels pending cleanup immediately");
+        [&attempts]() { ++attempts; return CleanupResult::CommandFailed; },
+        [&waits](CleanupResult) { ++waits; },
+        [&terminal_calls, &terminal_result](CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
+        },
+        policy);
+    return check(attempts == 2 && waits == 1 && terminal_calls == 1 &&
+                 terminal_result == CleanupResult::CommandFailed,
+                 "a custom command-failure limit stops the second attempt instead of the lock-unavailable limit");
 }
 
 } // namespace
@@ -151,11 +257,15 @@ int main()
     ok = test_update_failure_recovery() && ok;
     ok = test_update_unrecoverable_failure() && ok;
     ok = test_unchanged_agent() && ok;
-    ok = test_confirmed_cleanup_retries() && ok;
-    ok = test_cleanup_cancelled_by_installation_change() && ok;
+    ok = test_command_failure_cap() && ok;
+    ok = test_lock_busy_cap() && ok;
+    ok = test_lock_unavailable_cap() && ok;
+    ok = test_mixed_failures_are_monotonic() && ok;
+    ok = test_mixed_lu_cf_are_monotonic() && ok;
+    ok = test_custom_policy_command_cap() && ok;
     if (ok)
     {
-        std::cout << "All nine uninstall watcher lifecycle policy cases passed.\n";
+        std::cout << "All thirteen uninstall watcher lifecycle policy cases passed.\n";
     }
     return ok ? 0 : 1;
 }

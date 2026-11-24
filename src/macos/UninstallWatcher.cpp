@@ -361,11 +361,28 @@ void bootout_self()
 {
     const auto service = gui_domain() + "/" + SnapmakerUninstall::kLabel;
     // disable first so KeepAlive cannot start a second copy after this process exits
-    run_command({"/bin/launchctl", "disable", service}, false);
+    const CommandResult disabled = run_command({"/bin/launchctl", "disable", service}, false);
+    if (disabled.exit_code != 0)
+    {
+        syslog(LOG_ERR, "Snapmaker Orca Monitor: launchctl disable failed: %d", disabled.exit_code);
+        log_line("launchctl disable failed: " + std::to_string(disabled.exit_code));
+    }
+    const CommandResult booted = run_command({"/bin/launchctl", "bootout", service}, false);
+    if (booted.exit_code != 0)
+    {
+        syslog(LOG_ERR, "Snapmaker Orca Monitor: launchctl bootout failed: %d", booted.exit_code);
+        log_line("launchctl bootout failed: " + std::to_string(booted.exit_code));
+    }
     const auto plist = SnapmakerUninstall::launch_agent_plist_path();
-    run_command({"/bin/launchctl", "bootout", service}, false);
     if (!plist.empty())
-        run_command({"/bin/launchctl", "bootout", gui_domain(), plist.string()}, false);
+    {
+        const CommandResult booted_plist = run_command({"/bin/launchctl", "bootout", gui_domain(), plist.string()}, false);
+        if (booted_plist.exit_code != 0)
+        {
+            syslog(LOG_ERR, "Snapmaker Orca Monitor: launchctl bootout plist failed: %d", booted_plist.exit_code);
+            log_line("launchctl bootout plist failed: " + std::to_string(booted_plist.exit_code));
+        }
+    }
 }
 
 void remove_plist()
@@ -492,16 +509,6 @@ void remove_user_data_dir(const std::filesystem::path& path)
     }
 }
 
-/** @brief Checks whether the confirmed installation is still absent; rechecked after taking the lock. */
-bool confirmed_installation_missing(const WatchState& expected)
-{
-    const WatchState current = load_state();
-    return current.valid && current.seen &&
-           SnapmakerUninstall::same_registration(expected.bundle, expected.registration_id,
-                                                current.bundle, current.registration_id) &&
-           bundle_missing(expected.bundle);
-}
-
 /** @brief Restores normal watcher termination if a cleanup attempt returns for a retry. */
 struct CleanupSignalGuard
 {
@@ -519,28 +526,16 @@ struct CleanupSignalGuard
 };
 
 /**
- * @brief Attempts cleanup under the lifecycle lock; returns a reason to retry or resume watching.
- * @param expected Installation state observed before showing the uninstall dialog.
+ * @brief Attempts cleanup under the lifecycle lock; returns a reason to retry.
  * @param delete_user_data Whether the confirmed cleanup should also remove personal data.
  */
-SnapmakerUninstall::CleanupResult try_finish(const WatchState& expected, bool delete_user_data)
+SnapmakerUninstall::CleanupResult try_finish(bool delete_user_data)
 {
-    // Restoration also cancels a confirmation while the lock path remains unavailable.
-    if (!confirmed_installation_missing(expected))
-    {
-        return SnapmakerUninstall::CleanupResult::InstallationChanged;
-    }
     const SnapmakerUninstall::LifecycleLock lock(std::chrono::steady_clock::now() + std::chrono::seconds(1));
     if (!lock.locked())
     {
         return lock.timed_out() ? SnapmakerUninstall::CleanupResult::LockBusy
                                 : SnapmakerUninstall::CleanupResult::LockUnavailable;
-    }
-
-    if (!confirmed_installation_missing(expected))
-    {
-        log_line("installation state changed before cleanup acquired the lock; skipping cleanup");
-        return SnapmakerUninstall::CleanupResult::InstallationChanged;
     }
 
     const CleanupSignalGuard signals; // bootout delivers SIGTERM; ignore it so cleanup can finish
@@ -564,10 +559,10 @@ SnapmakerUninstall::CleanupResult try_finish(const WatchState& expected, bool de
     }
 
     remove_helper_dir();
+    bootout_self();
     remove_plist();
     if (delete_user_data)
         remove_user_data_dir(SnapmakerUninstall::support_dir());
-    bootout_self();
     // Keep the lifecycle lock until process exit releases it, after the final launchctl operation.
     _exit(0);
 }
@@ -575,33 +570,42 @@ SnapmakerUninstall::CleanupResult try_finish(const WatchState& expected, bool de
 /** @brief Best-effort self-removal without the lifecycle lock; used only on terminal failures. */
 void remove_watcher_without_lock()
 {
+    const CleanupSignalGuard signals; // bootout delivers SIGTERM; ignore it so removal can finish
     remove_helper_dir();
-    remove_plist();
     bootout_self();
+    remove_plist();
     _exit(0);
 }
 
-/** @brief Retains confirmation while retrying, abandoning it only when installation state changes. */
-void finish(const WatchState& expected, bool delete_user_data)
+/** @brief Removes watcher files without user data once a retry limit has been reached. */
+void terminal_self_removal(SnapmakerUninstall::CleanupResult result)
 {
-    constexpr unsigned kMaxLockUnavailablePolls = 3; // a permanent lock-path error never recovers
+    // A retry limit is terminal: remove only the watcher, never a user-data directory.
+    syslog(LOG_ERR,
+           "Snapmaker Orca Monitor: cleanup retry limit reached (%d); removing the watcher without deleting user data",
+           static_cast<int>(result));
+    log_line("cleanup retry limit reached; removing the watcher without deleting user data");
+    const CleanupSignalGuard signals; // bootout delivers SIGTERM; ignore it so self-removal can finish
+    const SnapmakerUninstall::LifecycleLock lock(std::chrono::steady_clock::now() + std::chrono::seconds(1));
+    if (lock.locked())
+    {
+        remove_helper_dir();
+        bootout_self();
+        remove_plist();
+        // Keep the lifecycle lock until process exit releases it, after the final launchctl operation.
+        _exit(0);
+    }
+    remove_watcher_without_lock();
+}
+
+/** @brief Retains the confirmation while retrying; a retry limit removes the watcher without user data. */
+void finish(bool delete_user_data)
+{
     std::optional<SnapmakerUninstall::CleanupResult> reported_failure;
-    unsigned lock_unavailable_polls = 0;
     SnapmakerUninstall::finish_confirmed_cleanup(
-        [&expected, delete_user_data]() { return try_finish(expected, delete_user_data); },
-        [&reported_failure, &lock_unavailable_polls](SnapmakerUninstall::CleanupResult result)
+        [delete_user_data]() { return try_finish(delete_user_data); },
+        [&reported_failure](SnapmakerUninstall::CleanupResult result)
         {
-            if (result == SnapmakerUninstall::CleanupResult::LockUnavailable) {
-                // Retrying cannot fix a broken lock path; self-remove (keeping user data, whose
-                // deletion stays coordinated) instead of retrying forever with the job still loaded.
-                if (++lock_unavailable_polls >= kMaxLockUnavailablePolls) {
-                    log_line("lifecycle lock is permanently unavailable; removing the watcher without it");
-                    syslog(LOG_ERR, "Snapmaker Orca Monitor: lifecycle lock is permanently unavailable; removing the watcher without it");
-                    remove_watcher_without_lock();
-                }
-            } else {
-                lock_unavailable_polls = 0;
-            }
             if (!reported_failure.has_value() || *reported_failure != result)
             {
                 log_line(result == SnapmakerUninstall::CleanupResult::CommandFailed ?
@@ -612,7 +616,8 @@ void finish(const WatchState& expected, bool delete_user_data)
                 reported_failure = result;
             }
             std::this_thread::sleep_for(std::chrono::seconds(2));
-        });
+        },
+        terminal_self_removal);
 }
 
 } // namespace
@@ -653,27 +658,17 @@ int main()
             continue;
         }
 
-        const Choice     choice  = ask_user();
-        const WatchState current = load_state();
-        if (!current.valid || !current.seen ||
-            !SnapmakerUninstall::same_registration(state.bundle, state.registration_id,
-                                                  current.bundle, current.registration_id) ||
-            !bundle_missing(state.bundle))
-        {
-            log_line("installation state changed while the dialog was open; skipping cleanup");
-            dialog_failed = 0;
-            continue;
-        }
+        const Choice choice = ask_user();
         if (choice == Choice::DeleteData || choice == Choice::KeepData)
         {
-            finish(state, choice == Choice::DeleteData);
+            finish(choice == Choice::DeleteData);
             dialog_failed = 0;
             continue;
         }
         if (++dialog_failed >= kMaxDialogFailures) {
             log_line("dialog failed " + std::to_string(dialog_failed) + " times; removing the watcher");
             syslog(LOG_ERR, "Snapmaker Orca Monitor: dialog failed %u times; removing the watcher", dialog_failed);
-            finish(state, false);
+            finish(false);
             dialog_failed = 0;
             continue;
         }

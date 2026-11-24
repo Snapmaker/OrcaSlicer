@@ -1488,6 +1488,10 @@ void TexturePreviewCanvas::render_textured_original()
             glEnable(GL_TEXTURE_2D);
             glBindTexture(GL_TEXTURE_2D, m_gl_tex_ids[tid]);
             tex_bound = true;
+            // Reset to white per textured group: an earlier untextured group
+            // leaves glColor at its last face color, and GL_MODULATE would tint
+            // the texture with it (green x red = black).
+            glColor3f(1.0f, 1.0f, 1.0f);
         } else {
             glDisable(GL_TEXTURE_2D);
         }

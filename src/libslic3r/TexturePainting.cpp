@@ -262,7 +262,11 @@ static bool build_multi_texture_atlas(
         if (resolve_tex_idx(mat_idx) >= 0) continue;
         if (static_cast<size_t>(mat_idx) >= textured.material_colors.size()) continue;
         if (mat_solid_y.find(mat_idx) != mat_solid_y.end()) continue;
-        mat_solid_y[mat_idx]     = atlas_h++;
+        // Two rows per solid color: the emitted UV can then land anywhere
+        // inside the band and bilinear sampling (in tex2color) never bleeds
+        // into the texture row above or the zero padding around it.
+        mat_solid_y[mat_idx]     = atlas_h;
+        atlas_h                 += 2;
         mat_solid_color[mat_idx] = textured.material_colors[mat_idx];
     }
 
@@ -274,11 +278,15 @@ static bool build_multi_texture_atlas(
     }
     for (const auto& kv : mat_solid_color) {
         const auto& c = kv.second;
-        // OpenCV stores BGR; baseColor is RGBA in [0,1].
-        out_atlas.at<cv::Vec3b>(mat_solid_y[kv.first], 0) = cv::Vec3b(
+        // OpenCV stores BGR; baseColor is RGBA in [0,1]. Fill both band rows
+        // across the FULL atlas width so horizontal bilinear never samples
+        // the zero-padded columns beside a 1px swatch.
+        const cv::Vec3b bgr(
             static_cast<uchar>(std::clamp(c[2] * 255.f, 0.f, 255.f)),
             static_cast<uchar>(std::clamp(c[1] * 255.f, 0.f, 255.f)),
             static_cast<uchar>(std::clamp(c[0] * 255.f, 0.f, 255.f)));
+        out_atlas.row(mat_solid_y[kv.first]).setTo(bgr);
+        out_atlas.row(mat_solid_y[kv.first] + 1).setTo(bgr);
     }
 
     out_uv_coords.resize(nf);
@@ -326,10 +334,11 @@ static bool build_multi_texture_atlas(
                 }
             }
             if (use_solid) {
-                // Aim at the centre of the 1x1 swatch so bilinear sampling
-                // (in tex2color) cannot drift into neighbouring rows.
-                const float u_atlas = (x_off + 0.5f) / static_cast<float>(atlas_w);
-                const float v_atlas = (y_off + 0.5f) / static_cast<float>(atlas_h);
+                // Aim inside the 2-row solid band; both rows carry the flat
+                // colour across the full width, so bilinear sampling stays on
+                // the colour no matter where the quadrature points land.
+                const float u_atlas = 0.5f;
+                const float v_atlas = (y_off + 1.0f) / static_cast<float>(atlas_h);
                 out_uv_coords[fi][vi] = Vec2f(u_atlas, v_atlas);
             } else {
                 // Wrap to [0,1) on both axes (OBJ tile UVs may step outside
@@ -362,9 +371,20 @@ bool texture_to_painting(
     tex2color::TriMesh input_mesh;
     std::vector<std::vector<Vec2f>> uv_coords;
 
-    const bool multi_tex = textured.textures.size() > 1 && !textured.material_texture_map.empty();
+    // The atlas path also handles pure baseColor/Kd materials as 1x1 solid
+    // swatches. Route to it whenever any material has no texture: otherwise a
+    // single-texture file leaves those faces sampling textures[0] at their own
+    // UVs (typically (0,0)) instead of their declared colour.
+    const bool has_solid_material = [&]() {
+        for (int tex_idx : textured.material_texture_map)
+            if (tex_idx < 0)
+                return true;
+        return false;
+    }();
+    const bool use_atlas_path = (textured.textures.size() > 1 || has_solid_material)
+                             && !textured.material_texture_map.empty();
 
-    if (multi_tex) {
+    if (use_atlas_path) {
         if (!build_multi_texture_atlas(textured, texture, uv_coords))
             return false;
         // Build mesh geometry (atlas UVs already computed above)

@@ -311,27 +311,38 @@ Model Model::read_from_file(const std::string&                                  
         }
         if (result && obj_info.has_uv_png && !obj_info.uvs.empty() && !model.objects.empty()
                      && !model.objects.back()->volumes.empty()) {
-            // Same mapping as AssimpImport: (x, y, z) -> (x, -z, y).
-            // +Y up goes to +Z up, and +Z forward goes to scene front (-Y).
-            const Eigen::Matrix3d y_up_to_z_up = (Eigen::Matrix3d() <<
-                1.0, 0.0,  0.0,
-                0.0, 0.0, -1.0,
-                0.0, 1.0,  0.0).finished();
-            for (ModelObject* obj : model.objects) {
-                if (obj == nullptr)
-                    continue;
-                for (ModelVolume* volume : obj->volumes)
-                    if (volume != nullptr && !volume->mesh().empty())
-                        volume->transform_this_mesh(y_up_to_z_up, false);
-                obj->invalidate_bounding_box();
-            }
-            // Textured OBJ: hand the mesh + materials to the texture-to-color importer.
+            // Textured OBJ: hand the mesh + materials to the texture-to-color importer
+            // first, in the file's own frame. The Y-up -> Z-up rotation below runs only
+            // when the texture actually loads: rotating on a failed texture load would
+            // silently tip over a pure-geometry model (has_uv_png is set from the mtl
+            // naming a map_Kd, regardless of whether the texture file exists).
             auto tex_mesh = std::make_shared<TexturedMesh>();
             std::string obj_dir = boost::filesystem::path(input_file).parent_path().string();
             const bool to_tex_ok = obj_to_textured_mesh(obj_info,
                     model.objects.back()->volumes[0]->mesh().its,
                     mtl_data, obj_dir, *tex_mesh);
             if (to_tex_ok) {
+                // Same mapping as AssimpImport: (x, y, z) -> (x, -z, y).
+                // +Y up goes to +Z up, and +Z forward goes to scene front (-Y).
+                // Both the volume meshes and the textured mesh must move into the same
+                // frame, or the painted result would land rotated against the geometry.
+                const Eigen::Matrix3d y_up_to_z_up = (Eigen::Matrix3d() <<
+                    1.0, 0.0,  0.0,
+                    0.0, 0.0, -1.0,
+                    0.0, 1.0,  0.0).finished();
+                for (ModelObject* obj : model.objects) {
+                    if (obj == nullptr)
+                        continue;
+                    for (ModelVolume* volume : obj->volumes)
+                        if (volume != nullptr && !volume->mesh().empty())
+                            volume->transform_this_mesh(y_up_to_z_up, false);
+                    obj->invalidate_bounding_box();
+                }
+                const Eigen::Matrix3f rot_f = y_up_to_z_up.cast<float>();
+                for (auto& v : tex_mesh->vertices) {
+                    const Eigen::Vector3f p = rot_f * Eigen::Vector3f(v[0], v[1], v[2]);
+                    v = {p[0], p[1], p[2]};
+                }
                 model.texture_mesh = tex_mesh;
             }
         }

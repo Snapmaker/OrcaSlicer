@@ -58,26 +58,59 @@ AgentUpdateResult update_launch_agent(bool loaded, bool needs_reload, const std:
 /** @brief Reasons an attempted cleanup returned instead of completing and exiting. */
 enum class CleanupResult
 {
-    InstallationChanged,
     LockBusy,
     LockUnavailable,
     CommandFailed
 };
 
+/** @brief Monotonic per-kind retry limits; reaching one ends a cleanup with self-removal only. */
+struct CleanupRetryPolicy
+{
+    unsigned max_command_failures = 3;
+    unsigned max_lock_busy        = 15;
+    unsigned max_lock_unavailable = 3;
+};
+
 /**
  * @brief Retries a confirmed cleanup without asking the user to confirm again.
- * @param attempt Rechecks installation state and attempts cleanup; success exits the helper.
+ * @param attempt Attempts cleanup once; success exits the helper, a returned failure is retried.
  * @param wait Applies a delay and optional diagnostics before retrying the same confirmation.
+ * @param terminal Runs once when a failure kind reaches its retry limit; it removes the watcher and exits.
+ * @param policy Retry limits per failure kind; counters are monotonic so mixed failures still terminate.
  */
-template <typename CleanupAttempt, typename RetryWait>
-void finish_confirmed_cleanup(CleanupAttempt&& attempt, RetryWait&& wait)
+template <typename CleanupAttempt, typename RetryWait, typename TerminalCleanup>
+void finish_confirmed_cleanup(CleanupAttempt&& attempt, RetryWait&& wait, TerminalCleanup&& terminal,
+                              const CleanupRetryPolicy& policy = {})
 {
+    unsigned command_failures = 0;
+    unsigned lock_busy        = 0;
+    unsigned lock_unavailable = 0;
     for (;;)
     {
         const CleanupResult result = attempt();
-        if (result == CleanupResult::InstallationChanged)
+        switch (result)
         {
-            return;
+        case CleanupResult::CommandFailed:
+            if (++command_failures >= policy.max_command_failures)
+            {
+                terminal(result);
+                return;
+            }
+            break;
+        case CleanupResult::LockBusy:
+            if (++lock_busy >= policy.max_lock_busy)
+            {
+                terminal(result);
+                return;
+            }
+            break;
+        case CleanupResult::LockUnavailable:
+            if (++lock_unavailable >= policy.max_lock_unavailable)
+            {
+                terminal(result);
+                return;
+            }
+            break;
         }
         wait(result);
     }

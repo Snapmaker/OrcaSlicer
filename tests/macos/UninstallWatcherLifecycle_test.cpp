@@ -205,7 +205,7 @@ bool test_registration_identity()
                     "registration UUID round-trips through production state serialization");
     ok = check(SnapmakerUninstall::same_registration(bundle, first, bundle, first) &&
                !SnapmakerUninstall::same_registration(bundle, first, bundle, second),
-               "same-path reinstall invalidates the prior confirmation") && ok;
+               "predicate detects a same-path UUID change") && ok;
     ok = check(SnapmakerUninstall::registration_attempt_is_current("", first) &&
                SnapmakerUninstall::registration_attempt_is_current(first, first) &&
                !SnapmakerUninstall::registration_attempt_is_current(first, second) &&
@@ -218,8 +218,8 @@ bool test_registration_identity()
     return ok;
 }
 
-/** @brief Checks a waiting confirmation is cancelled by a new UUID read from the same watch.json path. */
-bool test_reinstall_during_confirmed_cleanup()
+/** @brief Checks a reinstall that replaces the registration UUID does not cancel a confirmed cleanup. */
+bool test_reinstall_does_not_cancel_confirmed_cleanup()
 {
     const TestHome home;
     if (!check(home.ready(), "temporary HOME setup"))
@@ -241,27 +241,33 @@ bool test_reinstall_during_confirmed_cleanup()
     unsigned attempts = 0;
     unsigned waits = 0;
     bool replaced = false;
+    unsigned terminal_calls = 0;
+    SnapmakerUninstall::CleanupResult terminal_result = SnapmakerUninstall::CleanupResult::CommandFailed;
     SnapmakerUninstall::finish_confirmed_cleanup(
-        [&]()
+        [&attempts]()
         {
             ++attempts;
-            const std::string current = SnapmakerUninstall::registration_id_from_state(
-                SnapmakerUninstall::read_text_file(state));
-            return attempts < 4 && SnapmakerUninstall::same_registration(bundle, first, bundle, current)
-                       ? SnapmakerUninstall::CleanupResult::LockBusy
-                       : SnapmakerUninstall::CleanupResult::InstallationChanged;
+            return attempts <= 4 ? SnapmakerUninstall::CleanupResult::LockBusy
+                                 : SnapmakerUninstall::CleanupResult::LockUnavailable;
         },
         [&](SnapmakerUninstall::CleanupResult)
         {
             ++waits;
-            // Replace the fixture while both observations report the same absent bundle path.
-            std::ofstream out(state, std::ios::binary | std::ios::trunc);
-            out << SnapmakerUninstall::watch_state_text(bundle, second);
-            out.close();
-            replaced = !out.fail();
+            // A reinstall publishes a new UUID while the confirmed cleanup keeps retrying.
+            if (waits == 2)
+            {
+                replaced = SnapmakerUninstall::write_text_atomic(
+                    state, SnapmakerUninstall::watch_state_text(bundle, second));
+            }
+        },
+        [&terminal_calls, &terminal_result](SnapmakerUninstall::CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
         });
-    return check(replaced && attempts == 2 && waits == 1,
-                 "new same-path registration cancels the old confirmation on the next cleanup attempt");
+    return check(replaced && attempts == 7 && waits == 6 && terminal_calls == 1 &&
+                 terminal_result == SnapmakerUninstall::CleanupResult::LockUnavailable,
+                 "a new same-path registration does not cancel the old confirmation; cleanup keeps retrying to its limit");
 }
 
 #ifdef __APPLE__
@@ -325,7 +331,7 @@ int main()
     ok = test_persistent_reload_recovery() && ok;
     ok = test_invalid_reload_marker() && ok;
     ok = test_registration_identity() && ok;
-    ok = test_reinstall_during_confirmed_cleanup() && ok;
+    ok = test_reinstall_does_not_cancel_confirmed_cleanup() && ok;
 #ifdef __APPLE__
     ok = test_lock_lifecycle() && ok;
     ok = test_invalid_lock_directory() && ok;

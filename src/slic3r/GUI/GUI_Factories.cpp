@@ -127,14 +127,14 @@ std::map<std::string, std::vector<SimpleSettingData>>  SettingsFactory::OBJECT_C
                     {"precise_z_height", "",10}
 
                     }},
-    { L("Support"), {{"brim_type", "",1},{"brim_width", "",2},{"brim_object_gap", "",3},
-                    {"enable_support", "",4},{"support_type", "",5},{"support_threshold_angle", "",6}, {"support_threshold_overlap", "",6}, {"support_on_build_plate_only", "",7},
-                    {"support_filament", "",8},{"support_interface_filament", "",9},{"support_expansion", "",24},{"support_style", "",25},
-                    {"tree_support_brim_width", "",26}, {"tree_support_branch_angle", "",10},{"tree_support_branch_angle_organic","",10}, {"tree_support_wall_count", "",11},{"tree_support_branch_diameter_angle", "",11},//tree support
-                    {"support_top_z_distance", "",13},{"support_bottom_z_distance", "",12},{"support_base_pattern", "",14},{"support_base_pattern_spacing", "",15},
-                    {"support_interface_top_layers", "",16},{"support_interface_bottom_layers", "",17},{"support_interface_spacing", "",18},{"support_interface_min_area", "",30},{"support_bottom_interface_spacing", "",19},
-                    {"support_object_xy_distance", "",20}, {"bridge_no_support", "",21},{"max_bridge_length", "",22},{"support_critical_regions_only", "",23},{"support_remove_small_overhang","",27},
-                    {"support_object_first_layer_gap","",28}
+    { L("Support"), {{"brim_type", "",1},{"brim_width", "",2},{"brim_object_gap", "",3},{"brim_flow_ratio", "",4},
+                    {"enable_support", "",5},{"support_type", "",6},{"support_threshold_angle", "",7}, {"support_threshold_overlap", "",7}, {"support_on_build_plate_only", "",8},
+                    {"support_filament", "",9},{"support_interface_filament", "",10},{"support_expansion", "",25},{"support_style", "",26},
+                    {"tree_support_brim_width", "",27}, {"tree_support_branch_angle", "",11},{"tree_support_branch_angle_organic","",11}, {"tree_support_wall_count", "",12},{"tree_support_branch_diameter_angle", "",12},//tree support
+                    {"support_top_z_distance", "",14},{"support_bottom_z_distance", "",13},{"support_base_pattern", "",15},{"support_base_pattern_spacing", "",16},
+                    {"support_interface_top_layers", "",17},{"support_interface_bottom_layers", "",18},{"support_interface_spacing", "",19},{"support_interface_min_area", "",31},{"support_bottom_interface_spacing", "",20},
+                    {"support_object_xy_distance", "",21}, {"bridge_no_support", "",22},{"max_bridge_length", "",23},{"support_critical_regions_only", "",24},{"support_remove_small_overhang","",28},
+                    {"support_object_first_layer_gap","",29}
                             }},
     { L("Speed"), {{"support_speed", "",12}, {"support_interface_speed", "",13}
                     }}
@@ -954,14 +954,14 @@ void MenuFactory::append_menu_item_change_extruder(wxMenu* menu)
     if (sels.Count() == 1) {
         const ModelConfig& config = obj_list()->get_item_config(sels[0]);
         // BBS: set default extruder to 1
-        initial_extruder = config.has("extruder") ? config.extruder() : 0;
+        initial_extruder = config.has("extruder") ? config.extruder() : 1;
     }
 
-    for (size_t display_idx = 0; display_idx <= ordered_filament_ids.size(); ++display_idx)
+    for (size_t display_idx = 1; display_idx <= ordered_filament_ids.size(); ++display_idx)
     {
-        const int actual_filament_id = display_idx == 0 ? 0 : int(ordered_filament_ids[display_idx - 1]);
+        const int actual_filament_id = int(ordered_filament_ids[display_idx - 1]);
         const bool is_active_extruder = actual_filament_id == initial_extruder;
-        const int icon_idx = actual_filament_id == 0 ? 0 : actual_filament_id - 1;
+        const int icon_idx = actual_filament_id - 1;
 
         wxString item_name = filament_menu_item_name(actual_filament_id, int(display_idx));
 
@@ -1569,7 +1569,7 @@ void MenuFactory::create_filament_action_menu(bool init, int active_filament_men
 
     // Add mixed filaments as merge targets
     auto& mixed_mgr = wxGetApp().preset_bundle->mixed_filaments;
-    const auto& mfs = mixed_mgr.mixed_filaments();
+    const auto&  mfs          = mixed_mgr.mixed_filament_legacy_rows();
     const size_t num_physical = filament_presets.size();
     
     // Get icon dimensions
@@ -2112,12 +2112,12 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
         if (sel_vol && sel_vol->type() == ModelVolumeType::PARAMETER_MODIFIER)
             initial_extruder = config.has("extruder") ? config.extruder() : 0;
         else
-            initial_extruder = config.has("extruder") ? config.extruder() : 0;
+            initial_extruder = config.has("extruder") ? config.extruder() : 1;
     }
 
-    for (size_t display_idx = 0; display_idx <= ordered_filament_ids.size(); ++display_idx)
+    for (size_t display_idx = 1; display_idx <= ordered_filament_ids.size(); ++display_idx)
     {
-        const int actual_filament_id = display_idx == 0 ? 0 : int(ordered_filament_ids[display_idx - 1]);
+        const int actual_filament_id = int(ordered_filament_ids[display_idx - 1]);
         bool is_active_extruder = false;
 
         wxString item_name = filament_menu_item_name(actual_filament_id, int(display_idx));
@@ -2128,7 +2128,7 @@ void MenuFactory::append_menu_item_change_filament(wxMenu* menu)
 
         append_menu_item(extruder_selection_menu, wxID_ANY, item_name, "",
             [actual_filament_id](wxCommandEvent&) { obj_list()->set_extruder_for_selected_items(actual_filament_id); },
-            actual_filament_id == 0 || size_t(actual_filament_id - 1) >= icons.size() ? wxNullBitmap : *icons[size_t(actual_filament_id - 1)], menu,
+            size_t(actual_filament_id - 1) >= icons.size() ? wxNullBitmap : *icons[size_t(actual_filament_id - 1)], menu,
             [is_active_extruder]() { return !is_active_extruder; }, m_parent);
     }
     menu->Append(wxID_ANY, name, extruder_selection_menu, _L("Change Filament"));

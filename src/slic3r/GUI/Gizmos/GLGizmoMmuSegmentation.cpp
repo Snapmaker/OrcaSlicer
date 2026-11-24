@@ -538,7 +538,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
             size_t num_phys = static_cast<size_t>(std::max(wxGetApp().filaments_cnt(), 0));
             mf_data = pb->mixed_filaments.mixed_filament_from_id(actual_filament_id, num_phys);
         }
-        const bool is_gradient = mf_data && is_simple_gradient(*mf_data);
+        const bool is_gradient = mf_data && is_layer_gradient(*mf_data);
 
         float button_offset = start_pos_x;
         if (extruder_idx % max_filament_items_per_line != 0) {
@@ -598,7 +598,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
             if (fill_h > 0.0f) {
                 for (int y_i = 0; y_i < int(std::round(fill_h)); ++y_i) {
                     double pos = 1.0 - double(y_i) / double(fill_h);
-                    ImU32 c = interpolate_ImU32(bottom_col, top_col, pos);
+                    ImU32  c   = physical_color_to_ImU32(mixed_gradient_display_color(*mf_data, m_mixed_display_context, pos));
                     draw_list->AddRectFilled(
                         ImVec2(fill_min.x, fill_min.y + float(y_i)),
                         ImVec2(fill_max.x, fill_min.y + float(y_i + 1)), c);
@@ -720,9 +720,14 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(1);
 
-        if (btn_clicked && m_current_tool != tool_ids[i]) {
+        if (btn_clicked && (m_current_tool != tool_ids[i] || m_rectangle_mask_active || m_polygon_mask_active)) {
             FinishPaintingInteraction();
-            m_current_tool = tool_ids[i];
+            m_current_tool          = tool_ids[i];
+            m_rectangle_mask_active = false;
+            m_polygon_mask_active   = false;
+            m_rect_dragging         = false;
+            m_polygon_points.clear();
+            m_polygon_dragged_vertex = -1;
         }
 
         if (ImGui::IsItemHovered()) {
@@ -895,6 +900,49 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         ImGui::PushItemWidth(1.5 * slider_icon_width);
         ImGui::BBLDragFloat("##gap_area_input", &TriangleSelectorPatch::gap_area, 0.05f, 0.0f, 0.0f, "%.2f");
     }
+
+    ImGui::Separator();
+    ImGui::AlignTextToFramePadding();
+    m_imgui->text(_L("Paint precision"));
+    ImGui::SameLine(sliders_left_width);
+    ImGui::PushItemWidth(sliders_width);
+    m_imgui->bbl_slider_float_style("##paint_precision", &m_precision_factor, PrecisionFactorMin, PrecisionFactorMax, "%.0fx", 1.f, true);
+    ImGui::SameLine(drag_left_width + sliders_left_width);
+    ImGui::PushItemWidth(1.5f * slider_icon_width);
+    ImGui::BBLDragFloat("##paint_precision_input", &m_precision_factor, 0.5f, PrecisionFactorMin, PrecisionFactorMax, "%.0fx");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s",
+                          _u8L("Subdivides the mesh more finely at painted boundaries. Higher values use more CPU and memory.").c_str());
+
+    if (m_imgui->bbl_checkbox(_L("Rectangle mask"), m_rectangle_mask_active)) {
+        FinishPaintingInteraction();
+        m_polygon_mask_active = false;
+        m_polygon_points.clear();
+        m_polygon_dragged_vertex = -1;
+        m_rect_dragging          = false;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(
+            "%s",
+            _u8L("Drag a screen-space rectangle to paint front-facing facets inside it. Shift-drag erases; right-click cancels.").c_str());
+
+    if (m_imgui->bbl_checkbox(_L("Polygon mask"), m_polygon_mask_active)) {
+        FinishPaintingInteraction();
+        m_rectangle_mask_active = false;
+        m_rect_dragging         = false;
+        m_polygon_points.clear();
+        m_polygon_dragged_vertex = -1;
+    }
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip(
+            "%s",
+            _u8L("Click to place vertices, drag an existing vertex to edit it, then click the first vertex to paint. Right-click cancels.")
+                .c_str());
+
+    if (m_rectangle_mask_active)
+        m_tool_type = ToolType::RECTANGLE;
+    else if (m_polygon_mask_active)
+        m_tool_type = ToolType::POLYGON;
 
     ImGui::Separator();
     if(m_imgui->bbl_checkbox(_L("Vertical"), m_vertical_only)){

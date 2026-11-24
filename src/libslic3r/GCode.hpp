@@ -118,6 +118,8 @@ public:
     std::string tool_change(GCode &gcodegen, int extruder_id, bool finish_layer,
                             bool local_z_unplanned = false,
                             double local_z_nominal_layer_z = -1.);
+    std::string        finish_local_z_toolchanges(GCode& gcodegen, double local_z_nominal_layer_z);
+    size_t             unplanned_direct_switches() const { return m_unplanned_direct_switches; }
     bool is_empty_wipe_tower_gcode(GCode &gcodegen, int extruder_id, bool finish_layer);
     std::string finalize(GCode &gcodegen);
     std::vector<float> used_filament_length() const;
@@ -163,6 +165,8 @@ private:
     std::vector<size_t>                                          m_local_z_tool_change_idx;
     std::vector<size_t>                                          m_local_z_reserve_slot_idx;
     double                                                       m_last_wipe_tower_print_z = 0.f;
+    // Filament changes emitted without the tower because no planned transition matched.
+    size_t                                                       m_unplanned_direct_switches = 0;
 
     // BBS
     Vec3d                                                        m_plate_origin;
@@ -403,6 +407,10 @@ private:
     std::string     preamble();
     // BBS
     std::string     change_layer(coordf_t print_z);
+    // Logical layer Z (print_z + z_offset) as scheduled by change_layer(); unlike
+    // writer().get_position().z() it is not deferred to the layer-change travel,
+    // so wipe-tower height decisions must use it, not the writer's physical Z.
+    coordf_t        nominal_z() const { return m_nominal_z; }
     // Orca: pass the complete collection of region perimeters to the extrude loop to check whether the wipe before external loop
     // should be executed
     std::string     extrude_entity(const ExtrusionEntity &entity, std::string description = "", double speed = -1., const ExtrusionEntitiesPtr& region_perimeters = ExtrusionEntitiesPtr());
@@ -650,8 +658,9 @@ private:
     std::set<unsigned int>                  m_initial_layer_extruders;
     // BBS
     int get_bed_temperature(const int extruder_id, const bool is_first_layer, const BedType bed_type) const;
-    // BBS: max bed temperature over all used extruders, so that the bed temperature always
-    // accommodates the highest-temperature filament of a compatible mixed print (e.g. PLA + TPU).
+    // Bed temperature uses actual first-layer tools, including generated brims.
+    std::vector<unsigned int> m_bed_temperature_extruders;
+    static std::vector<unsigned int> first_layer_extruders(const Print& print);
     int get_bed_temperature_max(const Print& print, const bool is_first_layer) const;
 
     std::string _extrude(const ExtrusionPath &path, std::string description = "", double speed = -1);

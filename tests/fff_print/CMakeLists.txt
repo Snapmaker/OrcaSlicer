@@ -4,17 +4,20 @@ add_executable(${_TEST_NAME}_tests
 	test_data.cpp
 	test_data.hpp
 	test_extrusion_entity.cpp
+	test_filament_role_default.cpp
 	test_fill.cpp
 	test_flow.cpp
 	test_gcode.cpp
 	test_gcodewriter.cpp
 	test_model.cpp
 	test_print.cpp
+	test_sequential_print_clearance.cpp
 	test_printgcode.cpp
 	test_printobject.cpp
 	test_skirt_brim.cpp
 	test_support_material.cpp
 	test_tree_support_bridge.cpp
+	test_tree_support_interface.cpp
 	test_bed_temperature.cpp
 	test_trianglemesh.cpp
 	test_pressure_equalizer.cpp
@@ -25,6 +28,7 @@ add_executable(${_TEST_NAME}_tests
 	test_gcode_processor.cpp
 	test_adaptive_pa.cpp
 	test_wipe_tower.cpp
+	test_triangle_mesh_slicer.cpp
 	)
 find_package(JPEG REQUIRED)
 find_package(PNG REQUIRED)

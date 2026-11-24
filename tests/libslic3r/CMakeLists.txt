@@ -8,16 +8,26 @@ add_executable(${_TEST_NAME}_tests
 	test_clipper_offset.cpp
 	test_clipper_utils.cpp
 	test_config.cpp
+    slicing/test_cpu_preparation.cpp
+    slicing/test_local_z_clipper.cpp
+    slicing/test_local_z_clip_replay.cpp
+    slicing/test_painted_outline_cache.cpp
 	test_custom_gcode.cpp
 	test_gcode_layer_count.cpp
 	test_elephant_foot_compensation.cpp
 	test_extrusion_entity.cpp
+	test_overlap_carving.cpp
 	test_geometry.cpp
 	test_icns.cpp
 	test_mixed_filament.cpp
+    test_mixed_filament_serialization.cpp
+    test_mixed_filament_recommendations.cpp
+	test_full_spectrum_ks_pair_residual.cpp
+    test_product_port.cpp
 	test_mixed_filament_color_golden.cpp
 	test_triangle_selector.cpp
 	test_local_z_order_optimizer.cpp
+    test_local_z_plan.cpp
 	test_placeholder_parser.cpp
 	test_polygon.cpp
 	test_profile_load_util.cpp
@@ -37,6 +47,14 @@ add_executable(${_TEST_NAME}_tests
     test_indexed_triangle_set.cpp
 	TestMD5.cpp
 	test_flush_vol_calc.cpp
+	test_triangulation.cpp
+	test_tesselate.cpp
+	test_arc_fitter.cpp
+	test_wipe_tower2.cpp
+	test_calib.cpp
+	test_variable_width.cpp
+	test_arachne.cpp
+	test_split_painting.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

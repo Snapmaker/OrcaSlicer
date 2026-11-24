@@ -102,18 +102,11 @@ MixedFilamentBadge::MixedFilamentBadge(wxWindow* parent, wxWindowID id, int virt
 
     m_solid_color = parse_mixed_color(mf.display_color);
 
-    m_is_gradient = is_simple_gradient(mf);
+    m_is_gradient = is_layer_gradient(mf);
 
     if (m_is_gradient) {
-        auto get_color = [&](unsigned fid) -> wxColour {
-            if (fid == 0 || fid > display_context.physical_colors.size()) return wxColour("#26A69A");
-            return parse_mixed_color(display_context.physical_colors[fid - 1]);
-        };
-        const wxColour ca = get_color(mf.component_a);
-        const wxColour cb = get_color(mf.component_b);
-        const bool a_to_b = mf.gradient_start >= mf.gradient_end;
-        m_gradient_colors.push_back(a_to_b ? ca : cb);
-        m_gradient_colors.push_back(a_to_b ? cb : ca);
+        for (int i = 0; i <= 64; ++i)
+            m_gradient_colors.emplace_back(mixed_gradient_display_color(mf, display_context, double(i) / 64.0));
     }
 
     // Font color: for gradient use average luminance of the two endpoint colors
@@ -482,21 +475,12 @@ wxBitmap* create_mixed_filament_menu_bitmap(const MixedFilament&               m
     params.height = height;
     params.label  = label;
 
-    const bool is_gradient = is_simple_gradient(mf);
+    const bool is_gradient = is_layer_gradient(mf);
 
     if (is_gradient) {
-        auto get_c = [&](unsigned fid) -> wxColour {
-            if (fid == 0 || fid > ctx.physical_colors.size())
-                return wxColour("#26A69A");
-            return parse_mixed_color(ctx.physical_colors[fid - 1]);
-        };
-        const wxColour ca = get_c(mf.component_a);
-        const wxColour cb = get_c(mf.component_b);
-        const bool a_to_b = mf.gradient_start >= mf.gradient_end;
-
         params.mode = ColorBlockParams::Gradient;
-        params.gradient_colors.push_back(a_to_b ? ca : cb);
-        params.gradient_colors.push_back(a_to_b ? cb : ca);
+        for (int i = 0; i <= 64; ++i)
+            params.gradient_colors.emplace_back(mixed_gradient_display_color(mf, ctx, double(i) / 64.0));
     } else {
         params.mode = ColorBlockParams::Solid;
         params.solid_color = parse_mixed_color(mf.display_color.empty() ? "#808080" : mf.display_color);

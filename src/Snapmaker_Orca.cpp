@@ -36,6 +36,19 @@ using namespace nlohmann;
 
 #include "app_common/SentryWrapper.hpp"
 
+#include <atomic>
+#include <new>
+
+// GUI/CLI mode flag for the OOM farewell path (defined here because the
+// GUI/CLI decision sits early in this file; used by the farewell code at
+// the bottom): unattended CLI jobs must fail fast on the console instead
+// of waiting on a modal dialog. Defaults to TRUE (CLI) so the early
+// window before the decision is written fails fast too - a modal dialog
+// there would hang an unattended job nobody can click. (Portable type:
+// this file is compiled on every platform; Win32-only types must stay
+// inside the _MSC_VER guard.)
+static std::atomic<bool> g_cli_mode{true};
+
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem.hpp>
@@ -1140,6 +1153,9 @@ int CLI::run(int argc, char **argv)
         downward_check = false;
 
     bool start_gui = m_actions.empty() && !downward_check;
+    // Remember the decision for the OOM farewell path: unattended CLI jobs
+    // must fail fast on the console instead of waiting on a modal dialog.
+    g_cli_mode.store(!start_gui, std::memory_order_relaxed);
     if (start_gui) {
         BOOST_LOG_TRIVIAL(info) << "no action, start gui directly" << std::endl;
 #ifdef SLIC3R_GUI
@@ -6393,6 +6409,101 @@ std::string CLI::output_filepath(const ModelObject &object, unsigned int index, 
 
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
+
+// Emergency memory kept aside for the out-of-memory path. This is a
+// BEST-EFFORT headroom, not a guarantee: after the free the bytes are on
+// the common heap where racing threads may take them first, and the dialog
+// can still fail on kernel-side limits (desktop heap, global commit
+// charge) this pool cannot influence. The hard guarantees of the farewell
+// path are the orderly ExitProcess and the 0xE0000001 exit code.
+// The pool is managed with raw HeapAlloc/HeapFree: probing with
+// operator new(nothrow) is NOT safe here — MSVC's nothrow wrapper still runs
+// the new handler on failure (verified by a debugger stack showing hundreds
+// of recursive handler frames from the probe itself), which recurses without
+// bound. HeapAlloc bypasses the CRT entirely: it never invokes the handler
+// and returns NULL on failure. The handler only consumes the pool when the
+// heap cannot yield the pool size any more; a fragmentation-driven OOM or a
+// single failed huge block leaves the pool intact, and an empty pool is
+// re-filled by the same probe. No per-recovery-point re-reservation is needed.
+static std::atomic<void*> g_oom_emergency_pool{nullptr};
+static const size_t       OOM_EMERGENCY_POOL_BYTES = 1024 * 1024;
+// Set when the truly-exhausted farewell dialog is up; other threads' OOMs wait
+// for it instead of racing a second dialog.
+static std::atomic<bool>   g_farewell_in_progress{false};
+// Thread that owns the farewell. A nested handler visit on THIS thread must
+// throw (the farewell's own catch(...) absorbs it and proceeds to the next
+// step); only OTHER threads sleep waiting for the process to end. Without
+// the distinction the farewell thread could put itself to Sleep(INFINITE)
+// when one of its own allocations (e.g. the over-SSO std::string arguments
+// of the report call) fails - a silent hang with no exit code. Declared
+// here (inside the Windows guard) because DWORD is a Win32 type and this
+// file is compiled on every platform.
+static std::atomic<DWORD>  g_farewell_thread_id{0};
+// g_cli_mode is declared near the top of this file (before its first use).
+// Exit code distinguishing an OOM farewell from other terminations.
+static const UINT          OOM_FATAL_EXIT_CODE = 0xE0000001u;
+// Console variant of the farewell text: plain narrow literal, written to
+// stderr without any allocation so it is safe on the exhausted heap.
+static const char          OOM_FAREWELL_CLI_TEXT[] =
+    "Snapmaker Orca: out of memory (fatal), exiting with code 0xE0000001.\n";
+
+static void reserve_oom_emergency_memory()
+{
+    if (g_oom_emergency_pool.load(std::memory_order_relaxed) == nullptr) {
+        if (void *pool = HeapAlloc(GetProcessHeap(), 0, OOM_EMERGENCY_POOL_BYTES))
+            g_oom_emergency_pool.store(pool, std::memory_order_relaxed);
+        // Without the reserve the OOM path degrades to the previous behaviour.
+    }
+}
+
+// Farewell text: compile-time static array so the OOM path never allocates.
+static const wchar_t OOM_FAREWELL_TEXT[] =
+    L"Snapmaker Orca has run out of memory and must close.\n\n"
+    L"Your project may be too large for the available memory. Try closing other applications, reducing the model complexity or plate count, and restart.";
+
+// Say goodbye and end the process. Order matters (review finding): the
+// dialog goes FIRST - it needs the least heap (KB-level user32 buffers),
+// so its success probability is highest before anything else spends the
+// freed pool; when the dialog does fail (kernel desktop heap / global
+// commit limits - nothing this process can reserve), execution falls
+// straight through to the report below, so the report is not lost along
+// with the dialog. The report is queued (async), then a bounded
+// sentry_flush gives the SDK time to deliver before ExitProcess, which
+// offers no destructors or flush of its own. The hard guarantees are the
+// orderly ExitProcess and the 0xE0000001 exit code; dialog and report are
+// best-effort. text == nullptr skips the dialog for callers that have
+// already informed the user; CLI mode says goodbye on the console instead
+// (unattended jobs must fail fast, not wait on a modal dialog).
+[[noreturn]] static void OomFarewellAndExit(const wchar_t *text)
+{
+    if (!g_farewell_in_progress.exchange(true)) {
+        g_farewell_thread_id.store(GetCurrentThreadId(), std::memory_order_relaxed);
+        // The process is about to end anyway: free the emergency pool first
+        // so the steps below, which allocate on this heap, best-effort can.
+        if (void *pool = g_oom_emergency_pool.exchange(nullptr, std::memory_order_relaxed))
+            HeapFree(GetProcessHeap(), 0, pool);
+        if (g_cli_mode.load(std::memory_order_relaxed)) {
+            fputs(OOM_FAREWELL_CLI_TEXT, stderr);
+            fflush(stderr);
+        } else if (text) {
+            MessageBoxW(nullptr, text, L"Snapmaker Orca error",
+                        MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+        }
+        try {
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                    "memory allocation failed (out of memory, fatal farewell)",
+                                    "OomFarewellAndExit", "out_of_memory", "fatal");
+        } catch (...) {
+        }
+        try {
+            Slic3r::flushSentry(5000);
+        } catch (...) {
+        }
+        ExitProcess(OOM_FATAL_EXIT_CODE);
+    }
+    Sleep(INFINITE); // another thread's OOM: the farewell ends us all
+}
+
 extern "C" {
 // The launcher owns the Sentry SDK lifetime. Its bury-point state is
 // separate from the DLL's state so it can load Mesa before this DLL.
@@ -6410,10 +6521,67 @@ __declspec(dllexport) int __stdcall Snapmaker_Orca_get_privacy_policy() { return
         for (size_t i = 0; i < argc; ++ i)
             argv_ptrs[i] = argv_narrow[i].data();
 
+        // Out of memory, two very different situations:
+        //
+        // 1. Heap fragmentation / one failed huge block (the probe below still
+        //    succeeds): throw std::bad_alloc and let the exception handling
+        //    inherited from upstream run (recoverable sites catch it locally:
+        //    model import, gcode toolpath rendering, background slicing).
+        //
+        // 2. The heap is TRULY exhausted (probe fails): recovery is hopeless —
+        //    every path that could tell the user about the failure also
+        //    allocates (throwing unwinds into a catch whose wxMessageBox
+        //    allocates again, the report call allocates, logging allocates),
+        //    so the process died without any notice through four attempted
+        //    designs. The only reliable farewell is one that never touches the
+        //    CRT heap: a raw Win32 MessageBoxW (its window lives on the system
+        //    side) with compile-time static text, then an immediate orderly
+        //    ExitProcess — no unwinding, no destructors, nothing left to fail.
+        //
+        // The previous handler deliberately dereferenced null to raise a native
+        // crash for Sentry; that turned every OOM into a hard crash and left
+        // the recovery chain dead. Sentry reporting for the recoverable case
+        // happens at the catch sites (GUI_App::generic_exception_handle, the
+        // failed-slice handling in Plater, GCodeViewer::render), where the
+        // stack has unwound and memory is available.
         std::set_new_handler([]() {
-            int *a = nullptr;
-            *a     = 0;
-            });
+            static std::atomic<bool> handler_in_progress{false};
+            if (handler_in_progress.exchange(true)) {
+                // Nested visit (a failure inside this handler's own work).
+                // Only OTHER threads wait for the farewell to end the
+                // process; the farewell thread itself must throw so its own
+                // catch(...) absorbs the failure and proceeds (see
+                // g_farewell_thread_id).
+                if (g_farewell_in_progress.load(std::memory_order_relaxed) &&
+                    GetCurrentThreadId() != g_farewell_thread_id.load(std::memory_order_relaxed)) {
+                    Sleep(INFINITE);
+                }
+                // Reset before throwing, keeping the nested path symmetric
+                // with the main path. Today's handler body has no allocating
+                // step before the probe, so a nested visit on this branch is
+                // only reachable from the farewell's report/flush - but the
+                // reset guards future edits that add one: a stuck-true flag
+                // would silently disable the probe, pool refill and farewell
+                // for every later OOM in this process.
+                handler_in_progress = false;
+                throw std::bad_alloc();
+            }
+            // Probe with a raw HeapAlloc — the only allocation primitive that
+            // can never re-enter this handler.
+            if (void *probe = HeapAlloc(GetProcessHeap(), 0, OOM_EMERGENCY_POOL_BYTES)) {
+                // Fragmentation-driven OOM: keep the heap (and re-fill the pool
+                // if it was consumed) and let the recoverable paths run.
+                void *expected = nullptr;
+                if (!g_oom_emergency_pool.compare_exchange_strong(expected, probe, std::memory_order_relaxed))
+                    HeapFree(GetProcessHeap(), 0, probe);
+                handler_in_progress = false;
+                throw std::bad_alloc();
+            }
+            // Truly exhausted: say goodbye without allocating anything
+            // (see OomFarewellAndExit above).
+            OomFarewellAndExit(OOM_FAREWELL_TEXT);
+        });
+        reserve_oom_emergency_memory();
         // Call the UTF8 main.
         return CLI().run(argc, argv_ptrs.data());
     }

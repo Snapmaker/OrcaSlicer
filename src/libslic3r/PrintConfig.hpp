@@ -54,6 +54,7 @@ enum class NoiseType {
     Billow,
     RidgedMulti,
     Voronoi,
+    Ripple,
 };
 
 enum PrintHostType {
@@ -894,6 +895,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     PrintObjectConfig,
 
     ((ConfigOptionFloat,               brim_object_gap))
+    ((ConfigOptionFloat,               brim_flow_ratio))
     ((ConfigOptionEnum<BrimType>,      brim_type))
     ((ConfigOptionFloat,               brim_width))
     ((ConfigOptionFloat,               brim_ears_detection_length))
@@ -947,6 +949,13 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,               support_expansion))
     ((ConfigOptionFloats,              support_speed))
     ((ConfigOptionEnum<SupportMaterialStyle>, support_style))
+
+    // Orca: a flag enabling the ability to override flow ratios
+    ((ConfigOptionBool,     set_other_flow_ratios))
+    // Orca: support-related flow ratios (available for overriding, if set_other_flow_ratios is enabled)
+    ((ConfigOptionFloat,    support_flow_ratio))
+    ((ConfigOptionFloat,    support_interface_flow_ratio))
+
     // BBS
     //((ConfigOptionBool,                independent_support_layer_height))
     // Orca internal thick bridge
@@ -1043,6 +1052,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     // Orca: internal use only
     ((ConfigOptionBool,  calib_flowrate_topinfill_special_order)) // ORCA: special flag for flow rate calibration
 
+    // Painted-shell controls
+    ((ConfigOptionBool,               fs_surface_paint_only))
+    ((ConfigOptionInt,                fs_painted_zone_extra_perimeters))
 
 )
 
@@ -1089,6 +1101,9 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat,                fuzzy_skin_scale))
     ((ConfigOptionInt,                  fuzzy_skin_octaves))
     ((ConfigOptionFloat,                fuzzy_skin_persistence))
+    ((ConfigOptionInt,                  fuzzy_skin_ripples_per_layer))
+    ((ConfigOptionPercent,              fuzzy_skin_ripple_offset))
+    ((ConfigOptionInt,                  fuzzy_skin_layers_between_ripple_offset))
     ((ConfigOptionFloats,               gap_infill_speed))
     ((ConfigOptionInt,                  sparse_infill_filament))
     ((ConfigOptionFloatOrPercent,       sparse_infill_line_width))
@@ -1113,7 +1128,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionFloat, ironing_spacing))
     ((ConfigOptionFloat, ironing_inset))
     ((ConfigOptionFloat, ironing_direction))
-    ((ConfigOptionFloats, ironing_speed))
+    ((ConfigOptionFloat, ironing_speed))
     ((ConfigOptionFloat, ironing_angle))
     // Detect bridging perimeters
     ((ConfigOptionBool, detect_overhang_wall))
@@ -1178,6 +1193,15 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionBool,                is_infill_first))
     ((ConfigOptionBool,                small_area_infill_flow_compensation))
     ((ConfigOptionEnum<WallDirection>,  wall_direction))
+
+    // Orca: other flow ratios (available for overriding, if set_other_flow_ratios is enabled)
+    ((ConfigOptionFloat,                first_layer_flow_ratio))
+    ((ConfigOptionFloat,                outer_wall_flow_ratio))
+    ((ConfigOptionFloat,                inner_wall_flow_ratio))
+    ((ConfigOptionFloat,                overhang_flow_ratio))
+    ((ConfigOptionFloat,                sparse_infill_flow_ratio))
+    ((ConfigOptionFloat,                internal_solid_infill_flow_ratio))
+    ((ConfigOptionFloat,                gap_fill_flow_ratio))
 
     // Orca: seam slopes
     ((ConfigOptionEnum<SeamScarfType>,  seam_slope_type))
@@ -1439,6 +1463,8 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionStrings,            filament_colour))
     ((ConfigOptionStrings,            filament_multi_colors))
     ((ConfigOptionInts,               filament_colour_mode))
+    ((ConfigOptionFloats,             filament_transmission_distance))
+    ((ConfigOptionStrings,            filament_full_spectrum_material_id))
     ((ConfigOptionBools,              activate_air_filtration))
     ((ConfigOptionInts,               during_print_exhaust_fan_speed))
     ((ConfigOptionInts,               complete_print_exhaust_fan_speed))
@@ -1465,8 +1491,6 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionFloat,              mixed_color_layer_height_a))
     ((ConfigOptionFloat,              mixed_color_layer_height_b))
     ((ConfigOptionBool,               mixed_filament_gradient_mode))
-    ((ConfigOptionFloat,              mixed_filament_height_lower_bound))
-    ((ConfigOptionFloat,              mixed_filament_height_upper_bound))
     ((ConfigOptionBool,               mixed_filament_advanced_dithering))
     ((ConfigOptionFloat,              mixed_filament_pointillism_pixel_size))
     ((ConfigOptionFloat,              mixed_filament_pointillism_line_gap))
@@ -1479,6 +1503,10 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionBool,               dithering_local_z_whole_objects))
     ((ConfigOptionBool,               dithering_local_z_infill))
     ((ConfigOptionBool,               dithering_local_z_direct_multicolor))
+    ((ConfigOptionBool,               dithering_local_z_preserve_first_layer))
+    ((ConfigOptionBool,               dithering_local_z_independent_layer_height))
+    ((ConfigOptionFloat,              dithering_local_z_gradient_layer_height))
+    ((ConfigOptionPercent,            dithering_local_z_gradient_middle_filament_window))
     ((ConfigOptionBool,               dithering_step_painted_zones_only))
     ((ConfigOptionString,             printer_model))
     ((ConfigOptionFloat,              resolution))
@@ -1578,6 +1606,9 @@ PRINT_CONFIG_CLASS_DERIVED_DEFINE(
     ((ConfigOptionPoint,               bed_mesh_max))
     ((ConfigOptionPoint,               bed_mesh_probe_distance))
     ((ConfigOptionFloat,               adaptive_bed_mesh_margin))
+
+    // SoftFever: developer switch for cross-region overlap carving (2.4.1 per-layer area rule)
+    ((ConfigOptionBool,                enable_overlap_area_carving))
 
 
 )
@@ -2048,6 +2079,9 @@ private:
 
     static uint64_t             s_last_timestamp;
 };
+
+bool migrate_legacy_feature_filament_default(DynamicPrintConfig &config);
+bool migrate_legacy_feature_filament_default(ModelConfig &config);
 
 } // namespace Slic3r
 

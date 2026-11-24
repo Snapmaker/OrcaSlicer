@@ -255,7 +255,7 @@ void initSentryEx()
 #endif
 
         //sentry_options_set_environment(options, "develop");
-        sentry_options_set_environment(options, "develop");
+        sentry_options_set_environment(options, "alpha");
 
         sentry_options_set_auto_session_tracking(options, 0);
         sentry_options_set_symbolize_stacktraces(options, 1);
@@ -451,6 +451,17 @@ void exitSentry()
     exitSentryEx();
 #endif
 }
+
+void flushSentry(unsigned int timeout_ms)
+{
+#ifdef SLIC3R_SENTRY
+    // same gating as sentryReportLogEx: with privacy off nothing was ever
+    // queued, so there is nothing to flush.
+    if (get_sentry_flags() && get_privacy_policy())
+        sentry_flush(timeout_ms);
+#endif
+}
+
 void sentryReportLog(SENTRY_LOG_LEVEL   logLevel,
     const std::string& logContent,
     const std::string& funcModule,

@@ -18263,3 +18263,22 @@ msgstr ""
 
 #~ msgid "Orient the model"
 #~ msgstr "Modell orientációja"
+
+msgid "Jump to: Support on build plate only"
+msgstr "Ugrás ide: csak a nyomtatótálcán lévő támasz"
+
+msgid "Jump to: Support"
+msgstr "Ugrás ide: Támasz"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr "Nem támogatott túlnyúlások észlelhetők. A(z) „%1%” modell %2% túlnyúlási területet tartalmaz. Mivel a „Csak a nyomtatótálcán lévő támasz” beállítás engedélyezve van, a támaszok nem tudnak lenyúlni a nyomtatótálcáig. Próbáld kikapcsolni ezt a beállítást."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr "Nem támogatott túlnyúlások észlelhetők. A(z) „%1%” modellben %2% olyan túlnyúlási terület található, amelynél nincs támasz. Próbáld meg módosítani a támaszbeállításokat vagy másképp tájolni az objektumot."
+

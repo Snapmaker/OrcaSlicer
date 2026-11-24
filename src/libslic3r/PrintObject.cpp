@@ -10,6 +10,7 @@
 #include "MutablePolygon.hpp"
 #include "PrintConfig.hpp"
 #include "Support/SupportMaterial.hpp"
+#include "Support/SupportParameters.hpp"
 #include "Support/SupportSpotsGenerator.hpp"
 #include "Support/TreeSupport.hpp"
 #include "Surface.hpp"
@@ -636,6 +637,12 @@ void PrintObject::detect_overhangs_for_lift()
 
 void PrintObject::generate_support_material()
 {
+    // Support preview needs perimeter fill regions before generating real bridge envelopes.
+    if (!is_step_done(posSupportMaterial) && has_support() && m_config.support_type == stNormalAuto &&
+        m_config.support_top_z_distance == 0.) {
+        this->make_perimeters();
+        this->infill();
+    }
     if (this->set_started(posSupportMaterial)) {
         this->clear_support_layers();
 
@@ -676,9 +683,206 @@ void PrintObject::generate_support_material()
 
             this->_generate_support_material();
             m_print->throw_if_canceled();
+
+            // Gated on enable_support rather than has_support(): with enforce_support_layers alone the
+            // support is confined to the bottom layers by design, while detect_overhangs() still fills
+            // every layer, which would make the check below fire on the whole object.
+            if (m_config.enable_support.value && is_tree(m_config.support_type.value) && !m_print->get_no_check_flag())
+                this->warn_uncovered_overhangs();
         }
         this->set_done(posSupportMaterial);
     }
+}
+
+// Port of BambuStudio PrintObject::collected_support_areas() and warn_uncovered_overhangs().
+ExPolygons PrintObject::collected_support_areas(const SupportLayer *support_layer) const
+{
+    // Islands are only filled up to brim/skirt height and may miss trunks that live in
+    // base/roof/floor, so always union every source that still has geometry.
+    ExPolygons areas;
+    append(areas, support_layer->support_islands);
+    append(areas, support_layer->base_areas);
+    append(areas, support_layer->roof_areas);
+    append(areas, support_layer->roof_1st_layer);
+    append(areas, support_layer->floor_areas);
+    if (areas.empty()) {
+        if (support_layer->support_fills.empty())
+            return {};
+        return union_ex(support_layer->support_fills.polygons_covered_by_spacing(float(SCALED_EPSILON)));
+    }
+    return union_ex(areas);
+}
+
+// Supports can legitimately fail to grow, most visibly when "Support on build plate only" leaves the
+// branches nowhere to land. Slicing still succeeds and nothing tells the user, so compare what the
+// tree generators meant to cover (layer->loverhangs) against the support actually placed below it
+// and surface the uncovered regions as a slicing warning.
+void PrintObject::warn_uncovered_overhangs()
+{
+    static constexpr double MIN_REPORTED_OVERHANG_AREA_MM2 = 3.;
+    static constexpr double MIN_SUPPORTED_OVERHANG_RATIO  = 0.05;
+    static constexpr double MIN_TOTAL_UNCOVERED_AREA_MM2  = 20.;
+
+    // draw_circles() marks the support layers it left empty with a zero print_z and height, which would
+    // break a search over print_z, so index only the layers that carry geometry. Only the heights are
+    // cached here; materializing every layer's areas up front would duplicate the whole support geometry.
+    std::vector<coordf_t> support_zs;
+    std::vector<size_t>   support_layer_indices;
+    support_zs.reserve(m_support_layers.size());
+    support_layer_indices.reserve(m_support_layers.size());
+    for (size_t support_layer_idx = 0; support_layer_idx < m_support_layers.size(); ++ support_layer_idx) {
+        const SupportLayer *support_layer = m_support_layers[support_layer_idx];
+        if (support_layer->height < EPSILON)
+            continue;
+        support_zs.emplace_back(support_layer->print_z);
+        support_layer_indices.emplace_back(support_layer_idx);
+    }
+    assert(std::is_sorted(support_zs.begin(), support_zs.end()));
+    m_print->throw_if_canceled();
+
+    // Precompute every non-empty support layer's union once, up front: object layers in the
+    // same Z window share support layers, and the tbb partition below must not own per-range
+    // caches that redo the work (MR !107 review).
+    std::vector<ExPolygons> collected_cache(m_support_layers.size());
+    std::vector<bool>       collected_done(m_support_layers.size(), false);
+    for (size_t support_layer_idx = 0; support_layer_idx < m_support_layers.size(); ++ support_layer_idx) {
+        m_print->throw_if_canceled();
+        if (m_support_layers[support_layer_idx]->height < EPSILON)
+            continue;
+        collected_cache[support_layer_idx] = this->collected_support_areas(m_support_layers[support_layer_idx]);
+        collected_done[support_layer_idx] = true;
+    }
+
+    // How far below an overhang its supporting layer may sit: the configured top gap, plus the
+    // max layer height for the quantized bottom clearance and the min for room to extrude support
+    // (port of Bambu 55ad2d66). Erring wide only costs us false negatives.
+    const coordf_t search_depth = m_slicing_params.gap_support_object +
+        std::max(m_slicing_params.max_suport_layer_height, m_slicing_params.layer_height) +
+        m_slicing_params.min_layer_height;
+    // XY tolerance when testing coverage: a support branch is placed support_object_xy_distance
+    // away from the model, so accept coverage within that distance (port of Bambu 55ad2d66).
+    const coordf_t coverage_offset = m_config.support_object_xy_distance.value;
+
+    struct LayerStat {
+        double   uncovered_area  = 0.;
+        size_t   num_uncovered   = 0;
+        size_t   num_significant = 0;
+    };
+    std::vector<LayerStat> stats(m_layers.size());
+
+    tbb::parallel_for(tbb::blocked_range<size_t>(0, m_layers.size()),
+        [this, &support_zs, &support_layer_indices, &collected_cache, &collected_done, search_depth, coverage_offset, &stats](const tbb::blocked_range<size_t> &range) {
+            for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++ layer_idx) {
+                m_print->throw_if_canceled();
+                const Layer *layer = m_layers[layer_idx];
+                if (layer->loverhangs.empty())
+                    continue;
+
+                const coordf_t bottom_z = layer->bottom_z();
+                const coordf_t lowest_z = bottom_z - search_depth;
+                const auto     it_end   = std::upper_bound(support_zs.begin(), support_zs.end(), bottom_z + EPSILON);
+                const auto     it_begin = std::lower_bound(support_zs.begin(), it_end, lowest_z);
+                ExPolygons     support_below;
+                for (auto it = it_begin; it != it_end; ++ it) {
+                    const size_t support_layer_idx = support_layer_indices[it - support_zs.begin()];
+                    // Precomputed up front for every non-empty support layer; the read below
+                    // is shared and immutable inside the partition (MR !107 review).
+                    assert(collected_done[support_layer_idx]);
+                    append(support_below, collected_cache[support_layer_idx]);
+                }
+                if (! support_below.empty())
+                    support_below = union_ex(support_below);
+
+                // Model material within the search span leaves no usable Z room: subtract it from
+                // the requirement so such islands stop being reported (port of Bambu 55ad2d66).
+                const BoundingBox overhang_bbox = get_extents(layer->loverhangs);
+                Polygons         model_below;
+                if (overhang_bbox.defined) {
+                    for (size_t model_layer_idx = layer_idx; model_layer_idx-- > 0;) {
+                        const Layer *model_layer = m_layers[model_layer_idx];
+                        if (model_layer->print_z < lowest_z - EPSILON)
+                            break;
+                        append(model_below, ClipperUtils::clip_clipper_polygons_with_subject_bbox(
+                            model_layer->lslices, overhang_bbox.inflated(SCALED_EPSILON)));
+                    }
+                }
+
+                LayerStat &stat = stats[layer_idx];
+                for (const ExPolygon &island : layer->loverhangs) {
+                    const double island_area = area(island) * SCALING_FACTOR * SCALING_FACTOR;
+                    if (island_area < MIN_REPORTED_OVERHANG_AREA_MM2)
+                        continue;
+                    // Subtract model material that leaves no usable Z room. Each remaining piece
+                    // carries its own area: the 3mm2 filter, the 5% coverage ratio and the 20mm2
+                    // accumulation all use the post-subtraction area (port of Bambu 55ad2d66) so
+                    // a sliver left after subtraction no longer reports as its original size.
+                    const ExPolygons required = model_below.empty() ? ExPolygons{ island } :
+                        diff_ex(island, model_below);
+                    for (const ExPolygon &piece : required) {
+                        const double piece_area = area(piece) * SCALING_FACTOR * SCALING_FACTOR;
+                        if (piece_area < MIN_REPORTED_OVERHANG_AREA_MM2)
+                            continue;
+                        ExPolygons coverage_area = coverage_offset > EPSILON ?
+                            offset_ex(piece, scale_(coverage_offset)) : ExPolygons{ piece };
+                        ++ stat.num_significant;
+                        double covered_area = 0.;
+                        if (! support_below.empty())
+                            covered_area = area(intersection_ex(coverage_area, support_below)) * SCALING_FACTOR * SCALING_FACTOR;
+                        if (covered_area < MIN_SUPPORTED_OVERHANG_RATIO * piece_area) {
+                            stat.uncovered_area += piece_area;
+                            ++ stat.num_uncovered;
+                        }
+                    }
+                }
+            }
+        });
+
+    double   total_uncovered_area = 0.;
+    size_t   total_uncovered      = 0;
+    size_t   total_significant    = 0;
+    coordf_t lowest_z             = 0.;
+    for (size_t layer_idx = 0; layer_idx < stats.size(); ++ layer_idx) {
+        const LayerStat &stat = stats[layer_idx];
+        total_significant += stat.num_significant;
+        if (stat.num_uncovered == 0)
+            continue;
+        if (total_uncovered == 0)
+            lowest_z = m_layers[layer_idx]->print_z;
+        total_uncovered_area += stat.uncovered_area;
+        total_uncovered      += stat.num_uncovered;
+    }
+
+    if (total_uncovered > 0)
+        BOOST_LOG_TRIVIAL(info) << "Uncovered overhang check on object " << this->model_object()->name << ": "
+                                << total_uncovered << " of " << total_significant << " region(s) uncovered, "
+                                << total_uncovered_area << " mm2, lowest_z=" << lowest_z;
+
+    if (total_uncovered_area < MIN_TOTAL_UNCOVERED_AREA_MM2)
+        return;
+
+    // F1 (MR !107 review): classify the classic-drop path from the RESOLVED style, sharing the
+    // exact resolution chain of SupportParameters (Snug/Grid normalisation + Default -> Organic /
+    // Hybrid), so legacy and mixed configurations get the same warning class as the generator.
+    const SupportMaterialStyle resolved_style = resolve_support_style(
+        m_config.support_style.value, m_config.support_type.value,
+        this->model_object()->has_custom_layering(), m_slicing_params.soluble_interface);
+    const bool classic_tree_drop = resolved_style != smsTreeOrganic;
+    std::string warning_message;
+    PrintStateBase::SlicingNotificationType warning_id = PrintStateBase::SlicingSupportIncomplete;
+    if (m_config.support_on_build_plate_only.value && classic_tree_drop) {
+        warning_id = PrintStateBase::SlicingSupportIncompleteOnBuildPlate;
+        warning_message = Slic3r::format(
+            _u8L("Unsupported overhangs were detected.\n"
+                 "Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, "
+                 "supports cannot grow down to the build plate. Try turning this option off."),
+            this->model_object()->name, total_uncovered);
+    } else
+        warning_message = Slic3r::format(
+            _u8L("Unsupported overhangs were detected.\n"
+                 "Model \"%1%\" has %2% overhang region(s) that could not get support. "
+                 "Try adjusting the support settings or re-orienting the object."),
+            this->model_object()->name, total_uncovered);
+    this->active_step_add_warning(PrintStateBase::WarningLevel::NON_CRITICAL, warning_message, warning_id);
 }
 
 void PrintObject::estimate_curled_extrusions()
@@ -890,6 +1094,15 @@ bool PrintObject::invalidate_state_by_config_options(
     if (opt_keys.empty())
         return false;
 
+    const bool had_local_z_plan = !local_z_intervals().empty();
+    const auto uses_local_z     = [&](const ConfigOptionResolver& config) {
+        const auto* filament = config.option<ConfigOptionInt>("wall_filament");
+        if (filament == nullptr || filament->value <= 0)
+            return false;
+        const auto* row = m_print->mixed_filament_manager().mixed_filament_from_id(unsigned(filament->value),
+                                                                                       m_print->config().filament_diameter.size());
+        return row != nullptr && mixed_filament_definition_uses_local_z(*row, m_print->config().dithering_local_z_mode.value);
+    };
     std::vector<PrintObjectStep> steps;
     bool invalidated = false;
     for (const t_config_option_key &opt_key : opt_keys) {
@@ -963,11 +1176,17 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "dithering_z_step_size"
             || opt_key == "dithering_local_z_mode"
             || opt_key == "dithering_local_z_whole_objects"
+            || opt_key == "dithering_local_z_preserve_first_layer"
             || opt_key == "dithering_local_z_direct_multicolor"
+            || opt_key == "dithering_local_z_independent_layer_height"
+            || opt_key == "dithering_local_z_gradient_layer_height"
+            || opt_key == "dithering_local_z_gradient_middle_filament_window"
             || opt_key == "dithering_step_painted_zones_only"
             || opt_key == "mixed_filament_component_bias_enabled"
             || opt_key == "mixed_filament_region_collapse"
             || opt_key == "mmu_segmented_region_max_width"
+            || opt_key == "fs_surface_paint_only"
+            || opt_key == "fs_painted_zone_extra_perimeters"
             || opt_key == "mmu_segmented_region_interlocking_depth"
             || opt_key == "raft_layers"
             || opt_key == "raft_contact_distance"
@@ -986,8 +1205,6 @@ bool PrintObject::invalidate_state_by_config_options(
             steps.emplace_back(posSlice);
         } else if (
                opt_key == "mixed_filament_gradient_mode"
-            || opt_key == "mixed_filament_height_lower_bound"
-            || opt_key == "mixed_filament_height_upper_bound"
             || opt_key == "mixed_filament_advanced_dithering"
             || opt_key == "mixed_filament_component_bias_enabled"
             || opt_key == "mixed_filament_surface_indentation"
@@ -1193,13 +1410,11 @@ bool PrintObject::invalidate_state_by_config_options(
             steps.emplace_back(posSupportMaterial);
             // Whole-object Local-Z masks and tool assignments are built during
             // slicing from the wall filament, not during perimeter generation.
-            if (opt_key == "wall_filament" && m_print->config().dithering_local_z_mode.value &&
-                m_print->config().dithering_local_z_whole_objects.value)
+            if (opt_key == "wall_filament" && (had_local_z_plan || uses_local_z(old_config) || uses_local_z(new_config)))
                 steps.emplace_back(posSlice);
         } else if (opt_key == "bridge_flow" || opt_key == "internal_bridge_flow") {
-            if (m_config.support_top_z_distance > 0.) {
-            	// Only invalidate due to bridging if bridging is enabled.
-            	// If later "support_top_z_distance" is modified, the complete PrintObject is invalidated anyway.
+            if (m_config.support_top_z_distance > 0. || (has_support() && m_config.support_type == stNormalAuto)) {
+                // Zero-gap normal support also depends on bridge flow and height.
             	steps.emplace_back(posPerimeters);
             	steps.emplace_back(posInfill);
 	            steps.emplace_back(posSupportMaterial);
@@ -1246,7 +1461,24 @@ bool PrintObject::invalidate_state_by_config_options(
             || opt_key == "bed_mesh_min"
             || opt_key == "bed_mesh_max"
             || opt_key == "adaptive_bed_mesh_margin"
-            || opt_key == "bed_mesh_probe_distance") {
+            || opt_key == "bed_mesh_probe_distance"
+            || opt_key == "print_flow_ratio"
+            || opt_key == "first_layer_flow_ratio"
+            || opt_key == "top_solid_infill_flow_ratio"
+            || opt_key == "bottom_solid_infill_flow_ratio"
+            || opt_key == "outer_wall_flow_ratio"
+            || opt_key == "inner_wall_flow_ratio"
+            || opt_key == "overhang_flow_ratio"
+            || opt_key == "sparse_infill_flow_ratio"
+            || opt_key == "internal_solid_infill_flow_ratio"
+            || opt_key == "gap_fill_flow_ratio"
+            || opt_key == "support_flow_ratio"
+            || opt_key == "support_interface_flow_ratio"
+            || opt_key == "brim_flow_ratio"
+            || opt_key == "filament_flow_ratio"
+            || opt_key == "scarf_joint_flow_ratio"
+            || opt_key == "spiral_starting_flow_ratio"
+            || opt_key == "spiral_finishing_flow_ratio") {
             invalidated |= m_print->invalidate_step(psGCodeExport);
         } else if (
                opt_key == "flush_into_infill"
@@ -1262,26 +1494,28 @@ bool PrintObject::invalidate_state_by_config_options(
         }
     }
 
+    // Local-Z is produced by posSlice. Never clear its cache while retaining a
+    // completed producer, including automatic gradients and painted-only plans.
+    if (had_local_z_plan && std::any_of(opt_keys.begin(), opt_keys.end(), [](const std::string& key) {
+            return key == "extruder" || key == "wall_filament" || key == "sparse_infill_filament" || key == "solid_infill_filament";
+        }))
+        steps.emplace_back(posSlice);
+
     sort_remove_duplicates(steps);
     for (PrintObjectStep step : steps)
         invalidated |= this->invalidate_step(step);
 
-    // Changing extruder-related filament options invalidates the local-z plan,
-    // because the plan depends on which extruders are used for each sublayer.
-    // Without this, stale local-z data referencing removed extruders can cause crashes.
-    for (const std::string &opt_key : opt_keys) {
-        if (opt_key == "extruder" || opt_key == "wall_filament" ||
-            opt_key == "sparse_infill_filament" || opt_key == "solid_infill_filament") {
-            this->clear_local_z_plan();
-            break;
-        }
-    }
     return invalidated;
 }
 
 bool PrintObject::invalidate_step(PrintObjectStep step)
 {
 	bool invalidated = Inherited::invalidate_step(step);
+
+    // Zero-gap contacts depend on the actual bridge paths, not just nominal slices.
+    if ((step == posPerimeters || step == posPrepareInfill || step == posInfill) && m_config.support_type == stNormalAuto &&
+        m_config.support_top_z_distance == 0.)
+        invalidated |= this->invalidate_step(posSupportMaterial);
 
     // propagate to dependent steps
     if (step == posPerimeters) {
@@ -1365,12 +1599,9 @@ void PrintObject::detect_surfaces_type()
             		// In non-spiral vase mode, go over all layers.
             		m_layers.size()),
             [this, region_id, interface_shells, &surfaces_new](const tbb::blocked_range<size_t>& range) {
-                // Only normal automatic support may replace bridge infill with bottom infill
-                // on a zero-gap interface. Tree support contacts may be filtered or reduced,
-                // so even max_bridge_length == 0 does not guarantee full bottom coverage.
-                const bool bottom_is_fully_supported = this->has_support() && m_config.support_top_z_distance.value == 0 &&
-                                                       m_config.support_type.value == stNormalAuto && !m_config.bridge_no_support.value;
-                SurfaceType surface_type_bottom_other = bottom_is_fully_supported ? stBottom : stBottomBridge;
+                // Support contacts are generated later and may be filtered or blocked.
+                // A zero top Z distance does not guarantee full support under an overhang.
+                const SurfaceType surface_type_bottom_other = stBottomBridge;
                 for (size_t idx_layer = range.begin(); idx_layer < range.end(); ++ idx_layer) {
                     m_print->throw_if_canceled();
                     // BOOST_LOG_TRIVIAL(trace) << "Detecting solid surfaces for region " << region_id << " and layer " << layer->print_z;
@@ -3250,27 +3481,26 @@ static constexpr const std::initializer_list<const std::string_view> keys_extrud
 
 static void apply_to_print_region_config(PrintRegionConfig &out, const DynamicPrintConfig &in)
 {
-    // 1) Copy the "extruder key to sparse_infill_filament and wall_filament.
-    auto *opt_extruder = in.opt<ConfigOptionInt>(key_extruder);
-    if (opt_extruder)
-        if (int extruder = opt_extruder->value; extruder != 0) {
-            // Not a default extruder.
-            out.sparse_infill_filament.value = extruder;
-            out.solid_infill_filament.value  = extruder;
-            out.wall_filament.value          = extruder;
-        }
-    // 2) Copy the rest of the values.
+    // Copy the rest of the values.
     for (auto it = in.cbegin(); it != in.cend(); ++ it)
         if (it->first != key_extruder)
             if (ConfigOption* my_opt = out.option(it->first, false); my_opt != nullptr) {
                 if (one_of(it->first, keys_extruders)) {
-                    // Ignore "default" extruders.
-                    int extruder = static_cast<const ConfigOptionInt*>(it->second.get())->value;
-                    if (extruder > 0)
-                        my_opt->setInt(extruder);
+                    // Ignore "default" filaments.
+                    int filament = static_cast<const ConfigOptionInt*>(it->second.get())->value;
+                    if (filament > 0)
+                        my_opt->setInt(filament);
                 } else
                     my_opt->set(it->second.get());
             }
+}
+
+static void resolve_feature_filament_to_default(ConfigOptionInt &opt, int default_filament, size_t num_total_filaments)
+{
+    if (default_filament < 1 || default_filament > (int)num_total_filaments)
+        default_filament = 1;
+    if (opt.value < 1 || opt.value > (int)num_total_filaments)
+        opt.value = default_filament;
 }
 
 PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders)
@@ -3291,10 +3521,19 @@ PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &defau
         assert(volume.is_model_part());
     	apply_to_print_region_config(config, *layer_range_config);
     }
-    // Clamp invalid extruders to the default extruder (with index 1).
-    clamp_exturder_to_default(config.sparse_infill_filament,       num_extruders);
-    clamp_exturder_to_default(config.wall_filament,    num_extruders);
-    clamp_exturder_to_default(config.solid_infill_filament, num_extruders);
+    // Resolve "Default" (0) and out-of-range feature filaments to the object/part filament
+    // (layer-range "extruder" -> volume "extruder" -> object "extruder" -> 1), so downstream
+    // consumers always see 1..num_extruders for these keys.
+    int default_feature_filament = std::max(1, volume.extruder_id());
+    if (layer_range_config != nullptr) {
+        if (const ConfigOptionInt *range_extruder = layer_range_config->opt<ConfigOptionInt>(key_extruder);
+            range_extruder != nullptr && range_extruder->value > 0){
+                default_feature_filament = range_extruder->value;
+            }
+    }
+    resolve_feature_filament_to_default(config.sparse_infill_filament, default_feature_filament, num_extruders);
+    resolve_feature_filament_to_default(config.wall_filament, default_feature_filament, num_extruders);
+    resolve_feature_filament_to_default(config.solid_infill_filament, default_feature_filament, num_extruders);
     if (config.sparse_infill_density.value < 0.00011f)
         // Switch of infill for very low infill rates, also avoid division by zero in infill generator for these very low rates.
         // See GH issue #5910.
@@ -3707,30 +3946,25 @@ static t_layer_config_ranges layer_ranges_with_dithering(const t_layer_config_ra
     return out;
 }
 
-static bool mixed_state_heights(const MixedFilamentManager &mixed_mgr,
-                                size_t                     num_physical,
-                                size_t                     state_id,
-                                coordf_t                   lower_bound,
-                                coordf_t                   upper_bound,
-                                coordf_t                  &height_a,
-                                coordf_t                  &height_b)
+static bool mixed_state_heights(const MixedFilamentManager& mixed_mgr,
+                                size_t                      num_physical,
+                                size_t                      state_id,
+                                coordf_t                    nominal_layer_height,
+                                coordf_t                    min_sublayer_height,
+                                coordf_t&                   height_a,
+                                coordf_t&                   height_b)
 {
     if (state_id <= num_physical)
         return false;
 
     const size_t idx = state_id - num_physical - 1;
-    const auto  &mixed = mixed_mgr.mixed_filaments();
+    const auto&  mixed = mixed_mgr.mixed_filament_legacy_rows();
     if (idx >= mixed.size())
         return false;
 
-    const int mix_b = std::clamp(mixed[idx].mix_b_percent, 0, 100);
-    const coordf_t pct_b = coordf_t(mix_b) / coordf_t(100.f);
-    const coordf_t pct_a = coordf_t(1.f) - pct_b;
-    const coordf_t lo = std::max<coordf_t>(0.01f, lower_bound);
-    const coordf_t hi = std::max<coordf_t>(lo, upper_bound);
-
-    height_a = std::max<coordf_t>(0.01f, lo + pct_a * (hi - lo));
-    height_b = std::max<coordf_t>(0.01f, lo + pct_b * (hi - lo));
+    const auto heights = mixed_filament_local_z_pair_heights(nominal_layer_height, min_sublayer_height, mixed[idx].mix_b_percent);
+    height_a           = coordf_t(heights.first);
+    height_b           = coordf_t(heights.second);
     return true;
 }
 
@@ -3765,15 +3999,13 @@ static void append_state_cadence_boundaries(std::vector<coordf_t> &boundaries,
     }
 }
 
-static t_layer_config_ranges layer_ranges_with_height_weighted_mixed(
-    const t_layer_config_ranges &base_ranges_map,
-    coordf_t                     object_height,
-    coordf_t                     default_layer_height,
-    const std::vector<MixedStateZRanges> &mixed_state_ranges,
-    const MixedFilamentManager  &mixed_mgr,
-    size_t                       num_physical,
-    coordf_t                     lower_bound,
-    coordf_t                     upper_bound)
+static t_layer_config_ranges layer_ranges_with_height_weighted_mixed(const t_layer_config_ranges&          base_ranges_map,
+                                                                     coordf_t                              object_height,
+                                                                     coordf_t                              default_layer_height,
+                                                                     const std::vector<MixedStateZRanges>& mixed_state_ranges,
+                                                                     const MixedFilamentManager&           mixed_mgr,
+                                                                     size_t                                num_physical,
+                                                                     coordf_t                              min_sublayer_height)
 {
     if (object_height <= EPSILON || mixed_state_ranges.empty())
         return base_ranges_map;
@@ -3785,7 +4017,8 @@ static t_layer_config_ranges layer_ranges_with_height_weighted_mixed(
     for (const MixedStateZRanges &state_ranges : mixed_state_ranges) {
         coordf_t height_a = 0.f;
         coordf_t height_b = 0.f;
-        if (!mixed_state_heights(mixed_mgr, num_physical, state_ranges.state_id, lower_bound, upper_bound, height_a, height_b))
+        if (!mixed_state_heights(mixed_mgr, num_physical, state_ranges.state_id, default_layer_height, min_sublayer_height, height_a,
+                                 height_b))
             continue;
         states.push_back({ state_ranges.state_id, height_a, height_b, state_ranges.ranges });
     }
@@ -3892,27 +4125,18 @@ bool PrintObject::update_layer_height_profile(const ModelObject          &model_
                 height_weighted_mode = (opt->value != 0);
         }
 
-        coordf_t mixed_lower = coordf_t(print_cfg.mixed_filament_height_lower_bound.value);
-        coordf_t mixed_upper = coordf_t(print_cfg.mixed_filament_height_upper_bound.value);
-        if (full_cfg.has("mixed_filament_height_lower_bound"))
-            mixed_lower = coordf_t(full_cfg.opt_float("mixed_filament_height_lower_bound"));
-        if (full_cfg.has("mixed_filament_height_upper_bound"))
-            mixed_upper = coordf_t(full_cfg.opt_float("mixed_filament_height_upper_bound"));
-        mixed_lower = std::max<coordf_t>(0.01f, mixed_lower);
-        mixed_upper = std::max<coordf_t>(mixed_lower, mixed_upper);
-
         if (height_weighted_mode) {
             const coordf_t object_height = slicing_parameters.object_print_z_uncompensated_height();
             const auto mixed_states = collect_mixed_painted_z_ranges_by_state(*print_object, object_height);
             if (!mixed_states.empty()) {
-                mixed_gradient_ranges = layer_ranges_with_height_weighted_mixed(*ranges_to_use,
-                                                                                object_height,
-                                                                                slicing_parameters.layer_height,
-                                                                                mixed_states,
+                std::vector<double> nozzle_minimums(print_cfg.filament_colour.size());
+                for (size_t i = 0; i < nozzle_minimums.size(); ++i)
+                    nozzle_minimums[i] = Slicing::min_layer_height_from_nozzle(print_cfg, int(i + 1));
+                const coordf_t min_sublayer_height = coordf_t(mixed_filament_min_sublayer_height(nozzle_minimums));
+                mixed_gradient_ranges = layer_ranges_with_height_weighted_mixed(*ranges_to_use, object_height,
+                                                                                slicing_parameters.layer_height, mixed_states,
                                                                                 print_object->print()->mixed_filament_manager(),
-                                                                                print_cfg.filament_colour.size(),
-                                                                                mixed_lower,
-                                                                                mixed_upper);
+                                                                                print_cfg.filament_colour.size(), min_sublayer_height);
                 ranges_to_use = &mixed_gradient_ranges;
             }
         }

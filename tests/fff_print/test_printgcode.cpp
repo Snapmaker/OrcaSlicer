@@ -16,6 +16,38 @@ std::regex perimeters_regex("G1 X[-0-9.]* Y[-0-9.]* E[-0-9.]* ; perimeter");
 std::regex infill_regex("G1 X[-0-9.]* Y[-0-9.]* E[-0-9.]* ; infill");
 std::regex skirt_regex("G1 X[-0-9.]* Y[-0-9.]* E[-0-9.]* ; skirt");
 
+TEST_CASE("Exported layer-change travel respects the Z speed limit", "[PrintGCode][ZTravel]") {
+    Print print;
+    Model model;
+    init_print({TestMesh::cube_20x20x20}, print, model, {
+        {"layer_height", 0.2},
+        {"initial_layer_print_height", 0.3},
+        {"travel_speed", 100.},
+        {"travel_speed_z", 0.},
+        {"machine_max_speed_z", 0.1},
+        {"z_hop", 0.},
+        {"wipe", true},
+        {"retract_when_changing_layer", false},
+        {"enable_arc_fitting", false},
+        {"machine_start_gcode", ""},
+        {"machine_end_gcode", ""}
+    });
+    const std::string output = gcode(print);
+    int z_travels = 0;
+    GCodeReader reader;
+    reader.apply_config(print.config());
+    reader.parse_buffer(output, [&z_travels](GCodeReader &reader, const GCodeReader::GCodeLine &line) {
+        if (line.cmd_is("G1") && line.travel() && line.dist_Z(reader) != 0.) {
+            ++z_travels;
+            const double dz = std::abs(line.dist_Z(reader));
+            const double distance = std::hypot(line.dist_XY(reader), dz);
+            CAPTURE(line.raw(), reader.z());
+            REQUIRE(line.new_F(reader) / 60. * dz / distance <= 0.10001);
+        }
+    });
+    REQUIRE(z_travels > 1);
+}
+
 SCENARIO( "PrintGCode basic functionality", "[PrintGCode]") {
     GIVEN("A default configuration and a print test object") {
         WHEN("the output is executed with no support material") {

@@ -318,7 +318,7 @@ public:
 
         std::vector<size_t> dependent = mixed_filaments.mixed_filaments_using_physical(from_1based);
         size_t visible = 0;
-        const auto& mfs_ref = mixed_filaments.mixed_filaments();
+        const auto&         mfs_ref   = mixed_filaments.mixed_filament_legacy_rows();
         for (size_t k = 0; k < mfs_ref.size(); ++k) {
             if (!mfs_ref[k].enabled || mfs_ref[k].deleted) continue;
             if (std::find(dependent.begin(), dependent.end(), k) != dependent.end())

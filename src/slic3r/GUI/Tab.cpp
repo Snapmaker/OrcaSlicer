@@ -1842,6 +1842,8 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 
         if (local_z_enabled) {
             set_print_bool("dithering_local_z_infill", true);
+            set_print_bool("dithering_local_z_direct_multicolor", true);
+            set_project_bool("dithering_local_z_direct_multicolor", true);
         } else {
             set_print_bool("dithering_local_z_whole_objects", false);
             set_print_bool("dithering_local_z_infill", false);
@@ -2283,32 +2285,23 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
         return;
     }
 
-    const bool refresh_mixed_filament_panel =
-        (m_type == Preset::TYPE_PRINT && opt_key == "mixed_filament_component_bias_enabled") ||
-        (m_type == Preset::TYPE_FILAMENT && opt_key == "filament_type");
+    const bool refresh_mixed_filament_panel = (m_type == Preset::TYPE_PRINT && opt_key == "mixed_filament_component_bias_enabled") ||
+                                              (m_type == Preset::TYPE_FILAMENT && opt_key == "filament_type");
 
     // Keep Mixed Filaments global settings in sync with project_config. In
     // full_fff_config(), project_config is applied last and would otherwise
     // override the edited print preset value from the Others panel.
     if (m_type == Preset::TYPE_PRINT &&
         (opt_key == "mixed_filament_gradient_mode" ||
-         opt_key == "mixed_filament_height_lower_bound" ||
-         opt_key == "mixed_filament_height_upper_bound" ||
-         opt_key == "mixed_color_layer_height_a" ||
-         opt_key == "mixed_color_layer_height_b" ||
-         opt_key == "mixed_filament_advanced_dithering" ||
-         opt_key == "mixed_filament_pointillism_pixel_size" ||
-         opt_key == "mixed_filament_pointillism_line_gap" ||
-         opt_key == "mixed_filament_component_bias_enabled" ||
-         opt_key == "mixed_filament_surface_indentation" ||
-         opt_key == "mixed_filament_region_collapse" ||
-         opt_key == "dithering_z_step_size" ||
-         opt_key == "dithering_local_z_mode" ||
-         opt_key == "dithering_local_z_whole_objects" ||
-         opt_key == "dithering_local_z_infill" ||
-         opt_key == "dithering_local_z_direct_multicolor" ||
-         opt_key == "dithering_step_painted_zones_only" ||
-         opt_key == "mixed_filament_definitions")) {
+         opt_key == "mixed_color_layer_height_a" || opt_key == "mixed_color_layer_height_b" ||
+         opt_key == "mixed_filament_advanced_dithering" || opt_key == "mixed_filament_pointillism_pixel_size" ||
+         opt_key == "mixed_filament_pointillism_line_gap" || opt_key == "mixed_filament_component_bias_enabled" ||
+         opt_key == "mixed_filament_surface_indentation" || opt_key == "mixed_filament_region_collapse" ||
+         opt_key == "dithering_z_step_size" || opt_key == "dithering_local_z_mode" || opt_key == "dithering_local_z_whole_objects" ||
+         opt_key == "dithering_local_z_infill" || opt_key == "dithering_local_z_direct_multicolor" ||
+         opt_key == "dithering_local_z_preserve_first_layer" || opt_key == "dithering_local_z_independent_layer_height" ||
+         opt_key == "dithering_local_z_gradient_layer_height" || opt_key == "dithering_local_z_gradient_middle_filament_window" ||
+         opt_key == "dithering_step_painted_zones_only" || opt_key == "mixed_filament_definitions")) {
         DynamicPrintConfig &project_cfg = wxGetApp().preset_bundle->project_config;
         if (const ConfigOption *opt = m_config->option(opt_key))
             project_cfg.set_key_value(opt_key, opt->clone());
@@ -2720,6 +2713,7 @@ void TabPrint::build()
         optgroup = page->new_optgroup(L("Ironing"), L"param_ironing");
         optgroup->append_single_option_line("ironing_type", "quality_settings_ironing#type");
         optgroup->append_single_option_line("ironing_pattern", "quality_settings_ironing#pattern");
+        optgroup->append_single_option_line("ironing_speed", "quality_settings_ironing#speed");
         optgroup->append_single_option_line("ironing_flow", "quality_settings_ironing#flow");
         optgroup->append_single_option_line("ironing_spacing", "quality_settings_ironing#line-spacing");
         optgroup->append_single_option_line("ironing_inset", "quality_settings_ironing#inset");
@@ -2743,6 +2737,16 @@ void TabPrint::build()
         optgroup->append_single_option_line("print_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
         optgroup->append_single_option_line("top_solid_infill_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
         optgroup->append_single_option_line("bottom_solid_infill_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("set_other_flow_ratios", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("first_layer_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("outer_wall_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("inner_wall_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("overhang_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("sparse_infill_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("internal_solid_infill_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("gap_fill_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("support_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
+        optgroup->append_single_option_line("support_interface_flow_ratio", "quality_settings_wall_and_surfaces#surface-flow-ratio");
         optgroup->append_single_option_line("only_one_wall_top", "quality_settings_wall_and_surfaces#only-one-wall");
         optgroup->append_single_option_line("min_width_top_surface", "quality_settings_wall_and_surfaces#threshold");
         optgroup->append_single_option_line("only_one_wall_first_layer", "quality_settings_wall_and_surfaces#only-one-wall");
@@ -2856,7 +2860,6 @@ void TabPrint::build()
         optgroup->append_single_option_line("internal_solid_infill_speed", "speed_settings_other_layers_speed#internal-solid-infill");
         optgroup->append_single_option_line("top_surface_speed", "speed_settings_other_layers_speed#top-surface");
         optgroup->append_single_option_line("gap_infill_speed", "speed_settings_other_layers_speed#gap-infill");
-        optgroup->append_single_option_line("ironing_speed", "speed_settings_other_layers_speed#ironing-speed");
         optgroup->append_single_option_line("support_speed", "speed_settings_other_layers_speed#support");
         optgroup->append_single_option_line("support_interface_speed", "speed_settings_other_layers_speed#support-interface");
         optgroup = page->new_optgroup(L("Overhang speed"), L"param_overhang_speed", 15);
@@ -3034,10 +3037,12 @@ void TabPrint::build()
 
         optgroup = page->new_optgroup(L("Color Mixing (Experimental)"), L"param_mixed_color");
         optgroup->append_single_option_line("dithering_local_z_mode");
-        optgroup->append_single_option_line("dithering_local_z_whole_objects");
         optgroup->append_single_option_line("dithering_local_z_infill");
+        optgroup->append_single_option_line("fs_surface_paint_only");
+        optgroup->append_single_option_line("fs_painted_zone_extra_perimeters");
+        optgroup->append_single_option_line("dithering_local_z_gradient_layer_height");
 
-    page = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
+        page     = add_options_page(L("Others"), "custom-gcode_other"); // ORCA: icon only visible on placeholders
         optgroup = page->new_optgroup(L("Skirt"), L"param_skirt");
 optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops");
         optgroup->append_single_option_line("skirt_type", "others_settings_skirt#type");
@@ -3053,11 +3058,13 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
         optgroup->append_single_option_line("brim_type", "others_settings_brim#type");
         optgroup->append_single_option_line("brim_width", "others_settings_brim#width");
         optgroup->append_single_option_line("brim_object_gap", "others_settings_brim#brim-object-gap");
+        optgroup->append_single_option_line("brim_flow_ratio", "others_settings_brim#brim-flow-ratio");
         optgroup->append_single_option_line("brim_ears_max_angle", "others_settings_brim#ear-max-angle");
         optgroup->append_single_option_line("brim_ears_detection_length", "others_settings_brim#ear-detection-radius");
 
         optgroup = page->new_optgroup(L("Special mode"), L"param_special");
         optgroup->append_single_option_line("slicing_mode", "others_settings_special_mode#slicing-mode");
+        optgroup->append_single_option_line("enable_overlap_area_carving");
         optgroup->append_single_option_line("print_sequence", "others_settings_special_mode#print-sequence");
         optgroup->append_single_option_line("print_order", "others_settings_special_mode#intra-layer-order");
         optgroup->append_single_option_line("spiral_mode", "others_settings_special_mode#spiral-vase");
@@ -3077,6 +3084,9 @@ optgroup->append_single_option_line("skirt_loops", "others_settings_skirt#loops"
         optgroup->append_single_option_line("fuzzy_skin_scale", "others_settings_fuzzy_skin#skin-feature-size");
         optgroup->append_single_option_line("fuzzy_skin_octaves", "others_settings_fuzzy_skin#skin-noise-octaves");
         optgroup->append_single_option_line("fuzzy_skin_persistence", "others_settings_fuzzy_skin#skin-noise-persistence");
+        optgroup->append_single_option_line("fuzzy_skin_ripples_per_layer", "others_settings_fuzzy_skin#ripples-per-layer");
+        optgroup->append_single_option_line("fuzzy_skin_ripple_offset", "others_settings_fuzzy_skin#ripple-offset");
+        optgroup->append_single_option_line("fuzzy_skin_layers_between_ripple_offset", "others_settings_fuzzy_skin#layers-between-ripple-offset");
         optgroup->append_single_option_line("fuzzy_skin_first_layer", "others_settings_fuzzy_skin#apply-fuzzy-skin-to-first-layer");
 
         optgroup = page->new_optgroup(L("G-code output"), L"param_gcode");
@@ -3313,26 +3323,6 @@ static std::vector<std::string> substruct(std::vector<std::string> const& l, std
     return t;
 }
 
-static DynamicPrintConfig resolved_model_config_for_tab(const DynamicPrintConfig& config)
-{
-    DynamicPrintConfig resolved(config);
-
-    if (const auto* extruder_opt = config.option<ConfigOptionInt>("extruder"); extruder_opt != nullptr && extruder_opt->value > 0) {
-        const int extruder = extruder_opt->value;
-        if (!resolved.has("wall_filament"))
-            resolved.set_key_value("wall_filament", new ConfigOptionInt(extruder));
-        if (!resolved.has("sparse_infill_filament"))
-            resolved.set_key_value("sparse_infill_filament", new ConfigOptionInt(extruder));
-        if (!resolved.has("solid_infill_filament"))
-            resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(extruder));
-    }
-
-    if (!resolved.has("solid_infill_filament") && resolved.has("sparse_infill_filament"))
-        resolved.set_key_value("solid_infill_filament", new ConfigOptionInt(resolved.opt_int("sparse_infill_filament")));
-
-    return resolved;
-}
-
 static void sync_plate_bed_type_to_global(DynamicPrintConfig& config)
 {
     if (wxGetApp().preset_bundle == nullptr)
@@ -3416,14 +3406,14 @@ void TabPrintModel::update_model_config()
     m_null_keys.clear();
     if (!m_object_configs.empty()) {
         DynamicPrintConfig const & global_config= *m_config;
-        const DynamicPrintConfig local_config = resolved_model_config_for_tab(m_object_configs.begin()->second->get());
+        const DynamicPrintConfig local_config(m_object_configs.begin()->second->get());
         DynamicPrintConfig diff_config;
         std::vector<std::string> all_keys = local_config.keys(); // at least one has these keys
         std::vector<std::string> local_keys = intersect(m_keys, all_keys); // all equal on these keys
         if (m_object_configs.size() > 1) {
             std::vector<std::string> global_keys = m_keys; // all equal with global on these keys
             for (auto & config : m_object_configs) {
-                const DynamicPrintConfig resolved_config = resolved_model_config_for_tab(config.second->get());
+                const DynamicPrintConfig resolved_config(config.second->get());
                 auto equals = global_config.equal(resolved_config);
                 global_keys = intersect(global_keys, equals);
                 diff_config.apply_only(resolved_config, substruct(resolved_config.keys(), equals));
@@ -3537,9 +3527,36 @@ void TabPrintModel::on_value_change(const std::string& opt_key, const boost::any
     // always add object config
     bool set   = true; // *m_config->option(k) != *m_prints.get_selected_preset().config.option(k) || inull != m_null_keys.end();
     if (m_back_to_sys) {
-        for (auto config : m_object_configs)
-            config.second->erase(k);
-        m_all_keys.erase(std::remove(m_all_keys.begin(), m_all_keys.end(), k), m_all_keys.end());
+        // Snapmaker: flow variant.
+        bool keep_override = false;
+        if (m_flow_variant_view && m_flow_variant_view->is_option(k)) {
+            const auto *edited_vec = dynamic_cast<const ConfigOptionVectorBase *>(m_config->option(k, false));
+            const auto *base_vec   = dynamic_cast<const ConfigOptionVectorBase *>(m_prints.get_selected_preset().config.option(k));
+            if (edited_vec != nullptr && base_vec != nullptr && !edited_vec->empty() && !base_vec->empty()) {
+                const std::vector<std::string> edited_vals = edited_vec->vserialize();
+                if (edited_vals.size() >= m_flow_variant_view->modes.size()) {
+                    const std::vector<std::string> base_vals = base_vec->vserialize();
+                    auto slot_at = [](const std::vector<std::string> &vals, size_t i) -> const std::string & {
+                        return vals[std::min(i, vals.size() - 1)];
+                    };
+                    for (size_t i = 0; i < m_flow_variant_view->modes.size(); ++i) {
+                        if (slot_at(edited_vals, i) != slot_at(base_vals, i)) {
+                            keep_override = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (keep_override) {
+            for (auto config : m_object_configs)
+                config.second->apply_only(*m_config, {k});
+            m_all_keys = concat(m_all_keys, {k});
+        } else {
+            for (auto config : m_object_configs)
+                config.second->erase(k);
+            m_all_keys.erase(std::remove(m_all_keys.begin(), m_all_keys.end(), k), m_all_keys.end());
+        }
     } else if (set) {
         for (auto config : m_object_configs)
             config.second->apply_only(*m_config, {k});

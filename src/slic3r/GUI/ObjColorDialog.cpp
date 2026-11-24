@@ -132,13 +132,13 @@ void ObjColorDialog::on_dpi_changed(const wxRect &suggested_rect)
     this->Refresh();
 };
 
-ObjColorDialog::ObjColorDialog(wxWindow *                      parent,
-                               std::vector<Slic3r::RGBA> &     input_colors,
+ObjColorDialog::ObjColorDialog(wxWindow*                       parent,
+                               std::vector<Slic3r::RGBA>&      input_colors,
                                bool                            is_single_color,
-                               const std::vector<std::string> &extruder_colours,
-                               std::vector<unsigned char> &    filament_ids,
-                               unsigned char &                 first_extruder_id)
-    : DPIDialog(parent ? parent : static_cast<wxWindow *>(wxGetApp().mainframe),
+                               const std::vector<std::string>& extruder_colours,
+                               std::vector<unsigned int>&      filament_ids,
+                               unsigned int&                   first_extruder_id)
+    : DPIDialog(parent ? parent : static_cast<wxWindow*>(wxGetApp().mainframe),
                 wxID_ANY,
                 _(L("Obj file Import color")),
                 wxDefaultPosition,
@@ -211,12 +211,12 @@ wxColour convert_to_wxColour(const RGBA &color)
     return wx_color;
 }
 // This panel contains all control widgets for both simple and advanced mode (these reside in separate sizers)
-ObjColorPanel::ObjColorPanel(wxWindow *                       parent,
-                             std::vector<Slic3r::RGBA>&       input_colors,
-                             bool                             is_single_color,
-                             const std::vector<std::string>&  extruder_colours,
-                             std::vector<unsigned char> &    filament_ids,
-                             unsigned char &                 first_extruder_id)
+ObjColorPanel::ObjColorPanel(wxWindow*                       parent,
+                             std::vector<Slic3r::RGBA>&      input_colors,
+                             bool                            is_single_color,
+                             const std::vector<std::string>& extruder_colours,
+                             std::vector<unsigned int>&      filament_ids,
+                             unsigned int&                   first_extruder_id)
     : wxPanel(parent, wxID_ANY, wxDefaultPosition, wxDefaultSize /*,wxBORDER_RAISED*/)
     , m_input_colors(input_colors)
     , m_filament_ids(filament_ids)
@@ -426,7 +426,7 @@ void ObjColorPanel::update_filament_ids()
     auto resolve_filament_id = [&appended_filament_id_map](int mapped_filament_id) {
         const auto it = appended_filament_id_map.find(mapped_filament_id);
         const int resolved_filament_id = it == appended_filament_id_map.end() ? mapped_filament_id : it->second;
-        return static_cast<unsigned char>(resolved_filament_id);
+        return resolved_filament_id;
     };
 
     m_filament_ids.clear();

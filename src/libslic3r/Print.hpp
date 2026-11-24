@@ -18,6 +18,7 @@
 #include "GCode/GCodeProcessor.hpp"
 #include "MultiMaterialSegmentation.hpp"
 #include "MixedFilament.hpp"
+#include "LocalZ/LocalZPlan.hpp"
 #include "libslic3r.h"
 
 #include <Eigen/Geometry>
@@ -33,9 +34,11 @@ namespace Slic3r {
 class GCode;
 class Layer;
 class ModelObject;
+class ModelVolume;
 class Print;
 class PrintObject;
 class SupportLayer;
+struct LocalZPlanningInput;
 // BBS
 class TreeSupportData;
 class TreeSupport;
@@ -57,35 +60,6 @@ struct groupedVolumeSlices
     int                     groupId = -1;
     std::vector<ObjectID>   volume_ids;
     ExPolygons              slices;
-};
-
-// Phase A local-Z dithering planner cache.
-struct LocalZInterval
-{
-    size_t layer_id { 0 };
-    double z_lo { 0.0 };
-    double z_hi { 0.0 };
-    double base_height { 0.0 };
-    double sublayer_height { 0.0 };
-    bool   has_mixed_paint { false };
-    size_t first_sublayer_idx { 0 };
-    size_t sublayer_count { 0 };
-};
-
-struct SubLayerPlan
-{
-    size_t layer_id { 0 };
-    size_t pass_index { 0 };
-    bool   split_interval { false };
-    double z_lo { 0.0 };
-    double z_hi { 0.0 };
-    double print_z { 0.0 };
-    double flow_height { 0.0 };
-    size_t dependency_group { 0 };
-    size_t dependency_order { 0 };
-    std::vector<ExPolygons> painted_masks_by_extruder;
-    std::vector<ExPolygons> fixed_painted_masks_by_extruder;
-    ExPolygons              base_masks;
 };
 
 enum SupportNecessaryType {
@@ -455,18 +429,15 @@ public:
     SupportLayer* add_tree_support_layer(int id, coordf_t height, coordf_t print_z, coordf_t slice_z);
     std::shared_ptr<TreeSupportData> alloc_tree_support_preview_cache();
     void clear_tree_support_preview_cache() { m_tree_support_preview_cache.reset(); }
-    const std::vector<LocalZInterval>& local_z_intervals() const { return m_local_z_intervals; }
-    const std::vector<SubLayerPlan>&   local_z_sublayer_plan() const { return m_local_z_sublayer_plan; }
-    void                                set_local_z_plan(std::vector<LocalZInterval> intervals, std::vector<SubLayerPlan> sublayers)
+    const std::vector<LocalZInterval>& local_z_intervals() const { return m_local_z_plan.intervals(); }
+    const std::vector<SubLayerPlan>&   local_z_sublayer_plan() const { return m_local_z_plan.passes(); }
+    const LocalZInterval* local_z_interval_for_layer(size_t layer_id) const { return m_local_z_plan.interval_for_layer(layer_id); }
+    void                  set_local_z_plan(LocalZPlan plan) { m_local_z_plan = std::move(plan); }
+    void                  set_local_z_plan(std::vector<LocalZInterval> intervals, std::vector<SubLayerPlan> passes)
     {
-        m_local_z_intervals = std::move(intervals);
-        m_local_z_sublayer_plan = std::move(sublayers);
+        set_local_z_plan(LocalZPlan(std::move(intervals), std::move(passes)));
     }
-    void                                clear_local_z_plan()
-    {
-        m_local_z_intervals.clear();
-        m_local_z_sublayer_plan.clear();
-    }
+    void clear_local_z_plan() { m_local_z_plan = LocalZPlan{}; }
 
     size_t          support_layer_count() const { return m_support_layers.size(); }
     void            clear_support_layers();
@@ -571,7 +542,7 @@ private:
     void estimate_curled_extrusions();
     void simplify_extrusion_path();
 
-    void slice_volumes();
+    void slice_volumes(LocalZPlanningInput& local_z_input);
     //BBS
     ExPolygons _shrink_contour_holes(double contour_delta, double hole_delta, const ExPolygons& polys) const;
     // BBS
@@ -589,6 +560,11 @@ private:
     void discover_horizontal_shells();
     void combine_infill();
     void _generate_support_material();
+    // Port of BambuStudio warn_uncovered_overhangs(): compare the tree-support layer
+    // areas against the overhangs they were meant to cover and warn when regions stay
+    // unsupported (most visibly under "Support on build plate only").
+    void warn_uncovered_overhangs();
+    ExPolygons collected_support_areas(const SupportLayer *support_layer) const;
     std::pair<FillAdaptive::OctreePtr, FillAdaptive::OctreePtr> prepare_adaptive_infill_data(
         const std::vector<std::pair<const Surface*, float>>& surfaces_w_bottom_z) const;
     FillLightning::GeneratorPtr prepare_lightning_infill_data();
@@ -615,8 +591,7 @@ private:
     SlicingParameters                       m_slicing_params;
     LayerPtrs                               m_layers;
     SupportLayerPtrs                        m_support_layers;
-    std::vector<LocalZInterval>             m_local_z_intervals;
-    std::vector<SubLayerPlan>               m_local_z_sublayer_plan;
+    LocalZPlan                              m_local_z_plan;
     // BBS
     std::shared_ptr<TreeSupportData>        m_tree_support_preview_cache;
 
@@ -649,6 +624,8 @@ private:
     static bool clip_multipart_objects;
     static bool infill_only_where_needed;
 };
+
+PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders);
 
 struct FakeWipeTower
 {

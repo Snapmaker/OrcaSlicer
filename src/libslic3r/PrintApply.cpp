@@ -1,6 +1,7 @@
 #include "MixedFilament.hpp"
 #include "Model.hpp"
 #include "Print.hpp"
+#include "Slicing.hpp"
 
 #include <boost/log/trivial.hpp>
 #include <algorithm>
@@ -735,7 +736,23 @@ static bool mm_paint_applies_to_parent_region(const PrintObjectRegions::LayerRan
     return root_model_part != nullptr && root_model_part->is_mm_painted();
 }
 
-PrintRegionConfig region_config_from_model_volume(const PrintRegionConfig &default_or_parent_region_config, const DynamicPrintConfig *layer_range_config, const ModelVolume &volume, size_t num_extruders);
+static PrintRegionConfig painted_region_config(const PrintRegionConfig& parent_config,
+                                               unsigned int             painted_extruder_id,
+                                               int                      extra_perimeters)
+{
+    PrintRegionConfig config            = parent_config;
+    config.wall_filament.value          = painted_extruder_id;
+    config.solid_infill_filament.value  = painted_extruder_id;
+    config.sparse_infill_filament.value = painted_extruder_id;
+
+    // A same-filament paint mark must keep the parent wall count. Giving it a
+    // different region configuration can make the parent and painted walls
+    // overlap even though no visible material transition exists.
+    if (extra_perimeters > 0 && painted_extruder_id != static_cast<unsigned int>(parent_config.wall_filament.value))
+        config.wall_loops.value = std::max(0, parent_config.wall_loops.value) + extra_perimeters;
+
+    return config;
+}
 
 void print_region_ref_inc(PrintRegion &r) { ++ r.m_ref_cnt; }
 void print_region_ref_reset(PrintRegion &r) { r.m_ref_cnt = 0; }
@@ -745,11 +762,12 @@ int  print_region_ref_cnt(const PrintRegion &r) { return r.m_ref_cnt; }
 // Before region configs are updated, callback_invalidate() is called to possibly stop background processing.
 // Returns false if this object needs to be resliced because regions were merged or split.
 bool verify_update_print_object_regions(
-    ModelVolumePtrs                     model_volumes,
-    const PrintRegionConfig            &default_region_config,
-    size_t                              num_extruders,
-    PrintObjectRegions                 &print_object_regions,
-    const std::function<void(const PrintRegionConfig&, const PrintRegionConfig&, const t_config_option_keys&)> &callback_invalidate)
+    ModelVolumePtrs          model_volumes,
+    const PrintRegionConfig& default_region_config,
+    size_t                   num_extruders,
+    int                      painted_zone_extra_perimeters,
+    PrintObjectRegions&      print_object_regions,
+    const std::function<void(const PrintRegionConfig&, const PrintRegionConfig&, const t_config_option_keys&)>& callback_invalidate)
 {
     // Sort by ModelVolume ID.
     model_volumes_sort_by_id(model_volumes);
@@ -827,10 +845,7 @@ bool verify_update_print_object_regions(
             if (!mm_paint_applies_to_parent_region(layer_range, region.parent))
                 return false;
             const PrintObjectRegions::VolumeRegion &parent_region   = layer_range.volume_regions[region.parent];
-            PrintRegionConfig                       cfg             = parent_region.region->config();
-            cfg.wall_filament.value    = region.extruder_id;
-            cfg.solid_infill_filament.value = region.extruder_id;
-            cfg.sparse_infill_filament.value       = region.extruder_id;
+            PrintRegionConfig cfg = painted_region_config(parent_region.region->config(), region.extruder_id, painted_zone_extra_perimeters);
             if (cfg != region.region->config()) {
                 // Region configuration changed.
                 if (print_region_ref_cnt(*region.region) == 0) {
@@ -965,16 +980,16 @@ void update_volume_bboxes(
 
 // Either a fresh PrintObject, or PrintObject regions were invalidated (merged, split).
 // Generate PrintRegions from scratch.
-static PrintObjectRegions* generate_print_object_regions(
-    PrintObjectRegions                          *print_object_regions_old,
-    const ModelVolumePtrs                       &model_volumes,
-    const LayerRanges                           &model_layer_ranges,
-    const PrintRegionConfig                     &default_region_config,
-    const Transform3d                           &trafo,
-    size_t                                       num_extruders,
-    const float                                  xy_contour_compensation,
-    const std::vector<unsigned int>             &painting_extruders,
-    const bool                                   has_painted_fuzzy_skin)
+static PrintObjectRegions* generate_print_object_regions(PrintObjectRegions*              print_object_regions_old,
+                                                         const ModelVolumePtrs&           model_volumes,
+                                                         const LayerRanges&               model_layer_ranges,
+                                                         const PrintRegionConfig&         default_region_config,
+                                                         const Transform3d&               trafo,
+                                                         size_t                           num_extruders,
+                                                         const float                      xy_contour_compensation,
+                                                         const std::vector<unsigned int>& painting_extruders,
+                                                         const bool                       has_painted_fuzzy_skin,
+                                                         const int                        painted_zone_extra_perimeters)
 {
     // Reuse the old object or generate a new one.
     auto out = print_object_regions_old ? std::unique_ptr<PrintObjectRegions>(print_object_regions_old) : std::make_unique<PrintObjectRegions>();
@@ -1072,10 +1087,8 @@ static PrintObjectRegions* generate_print_object_regions(
                 if (const PrintObjectRegions::VolumeRegion &parent_region = layer_range.volume_regions[parent_region_id];
                     (parent_region.model_volume->is_model_part() || parent_region.model_volume->is_modifier()) &&
                     mm_paint_applies_to_parent_region(layer_range, parent_region_id)) {
-                    PrintRegionConfig cfg = parent_region.region->config();
-                    cfg.wall_filament.value    = painted_extruder_id;
-                    cfg.solid_infill_filament.value = painted_extruder_id;
-                    cfg.sparse_infill_filament.value       = painted_extruder_id;
+                    PrintRegionConfig cfg = painted_region_config(parent_region.region->config(), painted_extruder_id,
+                                                                  painted_zone_extra_perimeters);
                     // Keep PrintRegion config-interned. If a painted target resolves to the same
                     // config as its parent, alias it instead of creating a duplicate PrintRegion.
                     PrintRegion *painted_region = get_create_region(std::move(cfg));
@@ -1220,7 +1233,7 @@ static bool same_layer_pointillism_enabled(const MixedFilamentManager &mixed_mgr
 {
     // Deprecated: same-layer pointillism is disabled and will be removed.
 #if 0
-    for (const MixedFilament &mf : mixed_mgr.mixed_filaments())
+    for (const MixedFilament &mf : mixed_mgr.mixed_filament_legacy_rows())
         if (mf.enabled && mf.distribution_mode == int(MixedFilament::SameLayerPointillisme))
             return true;
 #endif
@@ -1246,10 +1259,18 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     new_full_config.option("dithering_local_z_whole_objects", true);
     new_full_config.option("dithering_local_z_infill", true);
     new_full_config.option("dithering_local_z_direct_multicolor", true);
+    // SML uses the direct solver by default. Old projects may retain a false
+    // value from the former SML-off handler even after SML was re-enabled.
+    if (new_full_config.opt_bool("dithering_local_z_mode"))
+        new_full_config.option<ConfigOptionBool>("dithering_local_z_direct_multicolor")->value = true;
+    // First-layer protection is automatic, including for old projects that
+    // saved the former user-facing switch as disabled.
+    new_full_config.option<ConfigOptionBool>("dithering_local_z_preserve_first_layer", true)->value = true;
+    new_full_config.option("dithering_local_z_independent_layer_height", true);
+    new_full_config.option("dithering_local_z_gradient_layer_height", true);
+    new_full_config.option("dithering_local_z_gradient_middle_filament_window", true);
     new_full_config.option("dithering_step_painted_zones_only", true);
     new_full_config.option("mixed_filament_gradient_mode", true);
-    new_full_config.option("mixed_filament_height_lower_bound", true);
-    new_full_config.option("mixed_filament_height_upper_bound", true);
     new_full_config.option("mixed_filament_advanced_dithering", true);
     new_full_config.option("mixed_filament_pointillism_pixel_size", true);
     new_full_config.option("mixed_filament_pointillism_line_gap", true);
@@ -1262,10 +1283,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_config.option("dithering_local_z_whole_objects", true);
     m_config.option("dithering_local_z_infill", true);
     m_config.option("dithering_local_z_direct_multicolor", true);
+    m_config.option("dithering_local_z_preserve_first_layer", true);
+    m_config.option("dithering_local_z_independent_layer_height", true);
+    m_config.option("dithering_local_z_gradient_layer_height", true);
+    m_config.option("dithering_local_z_gradient_middle_filament_window", true);
     m_config.option("dithering_step_painted_zones_only", true);
     m_config.option("mixed_filament_gradient_mode", true);
-    m_config.option("mixed_filament_height_lower_bound", true);
-    m_config.option("mixed_filament_height_upper_bound", true);
     m_config.option("mixed_filament_advanced_dithering", true);
     m_config.option("mixed_filament_pointillism_pixel_size", true);
     m_config.option("mixed_filament_pointillism_line_gap", true);
@@ -1278,10 +1301,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     m_default_object_config.option("dithering_local_z_whole_objects", true);
     m_default_object_config.option("dithering_local_z_infill", true);
     m_default_object_config.option("dithering_local_z_direct_multicolor", true);
+    m_default_object_config.option("dithering_local_z_preserve_first_layer", true);
+    m_default_object_config.option("dithering_local_z_independent_layer_height", true);
+    m_default_object_config.option("dithering_local_z_gradient_layer_height", true);
+    m_default_object_config.option("dithering_local_z_gradient_middle_filament_window", true);
     m_default_object_config.option("dithering_step_painted_zones_only", true);
     m_default_object_config.option("mixed_filament_gradient_mode", true);
-    m_default_object_config.option("mixed_filament_height_lower_bound", true);
-    m_default_object_config.option("mixed_filament_height_upper_bound", true);
     m_default_object_config.option("mixed_filament_advanced_dithering", true);
     m_default_object_config.option("mixed_filament_pointillism_pixel_size", true);
     m_default_object_config.option("mixed_filament_pointillism_line_gap", true);
@@ -1391,8 +1416,6 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     }
 
     int   mixed_gradient_mode   = 0;
-    float mixed_height_lower    = 0.04f;
-    float mixed_height_upper    = 0.16f;
     bool  mixed_advanced_dither = false;
     float mixed_pointillism_pixel_size = 0.f;
     float mixed_pointillism_line_gap   = 0.f;
@@ -1404,10 +1427,6 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         else
             mixed_gradient_mode = new_full_config.opt_int("mixed_filament_gradient_mode");
     }
-    if (new_full_config.has("mixed_filament_height_lower_bound"))
-        mixed_height_lower = float(new_full_config.opt_float("mixed_filament_height_lower_bound"));
-    if (new_full_config.has("mixed_filament_height_upper_bound"))
-        mixed_height_upper = float(new_full_config.opt_float("mixed_filament_height_upper_bound"));
     if (new_full_config.has("mixed_filament_advanced_dithering")) {
         if (const ConfigOptionBool *opt = new_full_config.option<ConfigOptionBool>("mixed_filament_advanced_dithering"))
             mixed_advanced_dither = opt->value;
@@ -1424,16 +1443,12 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         mixed_custom_definitions = new_full_config.opt_string("mixed_filament_definitions");
 
     mixed_gradient_mode = std::clamp(mixed_gradient_mode, 0, 1);
-    mixed_height_lower  = std::max(0.01f, mixed_height_lower);
-    mixed_height_upper  = std::max(mixed_height_lower, mixed_height_upper);
     mixed_pointillism_pixel_size = std::max(0.f, mixed_pointillism_pixel_size);
     mixed_pointillism_line_gap   = std::max(0.f, mixed_pointillism_line_gap);
     mixed_surface_indentation    = std::clamp(mixed_surface_indentation, -2.f, 2.f);
 
     BOOST_LOG_TRIVIAL(info) << "Print::apply mixed settings"
                             << ", gradient_mode=" << mixed_gradient_mode
-                            << ", lower=" << mixed_height_lower
-                            << ", upper=" << mixed_height_upper
                             << ", advanced_dither=" << (mixed_advanced_dither ? 1 : 0)
                             << ", pointillism_pixel_size=" << mixed_pointillism_pixel_size
                             << ", pointillism_line_gap=" << mixed_pointillism_line_gap
@@ -1445,22 +1460,45 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
     // re-apply user custom mixed definitions.
     std::vector<std::string> physical_filament_colors = m_config.filament_colour.values;
     physical_filament_colors.resize(num_extruders, "#26A69A");
+    MixedFilamentDisplayContext mixed_display_context;
+    mixed_display_context.num_physical          = num_extruders;
+    mixed_display_context.physical_colors       = physical_filament_colors;
+    mixed_display_context.physical_tds          = m_config.filament_transmission_distance.values;
+    mixed_display_context.physical_material_ids = m_config.filament_full_spectrum_material_id.values;
+    mixed_display_context.nozzle_diameters      = m_config.nozzle_diameter.values;
+    mixed_display_context.color_engine          = MixedFilamentColorEngine::FullSpectrumKSPairResidual;
+    auto& mixed_preview                         = mixed_display_context.preview_settings;
+    mixed_preview.nozzle_min_layer_heights.resize(num_extruders);
+    mixed_preview.nozzle_max_layer_heights.resize(num_extruders);
+    for (size_t i = 0; i < num_extruders; ++i) {
+        mixed_preview.nozzle_min_layer_heights[i] = Slicing::min_layer_height_from_nozzle(m_config, int(i + 1));
+        mixed_preview.nozzle_max_layer_heights[i] = Slicing::max_layer_height_from_nozzle(m_config, int(i + 1));
+    }
+    mixed_preview.local_z_mode                  = m_config.dithering_local_z_mode.value;
+    mixed_preview.preferred_a_height            = m_config.mixed_color_layer_height_a.value;
+    mixed_preview.preferred_b_height            = m_config.mixed_color_layer_height_b.value;
+    mixed_preview.local_z_direct_multicolor     = m_config.dithering_local_z_direct_multicolor.value &&
+                                              mixed_preview.preferred_a_height <= EPSILON && mixed_preview.preferred_b_height <= EPSILON;
+    mixed_preview.local_z_independent_layer_height = mixed_preview.local_z_mode || m_config.dithering_local_z_independent_layer_height.value;
+    mixed_preview.gradient_cycle_height            = m_config.dithering_local_z_gradient_layer_height.value;
+    mixed_preview.gradient_middle_window           = m_config.dithering_local_z_gradient_middle_filament_window.value / 100.0;
+    if (new_full_config.has("layer_height"))
+        mixed_preview.nominal_layer_height = new_full_config.opt_float("layer_height");
+    if (new_full_config.has("wall_loops"))
+        mixed_preview.wall_loops = size_t(std::max(1, new_full_config.opt_int("wall_loops")));
+    m_mixed_filament_mgr.set_display_context(mixed_display_context);
     m_mixed_filament_mgr.clear_custom_entries();
     m_mixed_filament_mgr.auto_generate(physical_filament_colors);
     m_mixed_filament_mgr.load_custom_entries(mixed_custom_definitions, physical_filament_colors);
-    m_mixed_filament_mgr.apply_gradient_settings(mixed_gradient_mode,
-                                                 mixed_height_lower,
-                                                 mixed_height_upper,
-                                                 mixed_advanced_dither);
+    m_mixed_filament_mgr.apply_gradient_settings(mixed_gradient_mode, mixed_advanced_dither);
     size_t mixed_custom_count = 0;
-    for (const auto &mf : m_mixed_filament_mgr.mixed_filaments())
+    for (const auto& mf : m_mixed_filament_mgr.mixed_filament_legacy_rows())
         if (mf.custom)
             ++mixed_custom_count;
 
     BOOST_LOG_TRIVIAL(info) << "Print::apply mixed manager state"
-                            << ", mixed_total=" << m_mixed_filament_mgr.mixed_filaments().size()
-                            << ", mixed_enabled=" << m_mixed_filament_mgr.enabled_count()
-                            << ", mixed_custom=" << mixed_custom_count;
+                            << ", mixed_total=" << m_mixed_filament_mgr.mixed_filament_legacy_rows().size()
+                            << ", mixed_enabled=" << m_mixed_filament_mgr.enabled_count() << ", mixed_custom=" << mixed_custom_count;
     // Total filaments = physical extruders + enabled mixed (virtual) filaments.
     // Used for extruder ID clamping so that virtual IDs are accepted.
     size_t num_total_filaments = m_mixed_filament_mgr.total_filaments(num_extruders);
@@ -1946,16 +1984,19 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
                 model_object_status.print_object_regions_status = ModelObjectStatus::PrintObjectRegionsStatus::PartiallyValid;
                 print_regions_reshuffled = true;
             } else if (print_object_regions &&
-                verify_update_print_object_regions(
-                    print_object.model_object()->volumes,
-                    m_default_region_config,
-                    num_total_filaments,
-                    *print_object_regions,
-                    [it_print_object, it_print_object_end, &update_apply_status](const PrintRegionConfig &old_config, const PrintRegionConfig &new_config, const t_config_option_keys &diff_keys) {
-                        for (auto it = it_print_object; it != it_print_object_end; ++it)
-                            if ((*it)->m_shared_regions != nullptr)
-                                update_apply_status((*it)->invalidate_state_by_config_options(old_config, new_config, diff_keys));
-                    })) {
+                       verify_update_print_object_regions(print_object.model_object()->volumes, m_default_region_config,
+                                                          num_total_filaments, (print_object.config().fs_surface_paint_only.value ? print_object.config().fs_painted_zone_extra_perimeters.value : 0),
+                                                          *print_object_regions,
+                                                          [it_print_object, it_print_object_end,
+                                                           &update_apply_status](const PrintRegionConfig&    old_config,
+                                                                                 const PrintRegionConfig&    new_config,
+                                                                                 const t_config_option_keys& diff_keys) {
+                                                              for (auto it = it_print_object; it != it_print_object_end; ++it)
+                                                                  if ((*it)->m_shared_regions != nullptr)
+                                                                      update_apply_status(
+                                                                          (*it)->invalidate_state_by_config_options(old_config, new_config,
+                                                                                                                    diff_keys));
+                                                          })) {
                 // Regions are valid, just keep them.
             } else {
                 // Regions were reshuffled.
@@ -1968,16 +2009,15 @@ Print::ApplyStatus Print::apply(const Model &model, DynamicPrintConfig new_full_
         if (print_object_regions == nullptr || model_object_status.print_object_regions_status != ModelObjectStatus::PrintObjectRegionsStatus::Valid) {
             // Layer ranges with their associated configurations. Remove overlaps between the ranges
             // and create the regions from scratch.
-            print_object_regions = generate_print_object_regions(
-                print_object_regions,
-                print_object.model_object()->volumes,
-                LayerRanges(print_object.model_object()->layer_config_ranges),
-                m_default_region_config,
-                model_object_status.print_instances.front().trafo,
-                num_total_filaments ,
-                print_object.is_mm_painted() ? 0.f : float(print_object.config().xy_contour_compensation.value),
-                painting_extruders,
-                print_object.is_fuzzy_skin_painted());
+            print_object_regions = generate_print_object_regions(print_object_regions, print_object.model_object()->volumes,
+                                                                 LayerRanges(print_object.model_object()->layer_config_ranges),
+                                                                 m_default_region_config, model_object_status.print_instances.front().trafo,
+                                                                 num_total_filaments,
+                                                                 print_object.is_mm_painted() ?
+                                                                     0.f :
+                                                                     float(print_object.config().xy_contour_compensation.value),
+                                                                 painting_extruders, print_object.is_fuzzy_skin_painted(),
+                                                                 (print_object.config().fs_surface_paint_only.value ? print_object.config().fs_painted_zone_extra_perimeters.value : 0));
         }
         for (auto it = it_print_object; it != it_print_object_end; ++it)
             if ((*it)->m_shared_regions) {

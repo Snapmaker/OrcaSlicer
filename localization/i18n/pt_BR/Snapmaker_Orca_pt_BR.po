@@ -19823,3 +19823,26 @@ msgstr ""
 
 #~ msgid "Printer local connection failed, please try again."
 #~ msgstr "Falha na conexão local da impressora, por favor tente novamente."
+
+msgid "Jump to: Support on build plate only"
+msgstr "Ir para: Suporte apenas na placa de construção"
+
+msgid "Jump to: Support"
+msgstr "Ir para: Suporte"
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s). Because \"Support on build plate only\" is enabled, supports cannot grow down to the build plate. Try turning this option off."
+msgstr ""
+"Foram detectadas saliências sem suporte.\n"
+"O modelo “%1%” possui %2% região(ões) de saliência. Como a opção “Suporte apenas na placa de construção” está ativada, os suportes não podem se estender até a placa de construção. Tente desativar essa opção."
+
+#, boost-format
+msgid ""
+"Unsupported overhangs were detected.\n"
+"Model \"%1%\" has %2% overhang region(s) that could not get support. Try adjusting the support settings or re-orienting the object."
+msgstr ""
+"Foram detectadas saliências sem suporte.\n"
+"O modelo “%1%” possui %2% região(ões) de saliência que não puderam receber suporte. Tente ajustar as configurações de suporte ou reorientar o objeto."
+

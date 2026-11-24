@@ -127,6 +127,8 @@ struct SupportNode
     bool           is_sharp_tail   = false;
     bool           valid = true;
     bool           fading = false;   // port of Bambu 976b5062c: edge-eCircle marked to shrink to nothing
+    bool           drawn = true;     // disc survives the clip and something below prints
+    bool           landed = false;   // valid=false via the link-cut rest-on-model conversion; keep drawing it
     ExPolygon      overhang; // when type==ePolygon, set this value to get original overhang area
     coordf_t       origin_area   = 0.0;
     coordf_t       target_radius = -1.;
@@ -371,9 +373,8 @@ inline size_t tree_support_effective_wall_count(SupportMaterialStyle style, int 
  * \brief Sliver-hole cleanup for tree support area groups, guarded by hole ownership.
  *
  * draw_circles() carves the per-layer area polygons against each other
- * (roof_areas -= roof_1st_layer, base_areas -= roofs). Since 5f02f3ed5d the diff
- * direction is roof_areas = diff(roof_areas, roof_1st_layer), so a whole transition
- * strip or roof fragment regularly ends up as a hole smaller than 2mm in both
+ * (roof_1st_layer -= roof_areas, base_areas -= roofs). A whole interface
+ * island or roof fragment may end up as a hole smaller than 2mm in both
  * dimensions inside the polygon of another group. Erasing such a hole (the plain
  * sliver cleanup inherited from Bambu Studio, same 2mm box threshold) re-expands the
  * owner polygon over the other group's area, so two support roles get printed on top

@@ -350,6 +350,10 @@ set(SLIC3R_GUI_SOURCES
     GUI/MixedFilamentDialog.hpp
     GUI/MixedFilamentBatchDialog.cpp
     GUI/MixedFilamentBatchDialog.hpp
+    GUI/MixedFilamentManageDialog.cpp
+    GUI/MixedFilamentManageDialog.hpp
+    GUI/MixedFilamentManageWidgets.cpp
+    GUI/MixedFilamentManageWidgets.hpp
     GUI/MixedGradientSelector.hpp
     GUI/MixedGradientSelector.cpp
     GUI/MixedColorMatchPanel.cpp
@@ -501,6 +505,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/Widgets/AxisCtrlButton.hpp
     GUI/Widgets/Button.cpp
     GUI/Widgets/Button.hpp
+    GUI/Widgets/Accordion.cpp
+    GUI/Widgets/Accordion.hpp
     GUI/Widgets/CheckBox.cpp
     GUI/Widgets/CheckBox.hpp
     GUI/Widgets/ComboBox.cpp

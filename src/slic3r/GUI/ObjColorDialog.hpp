@@ -21,11 +21,12 @@ class ObjColorPanel : public wxPanel
 {
 public:
     // BBS
-    ObjColorPanel(wxWindow *                            parent,
-                  std::vector<Slic3r::RGBA> &     input_colors,bool  is_single_color,
-                  const std::vector<std::string> &      extruder_colours,
-                  std::vector<unsigned char> &    filament_ids,
-                  unsigned char &                 first_extruder_id);
+    ObjColorPanel(wxWindow*                       parent,
+                  std::vector<Slic3r::RGBA>&      input_colors,
+                  bool                            is_single_color,
+                  const std::vector<std::string>& extruder_colours,
+                  std::vector<unsigned int>&      filament_ids,
+                  unsigned int&                   first_extruder_id);
     void msw_rescale();
     bool is_ok();
     void update_filament_ids();
@@ -94,25 +95,26 @@ private:
     std::vector<Slic3r::RGBA> m_cluster_colors_from_algo;
     std::vector<int>          m_cluster_labels_from_algo;
     //result
-    unsigned char&             m_first_extruder_id;
-    std::vector<unsigned char> &m_filament_ids;
+    unsigned int&              m_first_extruder_id;
+    std::vector<unsigned int>& m_filament_ids;
 };
 
 class ObjColorDialog : public Slic3r::GUI::DPIDialog
 {
 public:
-    ObjColorDialog(wxWindow *                         parent,
-                   std::vector<Slic3r::RGBA>&   input_colors, bool is_single_color,
-                   const std::vector<std::string> &   extruder_colours,
-                   std::vector<unsigned char>&        filament_ids,
-                   unsigned char &                 first_extruder_id);
+    ObjColorDialog(wxWindow*                       parent,
+                   std::vector<Slic3r::RGBA>&      input_colors,
+                   bool                            is_single_color,
+                   const std::vector<std::string>& extruder_colours,
+                   std::vector<unsigned int>&      filament_ids,
+                   unsigned int&                   first_extruder_id);
     wxBoxSizer* create_btn_sizer(long flags);
     void on_dpi_changed(const wxRect &suggested_rect) override;
 private:
     ObjColorPanel*  m_panel_ObjColor  = nullptr;
     std::unordered_map<int, Button *> m_button_list;
-    std::vector<unsigned char>&      m_filament_ids;
-    unsigned char &                  m_first_extruder_id;
+    std::vector<unsigned int>&        m_filament_ids;
+    unsigned int&                     m_first_extruder_id;
 };
 
 #endif  // _WIPE_TOWER_DIALOG_H_

@@ -18,9 +18,9 @@ namespace Slic3r {
 
 enum class EnforcerBlockerType : int16_t {
     // Maximum is 3. The value is serialized in TriangleSelector into 2 bits.
-    NONE      = 0,
-    ENFORCER  = 1,
-    BLOCKER   = 2,
+    NONE     = 0,
+    ENFORCER = 1,
+    BLOCKER  = 2,
     // For the fuzzy skin, we use just two values (NONE and FUZZY_SKIN).
     FUZZY_SKIN = ENFORCER,
     // Extruder states are serialized using a 2-bit prefix plus one or more 4-bit nibbles.
@@ -41,7 +41,7 @@ enum class EnforcerBlockerType : int16_t {
     Extruder14,
     Extruder15,
     Extruder16,
-    ExtruderMax = 255
+    ExtruderMax = MAXIMUM_FILAMENT_NUMBER
 };
 
 // Type alias for the state mapping array to improve code readability
@@ -90,6 +90,10 @@ public:
         virtual int  vertices_inside(const Triangle &tr, const std::vector<Vertex> &vertices) const;
         virtual bool is_edge_inside_cursor(const Triangle &tr, const std::vector<Vertex> &vertices) const = 0;
         virtual bool is_facet_visible(int facet_idx, const std::vector<Vec3f> &face_normals) const = 0;
+
+        // The existing whole-triangle shortcut is valid for convex cursors. Concave cursors
+        // override this so an inward notch still causes boundary subdivision.
+        virtual bool all_vertices_inside_implies_whole_triangle_inside() const { return true; }
 
         static bool is_facet_visible(const Cursor &cursor, int facet_idx, const std::vector<Vec3f> &face_normals);
 
@@ -220,6 +224,107 @@ public:
         float m_height;
     };
 
+    class RectangleProjectionCursor : public SinglePointCursor
+    {
+    public:
+        RectangleProjectionCursor()           = delete;
+        ~RectangleProjectionCursor() override = default;
+
+        explicit RectangleProjectionCursor(const Vec3f&              camera_pos_mesh,
+                                           const Vec3f&              camera_target_mesh,
+                                           const Matrix4d&           view_projection_matrix,
+                                           const std::array<int, 4>& viewport,
+                                           const Vec2f&              rect_min,
+                                           const Vec2f&              rect_max,
+                                           const Transform3d&        trafo_,
+                                           const ClippingPlane&      clipping_plane_)
+            : SinglePointCursor(camera_target_mesh, camera_pos_mesh, 1.f, trafo_, clipping_plane_)
+            , m_view_projection_matrix(view_projection_matrix)
+            , m_viewport(viewport)
+            , m_rect_min(rect_min)
+            , m_rect_max(rect_max)
+        {}
+
+        static std::unique_ptr<Cursor> cursor_factory(const Vec3f&              camera_pos_mesh,
+                                                      const Vec3f&              camera_target_mesh,
+                                                      const Matrix4d&           view_projection_matrix,
+                                                      const std::array<int, 4>& viewport,
+                                                      const Vec2f&              rect_min,
+                                                      const Vec2f&              rect_max,
+                                                      const Transform3d&        trafo_matrix,
+                                                      const ClippingPlane&      clipping_plane)
+        {
+            return std::make_unique<RectangleProjectionCursor>(camera_pos_mesh, camera_target_mesh, view_projection_matrix, viewport,
+                                                               rect_min, rect_max, trafo_matrix, clipping_plane);
+        }
+
+        bool is_mesh_point_inside(const Vec3f& point) const override;
+        bool is_pointer_in_triangle(const Vec3f& p1, const Vec3f& p2, const Vec3f& p3) const override;
+        bool is_edge_inside_cursor(const Triangle& tr, const std::vector<Vertex>& vertices) const override;
+        bool is_facet_visible(int facet_idx, const std::vector<Vec3f>& face_normals) const override
+        {
+            return TriangleSelector::Cursor::is_facet_visible(*this, facet_idx, face_normals);
+        }
+
+    private:
+        bool project_to_screen(const Vec3f& mesh_point, Vec2f& out_screen) const;
+
+        Matrix4d           m_view_projection_matrix;
+        std::array<int, 4> m_viewport;
+        Vec2f              m_rect_min;
+        Vec2f              m_rect_max;
+    };
+
+    class PolygonProjectionCursor : public SinglePointCursor
+    {
+    public:
+        PolygonProjectionCursor()           = delete;
+        ~PolygonProjectionCursor() override = default;
+
+        explicit PolygonProjectionCursor(const Vec3f&              camera_pos_mesh,
+                                         const Vec3f&              camera_target_mesh,
+                                         const Matrix4d&           view_projection_matrix,
+                                         const std::array<int, 4>& viewport,
+                                         std::vector<Vec2f>        polygon,
+                                         const Transform3d&        trafo_,
+                                         const ClippingPlane&      clipping_plane_)
+            : SinglePointCursor(camera_target_mesh, camera_pos_mesh, 1.f, trafo_, clipping_plane_)
+            , m_view_projection_matrix(view_projection_matrix)
+            , m_viewport(viewport)
+            , m_polygon(std::move(polygon))
+        {
+            assert(m_polygon.size() >= 3);
+        }
+
+        static std::unique_ptr<Cursor> cursor_factory(const Vec3f&              camera_pos_mesh,
+                                                      const Vec3f&              camera_target_mesh,
+                                                      const Matrix4d&           view_projection_matrix,
+                                                      const std::array<int, 4>& viewport,
+                                                      std::vector<Vec2f>        polygon,
+                                                      const Transform3d&        trafo_matrix,
+                                                      const ClippingPlane&      clipping_plane)
+        {
+            return std::make_unique<PolygonProjectionCursor>(camera_pos_mesh, camera_target_mesh, view_projection_matrix, viewport,
+                                                             std::move(polygon), trafo_matrix, clipping_plane);
+        }
+
+        bool is_mesh_point_inside(const Vec3f& point) const override;
+        bool is_pointer_in_triangle(const Vec3f& p1, const Vec3f& p2, const Vec3f& p3) const override;
+        bool is_edge_inside_cursor(const Triangle& tr, const std::vector<Vertex>& vertices) const override;
+        bool is_facet_visible(int facet_idx, const std::vector<Vec3f>& face_normals) const override
+        {
+            return TriangleSelector::Cursor::is_facet_visible(*this, facet_idx, face_normals);
+        }
+        bool all_vertices_inside_implies_whole_triangle_inside() const override { return false; }
+
+    private:
+        bool project_to_screen(const Vec3f& mesh_point, Vec2f& out_screen) const;
+
+        Matrix4d           m_view_projection_matrix;
+        std::array<int, 4> m_viewport;
+        std::vector<Vec2f> m_polygon;
+    };
+
     class Capsule3D : public DoublePointCursor
     {
     public:
@@ -345,6 +450,9 @@ public:
     // Called by select_patch() internally. Made public for debugging purposes, see TriangleSelectorGUI::render_debug().
     void set_edge_limit(float edge_limit);
 
+    // Values above 1 subdivide brush boundaries more finely. The default preserves stock behavior.
+    void set_precision_factor(float factor);
+
     // Create new object on a TriangleMesh. The referenced mesh must
     // stay valid, a ptr to it is saved and used.
     explicit TriangleSelector(const TriangleMesh& mesh, float edge_limit = 0.6f);
@@ -416,6 +524,9 @@ public:
     indexed_triangle_set get_facets(EnforcerBlockerType state) const;
     // Get facets at a given state. Triangulate T-joints.
     indexed_triangle_set get_facets_strict(EnforcerBlockerType state) const;
+    // Same strict triangles and vertex coordinates, omitting unused vertices.
+    // Retains original relative vertex order; intended for painted slab slicing.
+    indexed_triangle_set get_facets_strict_compact(EnforcerBlockerType state) const;
     // Get edges around the selected area by seed fill.
     std::vector<Vec2i32> get_seed_fill_contour() const;
 
@@ -558,6 +669,8 @@ protected:
 
     // BBS
     float m_edge_limit = 0.6f;
+
+    float m_precision_factor = 1.f;
 
     // Number of invalid triangles (to trigger garbage collection).
     int m_invalid_triangles;

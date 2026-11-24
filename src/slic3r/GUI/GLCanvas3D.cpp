@@ -3316,6 +3316,11 @@ void GLCanvas3D::render(bool only_init, bool overlayOnly)
         // BBS: GUI refactor: add canvas size as parameters
         _render_gcode(cnv_size.get_width(), cnv_size.get_height());
     }
+    // All-plates stats page draws no scene, but the frame still needs clearing
+    else if (m_canvas_type == ECanvasType::CanvasPreview) {
+        glsafe(::glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT));
+        _render_background();
+    }
     /* assemble render*/
     else if (m_canvas_type == ECanvasType::CanvasAssembleView) {
         m_selectionHighlightValid = false;
@@ -4218,12 +4223,6 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 const Print* current_print = part_plate->fff_print();
                 if (current_print == nullptr)
                     continue;
-                // Configured support/interface filaments may never be used. Once
-                // slicing has finished, an absent tower is not an estimated tower.
-                const bool tower_generation_done = current_print->is_step_done(psWipeTower);
-                if (tower_generation_done && current_print->wipe_tower_data().tool_changes.empty() &&
-                    current_print->wipe_tower_data().local_z_tool_changes.empty())
-                    continue;
                 int extruder_nums = part_plate->get_extruders(true).size();
                 if (!need_wipe_tower && extruder_nums < 2)
                     continue;
@@ -4234,7 +4233,7 @@ void GLCanvas3D::reload_scene(bool refresh_immediately, bool force_full_scene_re
                 float brim_width = wipe_tower_data.brim_width;
                 Vec3d wipe_tower_size = ppl.get_plate(plate_id)->estimate_wipe_tower_size(full_cfg, w, v, extruder_nums);
 
-                if (!tower_generation_done || !current_print->wipe_tower_data().wipe_tower_mesh_data) {
+                if (!current_print->is_step_done(psWipeTower) || !current_print->wipe_tower_data().wipe_tower_mesh_data) {
                     int volume_idx_wipe_tower_new = m_volumes.load_wipe_tower_preview(1000 + plate_id, x + plate_origin(0), y + plate_origin(1),
                         (float)wipe_tower_size(0), (float)wipe_tower_size(1), (float)wipe_tower_size(2),a,true, brim_width);
                     int volume_idx_wipe_tower_old = volume_idxs_wipe_tower_old[plate_id];

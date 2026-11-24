@@ -48,6 +48,13 @@ static BOOL CALLBACK collect_system_locale(LPWSTR name, DWORD, LPARAM context)
 }
 #endif
 
+struct GCodeTagFlavourGuard
+{
+    bool previous = GCodeProcessor::s_IsBBLPrinter;
+    explicit GCodeTagFlavourGuard(bool bbl) { GCodeProcessor::s_IsBBLPrinter = bbl; }
+    ~GCodeTagFlavourGuard() { GCodeProcessor::s_IsBBLPrinter = previous; }
+};
+
 static std::vector<std::string> installed_numeric_locales()
 {
     std::vector<std::string> names;
@@ -806,8 +813,7 @@ TEST_CASE("Local-Z plans follow repeated object and part filament changes", "[Mi
     config.set("dithering_local_z_mode", true);
     config.set("dithering_local_z_whole_objects", true);
     config.set("dithering_local_z_infill", true);
-    config.set("mixed_filament_height_lower_bound", 0.04);
-    config.set("mixed_filament_height_upper_bound", 0.16);
+    config.option<ConfigOptionFloats>("min_layer_height")->values.assign(4, 0.04);
     config.set("enable_prime_tower", false);
     config.set("flush_into_infill", true);
 
@@ -857,31 +863,20 @@ TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height b
         double layer_height;
         int    mix_b_percent;
         double lower_bound;
-        double upper_bound;
-        double total_a;
-        double total_b;
-        size_t pass_count;
         double preferred_a = 0.0;
         double preferred_b = 0.0;
     };
     const RatioCase cases[] = {
-        {0.20, 67, 0.04, 0.16, 0.066, 0.134, 2},
-        {0.20, 33, 0.04, 0.16, 0.134, 0.066, 2},
-        {0.24, 67, 0.04, 0.16, 0.080, 0.160, 2}, // 67% reaches the upper height limit.
-        {0.24, 33, 0.04, 0.16, 0.160, 0.080, 2},
-        {0.20, 75, 0.04, 0.16, 0.050, 0.150, 2},
-        {0.20, 25, 0.04, 0.16, 0.150, 0.050, 2},
-        {0.24, 50, 0.04, 0.16, 0.120, 0.120, 2},
-        {0.24, 51, 0.04, 0.16, 0.1176, 0.1224, 2}, // Near-equal heights must stay assigned to the correct component.
-        {0.24, 49, 0.04, 0.16, 0.1224, 0.1176, 2},
-        {0.20, 95, 0.04, 0.16, 0.040, 0.160, 2}, // An infeasible ratio must still respect both limits.
-        {0.24, 75, 0.04, 0.16, 0.080, 0.160, 2},
-        {0.24, 75, 0.02, 0.16, 0.060, 0.180, 4},               // Two A/B pairs make 25/75 feasible.
-        {0.20, 67, 0.02, 0.18, 0.066, 0.134, 2},               // Wider limits must not change a feasible ratio.
-        {0.24, 67, 0.04, 0.16, 0.150, 0.090, 3, 0.075, 0.090}, // Explicit A/B heights keep their A-first cadence.
+        {0.20, 67, 0.04}, {0.20, 33, 0.04},
+        {0.24, 67, 0.04}, {0.24, 33, 0.04},
+        {0.20, 75, 0.04}, {0.20, 25, 0.04},
+        {0.24, 50, 0.04}, {0.24, 51, 0.04},
+        {0.24, 49, 0.04}, {0.20, 95, 0.04},
+        {0.24, 75, 0.04}, {0.24, 75, 0.02},
+        {0.20, 67, 0.02}, {0.24, 67, 0.04, 0.075, 0.090},
     };
     for (const RatioCase& test : cases) {
-        CAPTURE(test.layer_height, test.mix_b_percent, test.lower_bound, test.upper_bound);
+        CAPTURE(test.layer_height, test.mix_b_percent, test.lower_bound);
         const std::vector<std::string> colors = {"#FF00FF", "#FFFFFF", "#0000FF", "#FFFF00"};
         MixedFilamentManager           manager;
         manager.add_custom_filament(1, 2, test.mix_b_percent, colors);
@@ -917,8 +912,7 @@ TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height b
         config.set("dithering_local_z_whole_objects", !painted);
         config.set("dithering_local_z_infill", true);
         config.set("dithering_local_z_direct_multicolor", direct_multicolor);
-        config.set("mixed_filament_height_lower_bound", test.lower_bound);
-        config.set("mixed_filament_height_upper_bound", test.upper_bound);
+        config.option<ConfigOptionFloats>("min_layer_height")->values.assign(4, test.lower_bound);
         config.set("mixed_color_layer_height_a", test.preferred_a);
         config.set("mixed_color_layer_height_b", test.preferred_b);
         config.set("enable_prime_tower", false);
@@ -932,47 +926,58 @@ TEST_CASE("Local-Z two-color sublayers preserve requested ratios within height b
         const auto& intervals = print_object->local_z_intervals();
         const auto& plans     = print_object->local_z_sublayer_plan();
         REQUIRE(intervals.size() > 1);
+        const bool          explicit_heights = test.preferred_a > 0.0 || test.preferred_b > 0.0;
+        std::vector<double> total_heights(4, 0.0);
         for (const LocalZInterval& interval : intervals) {
             if (interval.layer_id == 0)
                 continue; // The first layer intentionally remains unsplit.
             CAPTURE(interval.layer_id);
-            REQUIRE(interval.has_mixed_paint);
-            CHECK(interval.sublayer_count == test.pass_count * (independent_rows ? 2 : 1));
+            REQUIRE(interval.is_managed(plans));
             REQUIRE(interval.first_sublayer_idx + interval.sublayer_count <= plans.size());
             std::vector<double> component_heights(4, 0.0);
             for (size_t i = 0; i < interval.sublayer_count; ++i) {
                 const SubLayerPlan& plan = plans[interval.first_sublayer_idx + i];
                 REQUIRE(plan.split_interval);
                 CHECK(plan.flow_height >= test.lower_bound - 1e-6);
-                CHECK(plan.flow_height <= test.upper_bound + 1e-6);
+                CHECK(plan.flow_height <= 0.3 + 1e-6); // Physical nozzle limit for independent heights.
                 CHECK_THAT(plan.flow_height, WithinAbs(plan.z_hi - plan.z_lo, 1e-6));
-                CHECK(plan.z_lo >= interval.z_lo - 1e-6);
-                CHECK(plan.z_hi <= interval.z_hi + 1e-6);
+                CHECK(plan.print_z > interval.z_lo - 1e-6);
+                CHECK(plan.print_z <= interval.z_hi + 1e-6);
                 REQUIRE(plan.painted_masks_by_extruder.size() == component_heights.size());
                 for (size_t tool = 0; tool < component_heights.size(); ++tool)
                     if (!plan.painted_masks_by_extruder[tool].empty())
                         component_heights[tool] += plan.flow_height;
             }
-            CHECK_THAT(component_heights[0], WithinAbs(test.total_a, 1e-6));
-            CHECK_THAT(component_heights[1], WithinAbs(test.total_b, 1e-6));
-            CHECK_THAT(component_heights[0] + component_heights[1], WithinAbs(interval.base_height, 1e-6));
-            if (independent_rows) {
-                const bool explicit_heights = test.preferred_a > 0.0 || test.preferred_b > 0.0;
-                CHECK_THAT(component_heights[2], WithinAbs(explicit_heights ? test.total_a : test.total_b, 1e-6));
-                CHECK_THAT(component_heights[3], WithinAbs(explicit_heights ? test.total_b : test.total_a, 1e-6));
+            for (size_t tool = 0; tool < component_heights.size(); ++tool)
+                total_heights[tool] += component_heights[tool];
+            if (explicit_heights) {
+                // Explicit heights share three nominal-layer A/B/A planes across regions.
+                CHECK(interval.sublayer_count == 3);
+                CHECK_THAT(component_heights[0], WithinAbs(0.150, 1e-6));
+                CHECK_THAT(component_heights[1], WithinAbs(0.090, 1e-6));
+                if (independent_rows) {
+                    CHECK_THAT(component_heights[2], WithinAbs(0.150, 1e-6));
+                    CHECK_THAT(component_heights[3], WithinAbs(0.090, 1e-6));
+                }
             }
         }
-
-        MixedFilamentPreviewSettings preview;
-        preview.local_z_mode              = true;
-        preview.local_z_direct_multicolor = direct_multicolor;
-        preview.nominal_layer_height      = test.layer_height;
-        preview.mixed_lower_bound         = test.lower_bound;
-        preview.mixed_upper_bound         = test.upper_bound;
-        preview.preferred_a_height        = test.preferred_a;
-        preview.preferred_b_height        = test.preferred_b;
-        CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(manager.mixed_filaments().front(), preview) ==
-              int(std::lround(100. * test.total_b / test.layer_height)));
+        const double domain_height = intervals.back().z_hi - intervals.front().z_hi;
+        CHECK_THAT(total_heights[0] + total_heights[1], WithinAbs(domain_height, 1e-6));
+        if (!explicit_heights) {
+            // Independent cadence crosses nominal layer boundaries. Check the
+            // integrated ratio, allowing a partial cycle and one terminal adjustment.
+            CHECK_THAT(total_heights[1], WithinAbs(domain_height * test.mix_b_percent / 100.0, 2.0 * test.lower_bound + 1e-6));
+            if (independent_rows) {
+                CHECK_THAT(total_heights[2] + total_heights[3], WithinAbs(domain_height, 1e-6));
+                CHECK_THAT(total_heights[3], WithinAbs(domain_height * (100 - test.mix_b_percent) / 100.0, 2.0 * test.lower_bound + 1e-6));
+            }
+            MixedFilamentPreviewSettings preview;
+            preview.local_z_mode                     = true;
+            preview.local_z_direct_multicolor        = true; // SML normalizes old disabled direct-multicolor settings.
+            preview.local_z_independent_layer_height = true;
+            preview.nominal_layer_height             = test.layer_height;
+            CHECK(mixed_filament_effective_local_z_preview_mix_b_percent(manager.mixed_filaments().front(), preview) == test.mix_b_percent);
+        }
     }
 }
 
@@ -1201,7 +1206,7 @@ TEST_CASE("Local-Z layers preserve mixed infill when purge overrides are enabled
             plan.split_interval = false;
         expect_subdivision = false;
     }
-    SECTION("Missing plans keep ordinary flushing")
+    SECTION("Missing plans are rejected before publication")
     {
         plans.clear();
         expect_subdivision = false;
@@ -1209,6 +1214,10 @@ TEST_CASE("Local-Z layers preserve mixed infill when purge overrides are enabled
 
     // The second object must protect the whole shared layer, even the first object's support and infill.
     PrintObject *mixed_object = *(print.objects().end() - 1);
+    if (plans.empty()) {
+        CHECK_THROWS_AS(mixed_object->set_local_z_plan({interval}, std::move(plans)), std::invalid_argument);
+        return;
+    }
     mixed_object->set_local_z_plan({interval}, std::move(plans));
     ToolOrdering ordering(print, 0);
     LayerTools&  mixed_layer = ordering.tools_for_layer(0.4);
@@ -2436,7 +2445,7 @@ TEST_CASE("Mixed filament apply_gradient_settings modes", "[MixedFilament][Gradi
     mgr.add_custom_filament(1, 2, 50, colors);
 
     // Mode 0: layer-cycle
-    mgr.apply_gradient_settings(0, 0.04f, 0.16f, false);
+    mgr.apply_gradient_settings(0, false);
     for (const auto &mf : mgr.mixed_filaments()) {
         if (!mf.custom) {
             CHECK(mf.ratio_a == 1);
@@ -2445,7 +2454,7 @@ TEST_CASE("Mixed filament apply_gradient_settings modes", "[MixedFilament][Gradi
     }
 
     // Mode 1: height-weighted
-    mgr.apply_gradient_settings(1, 0.04f, 0.16f, false);
+    mgr.apply_gradient_settings(1, false);
     for (const auto &mf : mgr.mixed_filaments()) {
         CHECK(mf.ratio_a >= 0);
         CHECK(mf.ratio_b >= 0);
@@ -2516,7 +2525,7 @@ TEST_CASE("Mixed filament resolve advanced dithering", "[MixedFilament][Resolve]
 {
     const std::vector<std::string> colors = {"#FF0000", "#00FF00"};
     MixedFilamentManager mgr;
-    mgr.apply_gradient_settings(0, 0.04f, 0.16f, true);
+    mgr.apply_gradient_settings(0, true);
     mgr.add_custom_filament(1, 2, 50, colors);
 
     const size_t num_physical = 2;
@@ -2791,8 +2800,6 @@ TEST_CASE("Mixed filament effective_local_z_preview_mix_b_percent", "[MixedFilam
 
     preview.local_z_mode = true;
     preview.nominal_layer_height = 0.2;
-    preview.mixed_lower_bound = 0.04;
-    preview.mixed_upper_bound = 0.16;
     preview.preferred_a_height = 0.0;
     preview.preferred_b_height = 0.0;
 
@@ -2885,8 +2892,6 @@ TEST_CASE("Mixed filament apparent pair percentages bias on vs off", "[MixedFila
     MixedFilamentPreviewSettings preview;
     preview.local_z_mode = false;
     preview.nominal_layer_height = 0.2;
-    preview.mixed_lower_bound = 0.04;
-    preview.mixed_upper_bound = 0.16;
 
     const std::vector<double> nozzles = {0.4, 0.6};
 
@@ -4629,7 +4634,7 @@ TEST_CASE("add_batch at the filament cap emits per-entry zero ids instead of tru
     const std::vector<std::string> colors = {"#FF0000", "#00FF00", "#0000FF", "#FFFF00"};
     MixedFilamentManager mgr;
     // Fill to one slot below the cap: 4 physical + (kMax - 5) mixed = kMax - 1.
-    const size_t kMax = MAXIMUM_FILAMENT_NUMBER;
+    const size_t kMax = colors.size() + MAXIMUM_MIXED_FILAMENT_NUMBER;
     for (size_t i = 0; i < kMax - 5; ++i)
         mgr.mixed_filaments().push_back(make_row(1, 2));
     REQUIRE(mgr.total_filaments(4) == kMax - 1);
@@ -6691,6 +6696,7 @@ TEST_CASE("SML layer count stays consistent between gcode header and layer tags"
 
 TEST_CASE("GCodeProcessor layer endpoints table matches layer tags and covers moves", "[MixedFilament][LayerEndpoints]")
 {
+    GCodeTagFlavourGuard flavour(true);
     // Simulated SML gcode: nominal layers at ;Z: 0.2/0.4/0.6, with a Local-Z
     // sublayer printing at intermediate z 0.34 inside the second layer.
     // s_IsBBLPrinter defaults to true in the processor; Snapmaker printers run the
@@ -6763,6 +6769,7 @@ TEST_CASE("GCodeProcessor layer endpoints table matches layer tags and covers mo
 
 TEST_CASE("GCodeProcessor layer endpoints fold pre-layer moves and keep seam offsets", "[MixedFilament][LayerEndpoints]")
 {
+    GCodeTagFlavourGuard flavour(true);
     // Prime line before the first layer tag, then a closed WALL-OUTER loop: the
     // loop-ending extrude returns to the wall's first vertex, so the processor
     // inserts an EMoveType::Seam blip when the next non-perimeter move arrives.
@@ -6810,6 +6817,7 @@ TEST_CASE("GCodeProcessor layer endpoints fold pre-layer moves and keep seam off
 
 TEST_CASE("GCodeProcessor layer endpoints repair missing z and sentinel empty layers", "[MixedFilament][LayerEndpoints]")
 {
+    GCodeTagFlavourGuard flavour(true);
     // layer 1 has no z tag (falls back to the z of its own moves), layer 3 has
     // none either (inherits layer 2's z), layer 4 is empty (no move at all)
     const std::string gcode =
@@ -6854,10 +6862,7 @@ TEST_CASE("GCodeProcessor layer endpoints repair missing z and sentinel empty la
 TEST_CASE("GCodeProcessor layer endpoints compatible flavour z tag", "[MixedFilament][LayerEndpoints]")
 {
     // compatible (non-BBL) flavour: ";LAYER_CHANGE" + ";Z:" tags
-    struct FlavourGuard {
-        FlavourGuard() { GCodeProcessor::s_IsBBLPrinter = false; }
-        ~FlavourGuard() { GCodeProcessor::s_IsBBLPrinter = true; }
-    } guard;
+    GCodeTagFlavourGuard flavour(false);
 
     const std::string gcode =
         "G90\n"

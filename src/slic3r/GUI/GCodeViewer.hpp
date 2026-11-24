@@ -758,6 +758,9 @@ private:
     // pipeline the current toolpath data was built with; set by load(),
     // cleared by reset()
     bool m_use_gpu_pipeline{ false };
+    // one OOM notice per loaded toolpath (not per session): set by the render
+    // catch, cleared by reset() so a later load can notify again
+    bool m_render_oom_reported{ false };
 
     Layers m_layers;
     std::array<unsigned int, 2> m_layers_z_range;

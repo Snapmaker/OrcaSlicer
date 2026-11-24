@@ -496,8 +496,9 @@ void MixedColorMatchPanel::launch_recipe_match(size_t request_token, const wxCol
     const std::vector<std::string> physical_colors = m_physical_colors;
     const int min_pct = m_min_component_percent;
     auto destroyed = m_destroyed;
-    std::thread([this, destroyed, physical_colors, target, request_token, min_pct]() {
-        MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, target, min_pct);
+    const auto                     context         = build_mixed_filament_display_context(physical_colors);
+    std::thread([this, destroyed, physical_colors, target, request_token, min_pct, context]() {
+        MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, target, min_pct, 100, true, &context);
         wxGetApp().CallAfter([this, destroyed, target, recipe = std::move(recipe), request_token]() mutable {
             if (destroyed->load()) return;
             handle_recipe_result(request_token, target, std::move(recipe));

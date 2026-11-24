@@ -1,5 +1,6 @@
 #include "calib.hpp"
 #include "GCode.hpp"
+#include "GCode/GCodeProcessor.hpp"
 #include "Config.hpp"
 #include "Model.hpp"
 #include <cmath>
@@ -496,9 +497,11 @@ std::string CalibPressureAdvanceLine::print_pa_lines(double start_x, double star
     const double      slow = CalibPressureAdvance::speed_adjust(m_slow_speed);
     std::stringstream gcode;
     gcode << mp_gcodegen->writer().travel_to_z(m_height_layer + z_offset);
+    gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Height) << (m_height_layer + z_offset) << "\n";
     double y_pos = start_y;
 
-    // prime line
+    // Purge/first perimeter - acts as an anchor to the rest of the model
+    gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) << "Custom\n";
     gcode << writer.set_pressure_advance(0.0);
     auto prime_x = start_x;
     gcode << move_to(Vec2d(prime_x, y_pos + (num) * m_space_y), writer);
@@ -508,10 +511,13 @@ std::string CalibPressureAdvanceLine::print_pa_lines(double start_x, double star
     for (int i = 0; i < num; ++i) {
         gcode << writer.set_pressure_advance(start_pa + i * step_pa);
         gcode << move_to(Vec2d(start_x, y_pos + i * m_space_y), writer);
+        gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) << "Custom\n";
         gcode << writer.set_speed(slow);
         gcode << writer.extrude_to_xy(Vec2d(start_x + m_length_short, y_pos + i * m_space_y), e_per_mm * m_length_short);
+        gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) << "Outer wall\n";
         gcode << writer.set_speed(fast);
         gcode << writer.extrude_to_xy(Vec2d(start_x + m_length_short + m_length_long, y_pos + i * m_space_y), e_per_mm * m_length_long);
+        gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) << "Custom\n";
         gcode << writer.set_speed(slow);
         gcode << writer.extrude_to_xy(Vec2d(start_x + m_length_short + m_length_long + m_length_short, y_pos + i * m_space_y),
                                       e_per_mm * m_length_short);
@@ -535,9 +541,15 @@ std::string CalibPressureAdvanceLine::print_pa_lines(double start_x, double star
 
         const auto     box_start_x = start_x + m_length_short + m_length_long + m_length_short + m_line_width;
         DrawBoxOptArgs default_box_opt_args(2, m_height_layer, m_line_width, fast);
+        // Draw box
         default_box_opt_args.is_filled = true;
+        gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) << "Bottom surface\n";
         gcode << draw_box(writer, box_start_x, start_y - m_space_y,
                           number_spacing() * 8, (num + 1) * m_space_y, default_box_opt_args);
+        // Ensure numbers are shown on the next layer in gcode processor, as in reality
+        gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Layer_Change) << "\n";
+        gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Height) << (m_height_layer*2 + z_offset) << "\n";
+        gcode << ";" << GCodeProcessor::reserved_tag(GCodeProcessor::ETags::Role) << "Top surface\n";
         gcode << writer.travel_to_z(m_height_layer*2 + z_offset);
         for (int i = 0; i < num; i += 2) {
             gcode << draw_number(box_start_x + 3 + m_line_width, y_pos + i * m_space_y + m_space_y / 2, start_pa + i * step_pa, m_draw_digit_mode,

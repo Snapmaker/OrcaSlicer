@@ -26,7 +26,7 @@ static const coordf_t MIN_LAYER_HEIGHT_DEFAULT = 0.07;
 static const double LAYER_HEIGHT_CHANGE_STEP = 0.04;
 
 // Minimum layer height for the variable layer height algorithm.
-inline coordf_t min_layer_height_from_nozzle(const PrintConfig &print_config, int idx_nozzle)
+coordf_t Slicing::min_layer_height_from_nozzle(const PrintConfig& print_config, int idx_nozzle)
 {
     coordf_t min_layer_height = print_config.min_layer_height.get_at(idx_nozzle - 1);
     return (min_layer_height == 0.) ? MIN_LAYER_HEIGHT_DEFAULT : std::max(MIN_LAYER_HEIGHT, min_layer_height);
@@ -34,7 +34,7 @@ inline coordf_t min_layer_height_from_nozzle(const PrintConfig &print_config, in
 
 // Maximum layer height for the variable layer height algorithm, 3/4 of a nozzle dimaeter by default,
 // it should not be smaller than the minimum layer height.
-inline coordf_t max_layer_height_from_nozzle(const PrintConfig &print_config, int idx_nozzle)
+coordf_t Slicing::max_layer_height_from_nozzle(const PrintConfig& print_config, int idx_nozzle)
 {
     coordf_t min_layer_height = min_layer_height_from_nozzle(print_config, idx_nozzle);
     coordf_t max_layer_height = print_config.max_layer_height.get_at(idx_nozzle - 1);
@@ -94,21 +94,19 @@ SlicingParameters SlicingParameters::create_from_config(
     params.max_layer_height = std::numeric_limits<double>::max();
     if (object_config.enable_support.value || params.base_raft_layers > 0 || object_config.enforce_support_layers > 0) {
         // Has some form of support. Add the support layers to the minimum / maximum layer height limits.
-        params.min_layer_height = std::max(
-            min_layer_height_from_nozzle(print_config, object_config.support_filament), 
-            min_layer_height_from_nozzle(print_config, object_config.support_interface_filament));
-        params.max_layer_height = std::min(
-            max_layer_height_from_nozzle(print_config, object_config.support_filament), 
-            max_layer_height_from_nozzle(print_config, object_config.support_interface_filament));
+        params.min_layer_height        = std::max(Slicing::min_layer_height_from_nozzle(print_config, object_config.support_filament),
+                                                  Slicing::min_layer_height_from_nozzle(print_config, object_config.support_interface_filament));
+        params.max_layer_height        = std::min(Slicing::max_layer_height_from_nozzle(print_config, object_config.support_filament),
+                                                  Slicing::max_layer_height_from_nozzle(print_config, object_config.support_interface_filament));
         params.max_suport_layer_height = params.max_layer_height;
     }
     if (object_extruders.empty()) {
-        params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, 0));
-        params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, 0));
+        params.min_layer_height = std::max(params.min_layer_height, Slicing::min_layer_height_from_nozzle(print_config, 0));
+        params.max_layer_height = std::min(params.max_layer_height, Slicing::max_layer_height_from_nozzle(print_config, 0));
     } else {
         for (unsigned int extruder_id : object_extruders) {
-            params.min_layer_height = std::max(params.min_layer_height, min_layer_height_from_nozzle(print_config, extruder_id));
-            params.max_layer_height = std::min(params.max_layer_height, max_layer_height_from_nozzle(print_config, extruder_id));
+            params.min_layer_height = std::max(params.min_layer_height, Slicing::min_layer_height_from_nozzle(print_config, extruder_id));
+            params.max_layer_height = std::min(params.max_layer_height, Slicing::max_layer_height_from_nozzle(print_config, extruder_id));
         }
     }
     params.min_layer_height = std::min(params.min_layer_height, params.layer_height);

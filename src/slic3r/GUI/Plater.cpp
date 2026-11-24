@@ -1,6 +1,7 @@
 #include "Plater.hpp"
 #include "MixedFilamentDialog.hpp"
 #include "MixedFilamentBatchDialog.hpp"
+#include "MixedFilamentManageDialog.hpp"
 #include "MixedGradientSelector.hpp"
 #include "MixedColorMatchPanel.hpp"
 #include "MixedFilamentBadge.hpp"
@@ -54,6 +55,7 @@
 #include <wx/statbox.h>
 #include <wx/statbmp.h>
 #include <wx/filedlg.h>
+#include <wx/dirdlg.h>
 #include <wx/dnd.h>
 #include <wx/progdlg.h>
 #include <wx/string.h>
@@ -74,6 +76,11 @@
 #include <wx/richtooltip.h>
 #include <wx/custombgwin.h>
 #include <wx/popupwin.h>
+// Last in the block on purpose: windows.h defines min/max macros that would
+// otherwise leak into every header included below; WIN32_LEAN_AND_MEAN keeps
+// it to the core API (HeapCompact is included).
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 #endif
 #include <wx/clrpicker.h>
 #include <wx/spinctrl.h>
@@ -497,6 +504,42 @@ static void collect_filament_slots_from_model_config(
     }
 }
 
+/// \brief Collect the filament slots used through the feature-filament keys (wall/sparse/solid)
+///        of a global (plate-wide) config, under the "Default" semantics.
+/// \details - An explicit object/volume override (>= 1) is collected separately per object.
+///          - A global value >= 1 flows into every volume that has not overridden the key
+///            (neither at volume nor at object level).
+///          - A global "Default" (0) resolves to each non-overriding volume's own filament
+///            (volume "extruder" -> object "extruder" -> filament 1), mirroring the
+///            region-config fallback in region_config_from_model_volume().
+static void collect_feature_filament_slots_from_global_config(
+    const std::vector<const ModelObject*>& objects_on_plate,
+    const DynamicPrintConfig& global_config,
+    int num_filaments,
+    std::set<int>& used_slots_0_based)
+{
+    const std::vector<std::string> feature_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
+    for (const std::string& key : feature_keys) {
+        const ConfigOptionInt* option = global_config.option<ConfigOptionInt>(key);
+        if (option == nullptr)
+            continue;
+        for (const ModelObject* model_object : objects_on_plate) {
+            // An object-level override covers all volumes that do not override the key themselves.
+            if (model_object->config.has(key) && model_object->config.opt_int(key) >= 1)
+                continue;
+            for (const ModelVolume* model_volume : model_object->volumes) {
+                if (model_volume->config.has(key) && model_volume->config.opt_int(key) >= 1)
+                    continue; // volume-level override, collected separately
+                if (option->value >= 1 && option->value <= num_filaments)
+                    used_slots_0_based.insert(option->value - 1);
+                else if (option->value <= 0)
+                    // "Default": the volume's own filament (volume extruder -> object extruder -> 1).
+                    used_slots_0_based.insert(std::max(1, model_volume->extruder_id()) - 1);
+            }
+        }
+    }
+}
+
 /// \brief Collect the 0-based filament slots actually used by objects on the given plate.
 /// \details Mirrors the slot-collection block of Plater::check_filament_temp_mixing so that
 ///          cold-plate incompatibility checking uses the same definition of "used filament".
@@ -523,10 +566,12 @@ static void collect_used_filament_slots_on_plate(
 
     // Per-object + per-volume config
     bool uses_default_extruder = false;
+    std::vector<const ModelObject*> objects_on_plate;
     for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
         const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
         if (!model_object_is_on_plate(plate, obj_idx, model_object))
             continue;
+        objects_on_plate.push_back(model_object);
         collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
 
         // Height range modifiers override the extruder / feature filaments for
@@ -548,7 +593,7 @@ static void collect_used_filament_slots_on_plate(
     }
 
     // Plater working config — global features (always apply) + feature-specific
-    // keys (only when at least one object uses the default extruder).
+    // keys (resolved per object: global value or the object's own filament for "Default").
     if (plater_working_config != nullptr) {
         static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
         for (const char* key : always_collect) {
@@ -557,14 +602,7 @@ static void collect_used_filament_slots_on_plate(
                 used_slots_0_based.insert(option->value - 1);
         }
 
-        if (uses_default_extruder) {
-            static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-            for (const char* key : default_keys) {
-                const ConfigOptionInt* option = plater_working_config->option<ConfigOptionInt>(key);
-                if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                    used_slots_0_based.insert(option->value - 1);
-            }
-        }
+        collect_feature_filament_slots_from_global_config(objects_on_plate, *plater_working_config, num_filaments, used_slots_0_based);
     }
 
     // Resolve the global default extruder if any object on this plate uses extruder=0.
@@ -1333,6 +1371,7 @@ struct Sidebar::priv
     ScalableButton* m_color_mix_icon          = nullptr;
     ScalableButton* m_btn_add_color_mix       = nullptr;
     ScalableButton* m_btn_del_color_mix       = nullptr;
+    Button*           m_btn_manage_color_mix           = nullptr;
 
     wxStaticLine* m_staticline2;
     wxPanel* m_panel_project_title;
@@ -1583,54 +1622,6 @@ struct DynamicFilamentList : DynamicList
         }
         DynamicList::update();
     }
-};
-
-struct DynamicFilamentList1Based : DynamicFilamentList
-{
-    void apply_on(Choice *c) override
-    {
-        if (items.empty())
-            update(true);
-        auto cb = dynamic_cast<ComboBox *>(c->window);
-        auto n  = cb->GetSelection();
-        cb->Clear();
-        for (auto i : items) {
-            cb->Append(i.first, *i.second);
-        }
-        if (n < cb->GetCount())
-            cb->SetSelection(n);
-    }
-    wxString get_value(int index) override
-    {
-        wxString str;
-        str << index+1;
-        return str;
-    }
-    int index_of(wxString value) override
-    {
-        long n = 0;
-        if(!value.ToLong(&n))
-            return -1;
-        --n;
-        return (n >= 0 && n <= items.size()) ? int(n) : -1;
-    }
-    void update(bool force = false)
-    {
-        items.clear();
-        if (!force && m_choices.empty())
-            return;
-        auto icons = get_extruder_color_icons(true);
-        auto presets = wxGetApp().preset_bundle->filament_presets;
-        for (int i = 0; i < presets.size(); ++i) {
-            wxString str;
-            std::string type;
-            wxGetApp().preset_bundle->filaments.find_preset(presets[i])->get_filament_type(type);
-            str << type;
-            items.push_back({str, icons[i]});
-        }
-        DynamicList::update();
-    }
-
 };
 
 class MixedFilamentColorMatchDialog : public DPIDialog
@@ -1985,8 +1976,10 @@ private:
         const std::vector<std::string> physical_colors       = m_physical_colors;
         const int                      min_component_percent = m_min_component_percent;
         wxWeakRef<wxWindow>            weak_self(this);
-        std::thread([weak_self, physical_colors, requested_target, request_token, min_component_percent]() {
-            MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, requested_target, min_component_percent);
+        const auto                     context = build_mixed_filament_display_context(physical_colors);
+        std::thread([weak_self, physical_colors, requested_target, request_token, min_component_percent, context]() {
+            MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(physical_colors, requested_target, min_component_percent,
+                                                                               100, true, &context);
             wxGetApp().CallAfter([weak_self, requested_target, recipe = std::move(recipe), request_token]() mutable {
                 if (!weak_self)
                     return;
@@ -2157,7 +2150,6 @@ MixedColorMatchRecipeResult prompt_best_color_match_recipe(wxWindow*            
 }
 
 static DynamicFilamentList dynamic_filament_list;
-static DynamicFilamentList1Based dynamic_filament_list_1_based;
 
 static wxString nozzle_type_key_to_label(const std::string& key)
 {
@@ -2179,9 +2171,11 @@ Sidebar::Sidebar(Plater *parent)
 
     Choice::register_dynamic_list("support_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("support_interface_filament", &dynamic_filament_list);
-    Choice::register_dynamic_list("wall_filament", &dynamic_filament_list_1_based);
-    Choice::register_dynamic_list("sparse_infill_filament", &dynamic_filament_list_1_based);
-    Choice::register_dynamic_list("solid_infill_filament", &dynamic_filament_list_1_based);
+    // Feature-filament keys share the 0-based list whose first item is "Default"
+    // (0 = use the object/part filament when not overridden by the object).
+    Choice::register_dynamic_list("wall_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("sparse_infill_filament", &dynamic_filament_list);
+    Choice::register_dynamic_list("solid_infill_filament", &dynamic_filament_list);
     Choice::register_dynamic_list("wipe_tower_filament", &dynamic_filament_list);
 
     p->scrolled = new wxPanel(this);
@@ -2625,7 +2619,7 @@ Sidebar::Sidebar(Plater *parent)
         const size_t dialog_num_physical = wxGetApp().preset_bundle->filament_presets.size();
         {
             unsigned int vid = static_cast<unsigned int>(dialog_num_physical) + 1;
-            for (const MixedFilament& mf : mgr.mixed_filaments()) {
+            for (const MixedFilament& mf : mgr.mixed_filament_legacy_rows()) {
                 if (!mf.enabled || mf.deleted) continue;
                 dialog_vid_to_sid[vid++] = mf.stable_id;
             }
@@ -2682,7 +2676,7 @@ Sidebar::Sidebar(Plater *parent)
             // Snapshot the old mixed list BEFORE set_num_filaments clears
             // custom entries, so we can build a proper old→new remap that
             // covers the existing painted virtual IDs (review item R3).
-            const std::vector<MixedFilament> old_mixed_snapshot = pb->mixed_filaments.mixed_filaments();
+            const std::vector<MixedFilament> old_mixed_snapshot = pb->mixed_filaments.mixed_filament_legacy_rows();
 
             pb->set_num_filaments(static_cast<unsigned int>(target_count), std::vector<std::string>{});
 
@@ -2704,8 +2698,7 @@ Sidebar::Sidebar(Plater *parent)
             // every mixed row's virtual id even when the rows are structurally
             // identical (operator== ignores display_color), so run the remap
             // whenever the count changes, not only when the row list differs.
-            if (current_count != target_count ||
-                old_mixed_snapshot != pb->mixed_filaments.mixed_filaments()) {
+            if (current_count != target_count || old_mixed_snapshot != pb->mixed_filaments.mixed_filament_legacy_rows()) {
                 pb->update_mixed_filament_id_remap(
                     old_mixed_snapshot, current_count, target_count);
             }
@@ -2840,7 +2833,8 @@ Sidebar::Sidebar(Plater *parent)
                 MixedFilament* target     = nullptr;
                 unsigned int   target_vid = 0;
                 unsigned int   vid        = static_cast<unsigned int>(cur_num_physical) + 1;
-                for (MixedFilament& mf : mgr.mixed_filaments()) {
+                auto           editable_rows = mgr.mixed_filament_legacy_rows();
+                for (MixedFilament& mf : editable_rows) {
                     if (!mf.enabled || mf.deleted) continue;
                     if (mf.stable_id == sid) { target = &mf; target_vid = vid; break; }
                     ++vid;
@@ -2863,6 +2857,7 @@ Sidebar::Sidebar(Plater *parent)
                 target->ratio_a = 1;              // MATCH recipes are 1:1 (equal-ratio blend)
                 target->ratio_b = 1;
                 target->ui_mode = 2;              // MATCH
+                mgr.set_mixed_filament_legacy_row(size_t(target - editable_rows.data()), *target);
                 // Keep the mapping in the list, flagged: batch_entries and the
                 // assigned-id fixup skip it, apply no-ops on it (source ==
                 // target after translation below), and extract_batch_kept_sets
@@ -2894,7 +2889,7 @@ Sidebar::Sidebar(Plater *parent)
                     if (it == dialog_vid_to_sid.end() || it->second == 0) continue;
                     unsigned int cur_vid = 0;
                     unsigned int vid     = cur_num_physical + 1;
-                    for (const MixedFilament& mf : mgr.mixed_filaments()) {
+                    for (const MixedFilament& mf : mgr.mixed_filament_legacy_rows()) {
                         if (!mf.enabled || mf.deleted) continue;
                         if (mf.stable_id == it->second) { cur_vid = vid; break; }
                         ++vid;
@@ -3139,7 +3134,7 @@ Sidebar::Sidebar(Plater *parent)
     ScalableButton* add_btn = new ScalableButton(p->m_panel_physical_filaments_title, wxID_ANY, "add_filament");
     add_btn->SetToolTip(_L("Add one filament"));
     add_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e){
-        if (p->combos_filament.size() >= MAXIMUM_EXTRUDER_NUMBER)
+        if (p->combos_filament.size() >= MAXIMUM_PHYSICAL_FILAMENT_NUMBER)
             return;
         PresetBundle* pb = wxGetApp().preset_bundle;
         if (!pb || pb->mixed_filaments.total_filaments(p->combos_filament.size()) >= MAXIMUM_FILAMENT_NUMBER)
@@ -3226,10 +3221,11 @@ Sidebar::Sidebar(Plater *parent)
             // Add a custom pattern filament (will be configured by user)
             mgr.add_custom_filament(1, 2, 50, colors);
             // Set manual pattern for the newly added filament
-            auto &mfs = mgr.mixed_filaments();
+            auto mfs = mgr.mixed_filament_legacy_rows();
             if (!mfs.empty()) {
                 mfs.back().manual_pattern = "12";
                 mfs.back().custom = true;
+                mgr.set_mixed_filament_legacy_row(mfs.size() - 1, mfs.back());
             }
             // Persist the custom entries so they survive the clear/load cycle in update_mixed_filament_panel
             if (ConfigOptionString *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
@@ -3264,7 +3260,7 @@ Sidebar::Sidebar(Plater *parent)
         auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
         mgr.set_display_context(display_context);
         mgr.add_custom_filament(recipe.component_a, recipe.component_b, recipe.mix_b_percent, colors);
-        auto &mfs = mgr.mixed_filaments();
+        auto mfs = mgr.mixed_filament_legacy_rows();
         if (!mfs.empty()) {
             MixedFilament &created = mfs.back();
             created.manual_pattern = recipe.manual_pattern;
@@ -3275,6 +3271,7 @@ Sidebar::Sidebar(Plater *parent)
             created.distribution_mode = recipe.gradient_component_ids.empty() ? int(MixedFilament::Simple) : int(MixedFilament::LayerCycle);
             created.custom = true;
             created.display_color = compute_color_match_recipe_display_color(recipe, display_context).GetAsString(wxC2S_HTML_SYNTAX).ToStdString();
+            mgr.set_mixed_filament_legacy_row(mfs.size() - 1, created);
         }
 
         if (ConfigOptionString *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
@@ -3930,6 +3927,8 @@ void Sidebar::msw_rescale()
     p->m_printer_setting->msw_rescale();
     p->m_filament_icon->msw_rescale();
     p->m_color_mix_icon->msw_rescale();
+    if (p->m_btn_manage_color_mix)
+        p->m_btn_manage_color_mix->Rescale();
     p->m_bpButton_add_filament->msw_rescale();
     p->m_bpButton_del_filament->msw_rescale();
     p->m_bpButton_ams_filament->msw_rescale();
@@ -4008,6 +4007,8 @@ void Sidebar::sys_color_changed()
     p->m_printer_setting->msw_rescale();
     p->m_filament_icon->msw_rescale();
     p->m_color_mix_icon->msw_rescale();
+    if (p->m_btn_manage_color_mix)
+        p->m_btn_manage_color_mix->Rescale();
     p->m_bpButton_add_filament->msw_rescale();
     p->m_bpButton_del_filament->msw_rescale();
     p->m_bpButton_ams_filament->msw_rescale();
@@ -4081,14 +4082,14 @@ void Sidebar::jump_to_option(size_t selected)
 }
 
 // BBS. Move logic from Plater::on_extruders_change() to Sidebar::on_filaments_change().
-void Sidebar::on_filaments_change(size_t num_filaments)
+void Sidebar::on_filaments_change(size_t num_filaments, bool sync_mixed)
 {
     auto& choices = combos_filament();
 
     if (num_filaments == choices.size()) {
         // Project load may keep the same physical filament count while mixed
         // definitions changed. Refresh mixed panel even without count changes.
-        const bool sync_manager = !p->m_skip_mixed_filament_sync_once;
+        const bool sync_manager            = sync_mixed && !p->m_skip_mixed_filament_sync_once;
         p->m_skip_mixed_filament_sync_once = false;
         update_ui_from_settings();
         // Colors may be replaced in place without a count change (e.g. 3MF import): repaint the combos.
@@ -4186,13 +4187,14 @@ void Sidebar::on_filaments_change(size_t num_filaments)
     update_mixed_filament_panel();
     update_color_mix_panel();
 
-    // Disable add buttons when combined filament limit reached
+    // Disable add buttons when the physical or combined filament limit is reached
     if (PresetBundle *pb = wxGetApp().preset_bundle) {
-        const bool can_add = pb->mixed_filaments.total_filaments(combos_filament().size()) < MAXIMUM_FILAMENT_NUMBER;
+        const bool can_add = combos_filament().size() < MAXIMUM_PHYSICAL_FILAMENT_NUMBER &&
+                             pb->mixed_filaments.total_filaments(combos_filament().size()) < MAXIMUM_FILAMENT_NUMBER;
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
-            p->m_btn_add_color_mix->Enable(can_add);
+            p->m_btn_add_color_mix->Enable(pb->mixed_filaments.registered_count() < MAXIMUM_MIXED_FILAMENT_NUMBER);
     }
 }
 
@@ -4371,13 +4373,6 @@ private:
                                                    const std::vector<int> &weights,
                                                    const MixedFilamentPreviewSettings &preview_settings);
     static std::string blend_from_sequence(const std::vector<std::string> &colors, const std::vector<unsigned int> &seq, const std::string &fallback);
-    static std::vector<double> build_local_z_preview_pass_heights(double nominal_layer_height,
-                                                                  double lower_bound,
-                                                                  double upper_bound,
-                                                                  double preferred_a_height,
-                                                                  double preferred_b_height,
-                                                                  int mix_b_percent,
-                                                                  int max_sublayers_limit);
 };
 
 class MixedMixPreview : public wxPanel
@@ -4951,248 +4946,7 @@ std::vector<unsigned int> MixedFilamentConfigPanel::build_weighted_multi_sequenc
 }
 
 
-std::vector<double> MixedFilamentConfigPanel::build_local_z_preview_pass_heights(double nominal_layer_height,
-                                                                                 double lower_bound,
-                                                                                 double upper_bound,
-                                                                                 double preferred_a_height,
-                                                                                 double preferred_b_height,
-                                                                                 int mix_b_percent,
-                                                                                 int max_sublayers_limit)
-{
-    if (nominal_layer_height <= EPSILON)
-        return {};
 
-    const double base_height = nominal_layer_height;
-    const double lo = std::max<double>(0.01, lower_bound);
-    const double hi = std::max<double>(lo, upper_bound);
-    const size_t max_passes_limit = max_sublayers_limit >= 2 ? size_t(max_sublayers_limit) : size_t(0);
-
-    auto fit_pass_heights_to_interval = [](std::vector<double> &passes, double total_height, double local_lo, double local_hi) {
-        if (passes.empty() || total_height <= EPSILON)
-            return false;
-
-        const auto within = [local_lo, local_hi](double value) {
-            return value >= local_lo - 1e-6 && value <= local_hi + 1e-6;
-        };
-
-        double sum = 0.0;
-        for (const double h : passes)
-            sum += h;
-
-        double delta = total_height - sum;
-        if (std::abs(delta) > 1e-6) {
-            if (delta > 0.0) {
-                for (double &h : passes) {
-                    if (delta <= 1e-6)
-                        break;
-                    const double room = local_hi - h;
-                    if (room <= 1e-6)
-                        continue;
-                    const double take = std::min(room, delta);
-                    h += take;
-                    delta -= take;
-                }
-            } else {
-                for (auto it = passes.rbegin(); it != passes.rend() && delta < -1e-6; ++it) {
-                    const double room = *it - local_lo;
-                    if (room <= 1e-6)
-                        continue;
-                    const double take = std::min(room, -delta);
-                    *it -= take;
-                    delta += take;
-                }
-            }
-        }
-
-        if (std::abs(delta) > 1e-6)
-            return false;
-        return std::all_of(passes.begin(), passes.end(), within);
-    };
-
-    auto build_uniform = [&fit_pass_heights_to_interval, base_height, lo, hi, max_passes_limit]() {
-        std::vector<double> out;
-        size_t min_passes = size_t(std::max<double>(1.0, std::ceil((base_height - EPSILON) / hi)));
-        size_t max_passes = size_t(std::max<double>(1.0, std::floor((base_height + EPSILON) / lo)));
-        size_t pass_count = min_passes;
-
-        if (max_passes >= min_passes) {
-            const double target_step = 0.5 * (lo + hi);
-            const size_t target_passes =
-                size_t(std::max<double>(1.0, std::llround(base_height / std::max<double>(target_step, EPSILON))));
-            pass_count = std::clamp(target_passes, min_passes, max_passes);
-        }
-
-        if (max_passes_limit > 0 && pass_count > max_passes_limit)
-            pass_count = max_passes_limit;
-
-        if (pass_count == 1 && base_height >= 2.0 * lo - EPSILON && max_passes >= 2)
-            pass_count = 2;
-
-        if (pass_count <= 1) {
-            out.emplace_back(base_height);
-            return out;
-        }
-
-        out.assign(pass_count, base_height / double(pass_count));
-        double accumulated = 0.0;
-        for (size_t i = 0; i + 1 < out.size(); ++i)
-            accumulated += out[i];
-        out.back() = std::max<double>(EPSILON, base_height - accumulated);
-        if (!fit_pass_heights_to_interval(out, base_height, lo, hi) && max_passes_limit == 0) {
-            out.assign(pass_count, base_height / double(pass_count));
-            accumulated = 0.0;
-            for (size_t i = 0; i + 1 < out.size(); ++i)
-                accumulated += out[i];
-            out.back() = std::max<double>(EPSILON, base_height - accumulated);
-        }
-        return out;
-    };
-
-    auto build_alternating = [&build_uniform, &fit_pass_heights_to_interval, base_height, lo, hi, max_passes_limit](double gradient_h_a, double gradient_h_b) {
-        if (base_height < 2.0 * lo - EPSILON)
-            return std::vector<double>{ base_height };
-
-        const double cycle_h = std::max<double>(EPSILON, gradient_h_a + gradient_h_b);
-        const double ratio_a = std::clamp(gradient_h_a / cycle_h, 0.0, 1.0);
-
-        size_t min_passes = size_t(std::max<double>(2.0, std::ceil((base_height - EPSILON) / hi)));
-        if ((min_passes % 2) != 0)
-            ++min_passes;
-
-        size_t max_passes = size_t(std::max<double>(2.0, std::floor((base_height + EPSILON) / lo)));
-        if ((max_passes % 2) != 0)
-            --max_passes;
-        if (max_passes_limit > 0) {
-            size_t capped_limit = std::max<size_t>(2, max_passes_limit);
-            if ((capped_limit % 2) != 0)
-                --capped_limit;
-            if (capped_limit >= 2)
-                max_passes = std::min(max_passes, capped_limit);
-        }
-        if (max_passes < 2)
-            return build_uniform();
-        if (min_passes > max_passes)
-            min_passes = max_passes;
-        if (min_passes < 2)
-            min_passes = 2;
-        if ((min_passes % 2) != 0)
-            ++min_passes;
-        if (min_passes > max_passes)
-            return build_uniform();
-
-        const double target_step = 0.5 * (lo + hi);
-        size_t target_passes =
-            size_t(std::max<double>(2.0, std::llround(base_height / std::max<double>(target_step, EPSILON))));
-        if ((target_passes % 2) != 0) {
-            const size_t round_up = (target_passes < max_passes) ? (target_passes + 1) : max_passes;
-            const size_t round_down = (target_passes > min_passes) ? (target_passes - 1) : min_passes;
-            if (round_up > max_passes)
-                target_passes = round_down;
-            else if (round_down < min_passes)
-                target_passes = round_up;
-            else
-                target_passes = ((round_up - target_passes) <= (target_passes - round_down)) ? round_up : round_down;
-        }
-        target_passes = std::clamp(target_passes, min_passes, max_passes);
-
-        bool                has_best           = false;
-        std::vector<double> best_passes;
-        double              best_ratio_error   = 0.0;
-        size_t              best_pass_distance = 0;
-        double              best_max_height    = 0.0;
-        size_t              best_pass_count    = 0;
-
-        for (size_t pass_count = min_passes; pass_count <= max_passes; pass_count += 2) {
-            const size_t pair_count = pass_count / 2;
-            if (pair_count == 0)
-                continue;
-            const double pair_h = base_height / double(pair_count);
-
-            const double h_a_min = std::max(lo, pair_h - hi);
-            const double h_a_max = std::min(hi, pair_h - lo);
-            if (h_a_min > h_a_max + EPSILON)
-                continue;
-
-            const double h_a = std::clamp(pair_h * ratio_a, h_a_min, h_a_max);
-            const double h_b = pair_h - h_a;
-
-            std::vector<double> out;
-            out.reserve(pass_count);
-            for (size_t pair_idx = 0; pair_idx < pair_count; ++pair_idx) {
-                out.emplace_back(h_a);
-                out.emplace_back(h_b);
-            }
-            if (!fit_pass_heights_to_interval(out, base_height, lo, hi))
-                continue;
-
-            const double ratio_actual = (h_a + h_b > EPSILON) ? (h_a / (h_a + h_b)) : 0.5;
-            const double ratio_error  = std::abs(ratio_actual - ratio_a);
-            const size_t pass_distance =
-                (pass_count > target_passes) ? (pass_count - target_passes) : (target_passes - pass_count);
-            const double max_height = std::max(h_a, h_b);
-
-            const bool better_ratio         = !has_best || (ratio_error + 1e-6 < best_ratio_error);
-            const bool similar_ratio        = has_best && std::abs(ratio_error - best_ratio_error) <= 1e-6;
-            const bool better_distance      = similar_ratio && (pass_distance < best_pass_distance);
-            const bool similar_distance     = similar_ratio && (pass_distance == best_pass_distance);
-            const bool better_max_height    = similar_distance && (max_height + 1e-6 < best_max_height);
-            const bool similar_max_height   = similar_distance && std::abs(max_height - best_max_height) <= 1e-6;
-            const bool better_pass_count    = similar_max_height && (pass_count > best_pass_count);
-
-            if (better_ratio || better_distance || better_max_height || better_pass_count) {
-                has_best = true;
-                best_passes = std::move(out);
-                best_ratio_error = ratio_error;
-                best_pass_distance = pass_distance;
-                best_max_height = max_height;
-                best_pass_count = pass_count;
-            }
-        }
-
-        return has_best ? best_passes : build_uniform();
-    };
-
-    if (preferred_a_height > EPSILON || preferred_b_height > EPSILON) {
-        std::vector<double> cadence_unit;
-        if (preferred_a_height > EPSILON)
-            cadence_unit.push_back(std::clamp(preferred_a_height, lo, hi));
-        if (preferred_b_height > EPSILON)
-            cadence_unit.push_back(std::clamp(preferred_b_height, lo, hi));
-
-        if (!cadence_unit.empty()) {
-            std::vector<double> out;
-            out.reserve(size_t(std::ceil(base_height / lo)) + 2);
-
-            double z_used = 0.0;
-            size_t idx = 0;
-            size_t guard = 0;
-            while (z_used + cadence_unit[idx] < base_height - EPSILON && guard++ < 100000) {
-                out.push_back(cadence_unit[idx]);
-                z_used += cadence_unit[idx];
-                idx = (idx + 1) % cadence_unit.size();
-            }
-
-            const double remainder = base_height - z_used;
-            if (remainder > EPSILON)
-                out.push_back(remainder);
-
-            if (fit_pass_heights_to_interval(out, base_height, lo, hi) &&
-                (max_passes_limit == 0 || out.size() <= max_passes_limit))
-                return out;
-        }
-
-        if (preferred_a_height > EPSILON && preferred_b_height > EPSILON)
-            return build_alternating(preferred_a_height, preferred_b_height);
-        return build_uniform();
-    }
-
-    const int mix_b = std::clamp(mix_b_percent, 0, 100);
-    const double pct_b = double(mix_b) / 100.0;
-    const double pct_a = 1.0 - pct_b;
-    const double gradient_h_a = lo + pct_a * (hi - lo);
-    const double gradient_h_b = lo + pct_b * (hi - lo);
-    return build_alternating(gradient_h_a, gradient_h_b);
-}
 
 int MixedFilamentConfigPanel::effective_local_z_preview_mix_b_percent(const MixedFilament &mf,
                                                                       const MixedFilamentPreviewSettings &preview_settings)
@@ -5557,13 +5311,7 @@ std::string MixedFilamentConfigPanel::summarize_local_z_breakdown(const MixedFil
         ss << "Local-Z pair split: requested F" << mf.component_a << "/F" << mf.component_b
            << ' ' << pct_a << '/' << pct_b;
         if (preview_settings.local_z_mode) {
-            const std::vector<double> effective_passes = build_local_z_preview_pass_heights(preview_settings.nominal_layer_height,
-                                                                                            preview_settings.mixed_lower_bound,
-                                                                                            preview_settings.mixed_upper_bound,
-                                                                                            preview_settings.preferred_a_height,
-                                                                                            preview_settings.preferred_b_height,
-                                                                                            mf.mix_b_percent,
-                                                                                            0);
+            const std::vector<double> effective_passes = mixed_filament_preview_pass_heights(preview_settings, mf.mix_b_percent);
             if (!effective_passes.empty()) {
                 const int effective_pct_b = effective_local_z_preview_mix_b_percent(mf, preview_settings);
                 ss << ", effective " << (100 - effective_pct_b) << '/' << effective_pct_b
@@ -6515,6 +6263,11 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
     p->m_color_mix_icon = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "color_palette");
     auto* label = new Label(p->m_panel_color_mix_title, _L("Color Mixing"), LB_PROPAGATE_MOUSE_EVENT);
 
+    p->m_btn_manage_color_mix = new Button(p->m_panel_color_mix_title, _L("Manage"), "color_palette", 0, 14);
+    p->m_btn_manage_color_mix->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
+    p->m_btn_manage_color_mix->SetToolTip(_L("Browse mixed colors made from the current filaments and choose combinations to add."));
+    p->m_btn_manage_color_mix->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { show_mixed_filament_manager(this); });
+
     p->m_btn_del_color_mix = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "delete_filament");
     p->m_btn_add_color_mix = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "add_filament");
 
@@ -6526,6 +6279,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
     h_title->AddSpacer(FromDIP(SidebarProps::ElementSpacing()));
     h_title->Add(label, 0, wxALIGN_CENTER_VERTICAL);
     h_title->AddStretchSpacer();
+    h_title->Add(p->m_btn_manage_color_mix, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     h_title->Add(p->m_btn_del_color_mix, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(4));
     h_title->Add(p->m_btn_add_color_mix, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
     auto* white_right_c = new wxPanel(p->m_panel_color_mix_title, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(SidebarProps::ContentMargin()), -1));
@@ -6564,10 +6318,11 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
         if (dlg.ShowModal() != wxID_OK) return;
 
         auto& mgr = pb->mixed_filaments;
-        if (mgr.total_filaments(colors.size()) >= MAXIMUM_FILAMENT_NUMBER) return;
+        if (mgr.registered_count() >= MAXIMUM_MIXED_FILAMENT_NUMBER)
+            return;
         const MixedFilament& r = dlg.GetResult();
         mgr.add_custom_filament(r.component_a, r.component_b, r.mix_b_percent, colors);
-        auto& mfs = mgr.mixed_filaments();
+        auto mfs = mgr.mixed_filament_legacy_rows();
         if (!mfs.empty()) {
             mfs.back().distribution_mode       = r.distribution_mode;
             mfs.back().manual_pattern          = r.manual_pattern;
@@ -6578,10 +6333,13 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
             mfs.back().local_z_max_sublayers       = r.local_z_max_sublayers;
             mfs.back().gradient_enabled            = r.gradient_enabled;
             mfs.back().gradient_start              = r.gradient_start;
-            mfs.back().gradient_end                = r.gradient_end;
+            mfs.back().gradient_end                  = r.gradient_end;
+            mfs.back().gradient_stop_positions       = r.gradient_stop_positions;
+            mfs.back().gradient_solid_widths       = r.gradient_solid_widths;
             mfs.back().display_color             = r.display_color;
             mfs.back().ui_mode                       = r.ui_mode;
             mfs.back().custom                  = true;
+            mgr.set_mixed_filament_legacy_row(mfs.size() - 1, mfs.back());
         }
         if (auto* opt = pb->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
             opt->value = mgr.serialize_custom_entries();
@@ -6597,10 +6355,11 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
         if (!pb) return;
 
         auto& mgr = pb->mixed_filaments;
-        auto& mfs = mgr.mixed_filaments();
+        auto  mfs = mgr.mixed_filament_legacy_rows();
         for (int i = static_cast<int>(mfs.size()) - 1; i >= 0; --i) {
             if (mfs[i].custom && !mfs[i].deleted) {
                 mfs[i].deleted = true;
+                mgr.set_mixed_filament_legacy_row(size_t(i), mfs[i]);
                 break;
             }
         }
@@ -6648,12 +6407,6 @@ void Sidebar::update_color_mix_panel()
                 nozzle_diameters[i] = std::max(0.05, opt->get_at(unsigned(std::min(i, opt_count - 1))));
     }
 
-    float lower_bound = 0.04f, upper_bound = 0.16f;
-    if (preset_bundle->project_config.has("mixed_filament_height_lower_bound"))
-        lower_bound = std::max(0.01f, float(preset_bundle->project_config.opt_float("mixed_filament_height_lower_bound")));
-    if (preset_bundle->project_config.has("mixed_filament_height_upper_bound"))
-        upper_bound = std::max(lower_bound, float(preset_bundle->project_config.opt_float("mixed_filament_height_upper_bound")));
-
     bool local_z_mode = false;
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("dithering_local_z_mode"))
         local_z_mode = opt->value;
@@ -6666,15 +6419,11 @@ void Sidebar::update_color_mix_panel()
     if (const ConfigOptionBool* opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_component_bias_enabled"))
         component_bias_enabled = opt->value;
 
-    const MixedFilamentPreviewSettings preview_settings {
-        0.2f, lower_bound, upper_bound, 0.f, 0.f, local_z_mode, local_z_direct_multicolor, 1
-    };
-    const MixedFilamentDisplayContext display_context {
-        num_physical, physical_colors, nozzle_diameters, preview_settings, component_bias_enabled
-    };
+    const MixedFilamentDisplayContext display_context = build_mixed_filament_display_context(physical_colors);
+    const MixedFilamentPreviewSettings &preview_settings = display_context.preview_settings;
     preset_bundle->mixed_filaments.set_display_context(display_context);
 
-    auto& mfs = preset_bundle->mixed_filaments.mixed_filaments();
+    auto& mfs         = preset_bundle->mixed_filaments.mixed_filament_legacy_rows();
     bool any_visible = false;
     for (const MixedFilament& mf : mfs)
         if (!mf.deleted) { any_visible = true; break; }
@@ -6699,12 +6448,9 @@ void Sidebar::update_color_mix_panel()
 
     int visible_idx = 0;
     for (size_t i = 0; i < mfs.size(); ++i) {
-        MixedFilament& mf = mfs[i];
+        const MixedFilament& mf = mfs[i];
         if (mf.deleted) continue;
 
-        const std::string synced_color = compute_mixed_filament_display_color(mf, display_context);
-        if (mf.display_color != synced_color)
-            mf.display_color = synced_color;
 
         const int virtual_id = static_cast<int>(num_physical) + visible_idx + 1;
 
@@ -6714,12 +6460,18 @@ void Sidebar::update_color_mix_panel()
 
         const std::string normalized_pattern_cm = MixedFilamentManager::normalize_manual_pattern(mf.manual_pattern);
         std::vector<unsigned int> gradient_ids = MixedFilamentManager::decode_gradient_component_ids(mf.gradient_component_ids, 0);
-        const bool z_gradient_tile = mf.gradient_enabled && mf.component_a != mf.component_b
-                                  && normalized_pattern_cm.empty() && gradient_ids.size() < 3;
+        const bool z_gradient_tile = mf.gradient_enabled && mf.component_a != mf.component_b && normalized_pattern_cm.empty();
         wxString lbl;
         if (!normalized_pattern_cm.empty())
             lbl = wxString(summarize_cycle_pattern_text(normalized_pattern_cm, mf, int(num_physical)));
-        else if (gradient_ids.size() >= 3) {
+        else if (z_gradient_tile) {
+            const auto ids = mixed_gradient_components(mf, num_physical);
+            for (size_t i = 0; i < ids.size(); ++i) {
+                if (i)
+                    lbl += " -> ";
+                lbl += wxString::Format("F%u", ids[i]);
+            }
+        } else if (gradient_ids.size() >= 3) {
             // parse weights
             const size_t n = gradient_ids.size();
             std::vector<int> weights;
@@ -6755,7 +6507,7 @@ void Sidebar::update_color_mix_panel()
                 for (unsigned int fid : gradient_ids)
                     lbl += wxString::Format("+F%u", fid);
         }
-        
+
         bool has_error = !is_filament_compatible(mf);
         
         // Create a panel with border for the text
@@ -6817,7 +6569,7 @@ void Sidebar::update_color_mix_panel()
             const std::vector<std::string> colors = co ? co->values : std::vector<std::string>{};
             if (colors.size() < 2) return;
             auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
-            auto& mfs2 = mgr.mixed_filaments();
+            auto  mfs2 = mgr.mixed_filament_legacy_rows();
             if (i >= mfs2.size()) return;
             MixedFilamentDialog dlg(wxGetApp().mainframe, colors, mfs2[i]);
             if (dlg.ShowModal() != wxID_OK) return;
@@ -6834,10 +6586,13 @@ void Sidebar::update_color_mix_panel()
             mfs2[i].local_z_max_sublayers      = r.local_z_max_sublayers;
             mfs2[i].gradient_enabled           = r.gradient_enabled;
             mfs2[i].gradient_start             = r.gradient_start;
-            mfs2[i].gradient_end               = r.gradient_end;
+            mfs2[i].gradient_end                  = r.gradient_end;
+            mfs2[i].gradient_stop_positions       = r.gradient_stop_positions;
+            mfs2[i].gradient_solid_widths       = r.gradient_solid_widths;
             mfs2[i].display_color               = r.display_color;
             mfs2[i].ui_mode                       = r.ui_mode;
             mfs2[i].custom                      = true;
+            mgr.set_mixed_filament_legacy_row(i, mfs2[i]);
             if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
             wxGetApp().plater()->post_slice_state_change_update();
@@ -6866,7 +6621,7 @@ void Sidebar::update_color_mix_panel()
                 const std::vector<std::string> colors = co ? co->values : std::vector<std::string>{};
                 if (colors.size() < 2) return;
                 auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
-                auto& mfs2 = mgr.mixed_filaments();
+                auto  mfs2 = mgr.mixed_filament_legacy_rows();
                 if (i >= mfs2.size()) return;
                 MixedFilamentDialog dlg(wxGetApp().mainframe, colors, mfs2[i]);
                 if (dlg.ShowModal() != wxID_OK) return;
@@ -6883,9 +6638,12 @@ void Sidebar::update_color_mix_panel()
                 mfs2[i].local_z_max_sublayers      = r.local_z_max_sublayers;
                 mfs2[i].gradient_enabled           = r.gradient_enabled;
                 mfs2[i].gradient_start             = r.gradient_start;
-                mfs2[i].gradient_end               = r.gradient_end;
+                mfs2[i].gradient_end                  = r.gradient_end;
+                mfs2[i].gradient_stop_positions       = r.gradient_stop_positions;
+                mfs2[i].gradient_solid_widths       = r.gradient_solid_widths;
                 mfs2[i].ui_mode                       = r.ui_mode;
                 mfs2[i].custom                      = true;
+                mgr.set_mixed_filament_legacy_row(i, mfs2[i]);
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr.serialize_custom_entries();
                 wxGetApp().plater()->post_slice_state_change_update();
@@ -6934,7 +6692,7 @@ void Sidebar::update_color_mix_panel()
             
             // Add other mixed filaments as targets
             auto& mgr = wxGetApp().preset_bundle->mixed_filaments;
-            auto& mfs_for_menu = mgr.mixed_filaments();
+            auto&        mfs_for_menu = mgr.mixed_filament_legacy_rows();
             const size_t total_mixed = mfs_for_menu.size();
             
             // Get icon dimensions for mixed filaments
@@ -6988,9 +6746,13 @@ void Sidebar::update_color_mix_panel()
             menu.Append(del_id, _L("Delete"));
             menu.Bind(wxEVT_MENU, [this, i, num_physical](wxCommandEvent&) {
                 auto& mgr2 = wxGetApp().preset_bundle->mixed_filaments;
-                auto& mfs2 = mgr2.mixed_filaments();
+                auto                             mfs2      = mgr2.mixed_filament_legacy_rows();
                 const std::vector<MixedFilament> old_mixed = mfs2;
-                if (i < mfs2.size()) { mfs2[i].deleted = true; mfs2[i].enabled = false; }
+                if (i < mfs2.size()) {
+                    mfs2[i].deleted = true;
+                    mfs2[i].enabled = false;
+                    mgr2.set_mixed_filament_legacy_row(i, mfs2[i]);
+                }
                 if (auto* opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                     opt->value = mgr2.serialize_custom_entries();
                 wxGetApp().preset_bundle->update_mixed_filament_id_remap(old_mixed, num_physical, num_physical, i);
@@ -7057,13 +6819,14 @@ void Sidebar::update_color_mix_panel()
     });
     p->m_panel_color_mix_content->Refresh();
 
-    // Disable add buttons when combined filament limit reached
+    // Disable add buttons when the physical or combined filament limit is reached
     if (preset_bundle) {
-        const bool can_add = preset_bundle->mixed_filaments.total_filaments(num_physical) < MAXIMUM_FILAMENT_NUMBER;
+        const bool can_add = num_physical < MAXIMUM_PHYSICAL_FILAMENT_NUMBER &&
+                             preset_bundle->mixed_filaments.total_filaments(num_physical) < MAXIMUM_FILAMENT_NUMBER;
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
-            p->m_btn_add_color_mix->Enable(can_add);
+            p->m_btn_add_color_mix->Enable(preset_bundle->mixed_filaments.registered_count() < MAXIMUM_MIXED_FILAMENT_NUMBER);
     }
 }
 
@@ -7145,11 +6908,13 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         }
         return fallback;
     };
-    auto get_mixed_float = [preset_bundle, print_cfg](const std::string &key, float fallback) {
+    // ConfigOptionFloat stores doubles. Preserve that precision through sidebar
+    // refreshes, or unchanged values such as 0.06 acquire a false dirty/reset state.
+    auto get_mixed_float = [preset_bundle, print_cfg](const std::string &key, double fallback) {
         if (preset_bundle->project_config.has(key))
-            return float(preset_bundle->project_config.opt_float(key));
+            return preset_bundle->project_config.opt_float(key);
         if (print_cfg && print_cfg->has(key))
-            return float(print_cfg->opt_float(key));
+            return print_cfg->opt_float(key);
         return fallback;
     };
     auto get_mixed_string = [preset_bundle, print_cfg](const std::string &key, const std::string &fallback = std::string()) {
@@ -7165,7 +6930,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         }
         return project_value.empty() ? fallback : project_value;
     };
-    auto set_mixed_float = [preset_bundle, print_cfg](const std::string &key, float value) {
+    auto set_mixed_float = [preset_bundle, print_cfg](const std::string &key, double value) {
         if (print_cfg) {
             if (ConfigOptionFloat *opt = print_cfg->option<ConfigOptionFloat>(key))
                 opt->value = value;
@@ -7382,10 +7147,8 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     };
     const bool height_weighted_mode = get_mixed_mode(false);
     int   gradient_mode = height_weighted_mode ? 1 : 0;
-    float lower_bound   = std::max(0.01f, get_mixed_float("mixed_filament_height_lower_bound", 0.04f));
-    float upper_bound   = std::max(lower_bound, get_mixed_float("mixed_filament_height_upper_bound", 0.16f));
-    float preferred_local_z_a = std::max(0.f, get_mixed_float("mixed_color_layer_height_a", 0.f));
-    float preferred_local_z_b = std::max(0.f, get_mixed_float("mixed_color_layer_height_b", 0.f));
+    double preferred_local_z_a = std::max(0.0, get_mixed_float("mixed_color_layer_height_a", 0.0));
+    double preferred_local_z_b = std::max(0.0, get_mixed_float("mixed_color_layer_height_b", 0.0));
     float nominal_layer_height = 0.2f;
     if (print_cfg && print_cfg->has("layer_height"))
         nominal_layer_height = float(print_cfg->opt_float("layer_height"));
@@ -7395,32 +7158,17 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         wall_loops = std::max<size_t>(1, size_t(std::max(1, print_cfg->opt_int("wall_loops"))));
     const bool local_z_mode = get_mixed_bool("dithering_local_z_mode", false);
     const bool local_z_direct_multicolor =
-        get_mixed_bool("dithering_local_z_direct_multicolor", true) &&
+        (local_z_mode || get_mixed_bool("dithering_local_z_direct_multicolor", true)) &&
         preferred_local_z_a <= EPSILON &&
         preferred_local_z_b <= EPSILON;
     const bool component_bias_enabled = get_mixed_bool("mixed_filament_component_bias_enabled", false);
-    float pointillism_pixel_size = std::max(0.f, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.f));
-    float pointillism_line_gap   = std::max(0.f, get_mixed_float("mixed_filament_pointillism_line_gap", 0.f));
-    float mixed_surface_indentation = std::clamp(get_mixed_float("mixed_filament_surface_indentation", 0.f), -2.f, 2.f);
+    double pointillism_pixel_size = std::max(0.0, get_mixed_float("mixed_filament_pointillism_pixel_size", 0.0));
+    double pointillism_line_gap   = std::max(0.0, get_mixed_float("mixed_filament_pointillism_line_gap", 0.0));
+    double mixed_surface_indentation = std::clamp(get_mixed_float("mixed_filament_surface_indentation", 0.0), -2.0, 2.0);
     bool  advanced_dithering = get_mixed_bool("mixed_filament_advanced_dithering", false);
     const std::string mixed_definitions = get_mixed_string("mixed_filament_definitions");
-    const MixedFilamentPreviewSettings preview_settings {
-        nominal_layer_height,
-        lower_bound,
-        upper_bound,
-        preferred_local_z_a,
-        preferred_local_z_b,
-        local_z_mode,
-        local_z_direct_multicolor,
-        wall_loops
-    };
-    const MixedFilamentDisplayContext display_context {
-        num_physical,
-        physical_colors,
-        nozzle_diameters,
-        preview_settings,
-        component_bias_enabled
-    };
+    const MixedFilamentDisplayContext display_context = build_mixed_filament_display_context(physical_colors);
+    const MixedFilamentPreviewSettings &preview_settings = display_context.preview_settings;
     auto summarize_sequence = [num_physical](const std::vector<unsigned int> &sequence) {
         if (sequence.empty() || num_physical == 0)
             return std::string();
@@ -7457,16 +7205,18 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         mixed_mgr.auto_generate(physical_colors);
         mixed_mgr.clear_custom_entries();
         mixed_mgr.load_custom_entries(mixed_definitions, physical_colors);
-        mixed_mgr.apply_gradient_settings(gradient_mode, lower_bound, upper_bound, advanced_dithering);
+        mixed_mgr.apply_gradient_settings(gradient_mode, advanced_dithering);
     }
 
     if (component_bias_enabled) {
-        for (MixedFilament &entry : mixed_mgr.mixed_filaments()) {
+        auto edited_rows = mixed_mgr.mixed_filament_legacy_rows();
+        for (MixedFilament& entry : edited_rows) {
             const float bias_value = mixed_filament_single_surface_offset_value(entry, nozzle_diameters);
             const auto balanced_pair = mixed_filament_single_surface_offset_pair(entry, bias_value, nozzle_diameters);
             entry.component_a_surface_offset = balanced_pair.first;
             entry.component_b_surface_offset = balanced_pair.second;
         }
+        mixed_mgr.set_mixed_filament_legacy_rows(edited_rows);
     }
 
     // During project load, sidebar may refresh before physical filament combos
@@ -7475,8 +7225,6 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     if (num_physical >= 2) {
         set_mixed_mode(height_weighted_mode);
         set_mixed_bool("mixed_filament_component_bias_enabled", component_bias_enabled);
-        set_mixed_float("mixed_filament_height_lower_bound", lower_bound);
-        set_mixed_float("mixed_filament_height_upper_bound", upper_bound);
         set_mixed_float("mixed_color_layer_height_a", preferred_local_z_a);
         set_mixed_float("mixed_color_layer_height_b", preferred_local_z_b);
         set_mixed_float("mixed_filament_pointillism_pixel_size", pointillism_pixel_size);
@@ -7485,7 +7233,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
         set_mixed_string("mixed_filament_definitions", mixed_mgr.serialize_custom_entries());
     }
 
-    auto &mixed = mixed_mgr.mixed_filaments();
+    auto&                       mixed                 = mixed_mgr.mixed_filament_legacy_rows();
     const std::vector<size_t> ordered_mixed_indices = build_mixed_filament_ui_indices(mixed, p->m_mixed_filament_ui_order);
     std::vector<uint64_t>       sanitized_mixed_ui_order_ids;
     sanitized_mixed_ui_order_ids.reserve(ordered_mixed_indices.size());
@@ -7538,571 +7286,7 @@ void Sidebar::update_mixed_filament_panel(bool sync_manager)
     });
     return;
 
-#if 0 // DEAD CODE — Mixed Filaments panel UI, disabled. DO NOT add or modify code here.
-      //    All active Mixed Filament operations now live in:
-      //      - init_color_mix_panel()  (Color Mixing panel with Add/Delete buttons)
-      //      - Filament Management title bar (Batch Match, Flushing volumes, AMS sync, Settings)
-    
-    // Reset the max size in case it was collapsed
-    p->m_panel_mixed_filaments_content->SetMaxSize({-1, -1});
-
-    auto *rows_scroller = new wxScrolledWindow(p->m_panel_mixed_filaments_content, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxVSCROLL | wxTAB_TRAVERSAL);
-    rows_scroller->SetScrollRate(0, FromDIP(6));
-    rows_scroller->ShowScrollbars(wxSHOW_SB_NEVER, wxSHOW_SB_DEFAULT);
-    rows_scroller->SetBackgroundColour(mixed_rows_bg);
-    auto *rows_sizer = new wxBoxSizer(wxVERTICAL);
-    rows_scroller->SetSizer(rows_sizer);
-
-    if (mixed.empty()) {
-        auto *empty_label = new wxStaticText(rows_scroller, wxID_ANY,
-                                             _L("No mixed filaments yet. Use Add Gradient, Add Pattern, or Add Color to create one."));
-        empty_label->SetForegroundColour(mixed_summary_fg);
-        empty_label->SetFont(::Label::Body_13);
-        empty_label->Wrap(FromDIP(360));
-        rows_sizer->Add(empty_label, 0, wxALL | wxEXPAND, FromDIP(12));
-        rows_scroller->Layout();
-        rows_scroller->FitInside();
-        const int empty_content_h = empty_label->GetBestSize().GetHeight() + FromDIP(28);
-        const int empty_rows_h = std::max(FromDIP(86), empty_content_h);
-        rows_scroller->SetMinSize(wxSize(-1, empty_rows_h));
-        rows_scroller->SetMaxSize(wxSize(-1, empty_rows_h));
-        if (content_sizer)
-            content_sizer->Add(rows_scroller, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(SidebarProps::ContentMargin()));
-        p->m_panel_mixed_filaments_content->Layout();
-        Layout();
-        refresh_model_canvas_colors();
-        update_color_mix_panel();
-        return;
-    }
-
-    auto adjust_rows_scroller_height = [this, rows_scroller]() {
-        if (!rows_scroller)
-            return;
-        const int min_h = FromDIP(68);
-        const int collapsed_max_h = FromDIP(220);
-        int two_rows_cap_h = collapsed_max_h;
-        const auto &children = rows_scroller->GetChildren();
-        if (!children.empty()) {
-            std::vector<int> heights;
-            heights.reserve(children.GetCount());
-            for (wxWindowList::compatibility_iterator it = children.GetFirst(); it; it = it->GetNext()) {
-                wxWindow *child = it->GetData();
-                wxPanel *panel = dynamic_cast<wxPanel *>(child);
-                if (!panel)
-                    continue;
-                heights.emplace_back(std::max(panel->GetSize().GetHeight(), panel->GetBestSize().GetHeight()));
-            }
-            if (!heights.empty()) {
-                std::sort(heights.begin(), heights.end(), std::greater<int>());
-                const size_t keep = std::min<size_t>(2, heights.size());
-                int rows_h = 0;
-                for (size_t i = 0; i < keep; ++i)
-                    rows_h += heights[i];
-                if (keep > 1)
-                    rows_h += int(keep - 1) * FromDIP(2);
-                rows_h += FromDIP(8);
-                two_rows_cap_h = std::max(collapsed_max_h, rows_h);
-            }
-        }
-
-        const int max_h = p->m_expanded_mixed_filament_rows.empty() ? collapsed_max_h : two_rows_cap_h;
-        const int content_h = std::max(0, rows_scroller->GetVirtualSize().GetHeight());
-        const int desired_h = std::clamp(content_h, min_h, max_h);
-        rows_scroller->SetMinSize(wxSize(-1, desired_h));
-        rows_scroller->SetMaxSize(wxSize(-1, desired_h));
-    };
-
-    for (auto it = p->m_expanded_mixed_filament_rows.begin(); it != p->m_expanded_mixed_filament_rows.end();) {
-        if (*it >= mixed.size() || mixed[*it].deleted)
-            it = p->m_expanded_mixed_filament_rows.erase(it);
-        else
-            ++it;
-    }
-
-    std::vector<wxColour> palette;
-    palette.reserve(physical_colors.size());
-    for (const std::string &hex : physical_colors)
-        palette.emplace_back(parse_mixed_color(hex));
-
-    auto mixed_summary_text = [decode_gradient_ids](const MixedFilament &entry) {
-        const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
-        if (!entry.custom)
-            return wxString::Format("(Filament %u + Filament %u)", unsigned(entry.component_a), unsigned(entry.component_b));
-        if (!normalized_pattern.empty())
-            return _L("(Pattern)");
-        if (decode_gradient_ids(entry.gradient_component_ids).size() >= 3)
-            return _L("(Color)");
-        return wxString::Format("(F%u + F%u)", unsigned(entry.component_a), unsigned(entry.component_b));
-    };
-
-    auto apply_mixed_entry_changes = [this, preset_bundle, print_cfg, num_physical](size_t mixed_id,
-                                                                                    const MixedFilament &updated_mf,
-                                                                                    bool preserve_enabled = false,
-                                                                                    bool rebuild_virtual_id_remap = false) {
-        if (!preset_bundle)
-            return;
-
-        auto &mgr = preset_bundle->mixed_filaments;
-        auto &mfs = mgr.mixed_filaments();
-        if (mixed_id >= mfs.size())
-            return;
-
-        const std::vector<MixedFilament> old_mixed = rebuild_virtual_id_remap ? mfs : std::vector<MixedFilament>();
-        MixedFilament merged = updated_mf;
-        if (preserve_enabled)
-            merged.enabled = mfs[mixed_id].enabled;
-        mfs[mixed_id] = merged;
-
-        const std::string serialized = mgr.serialize_custom_entries();
-        if (print_cfg) {
-            if (ConfigOptionString *opt = print_cfg->option<ConfigOptionString>("mixed_filament_definitions"))
-                opt->value = serialized;
-            else
-                print_cfg->set_key_value("mixed_filament_definitions", new ConfigOptionString(serialized));
-        }
-        if (ConfigOptionString *opt = preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
-            opt->value = serialized;
-        else
-            preset_bundle->project_config.set_key_value("mixed_filament_definitions", new ConfigOptionString(serialized));
-
-        if (print_cfg) {
-            if (auto *print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT))
-                print_tab->update_dirty();
-            if (wxGetApp().mainframe)
-                wxGetApp().mainframe->on_config_changed(print_cfg);
-        }
-        if (wxGetApp().plater())
-            wxGetApp().plater()->update_project_dirty_from_presets();
-
-        if (rebuild_virtual_id_remap)
-            preset_bundle->update_mixed_filament_id_remap(old_mixed, num_physical, num_physical);
-
-        int mode = 0;
-        if (const ConfigOptionBool *opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_gradient_mode"))
-            mode = opt->value ? 1 : 0;
-        else if (const ConfigOptionInt *opt = preset_bundle->project_config.option<ConfigOptionInt>("mixed_filament_gradient_mode"))
-            mode = opt->value != 0 ? 1 : 0;
-        float lo = preset_bundle->project_config.has("mixed_filament_height_lower_bound") ?
-            float(preset_bundle->project_config.opt_float("mixed_filament_height_lower_bound")) : 0.04f;
-        float hi = preset_bundle->project_config.has("mixed_filament_height_upper_bound") ?
-            float(preset_bundle->project_config.opt_float("mixed_filament_height_upper_bound")) : 0.16f;
-        bool advanced = false;
-        if (const ConfigOptionBool *opt = preset_bundle->project_config.option<ConfigOptionBool>("mixed_filament_advanced_dithering"))
-            advanced = opt->value;
-        mode = std::clamp(mode, 0, 1);
-        lo = std::max(0.01f, lo);
-        hi = std::max(lo, hi);
-        mgr.apply_gradient_settings(mode, lo, hi, advanced);
-        update_dynamic_filament_list();
-
-        if (rebuild_virtual_id_remap && wxGetApp().plater()) {
-            p->m_skip_mixed_filament_sync_once = true;
-            wxGetApp().plater()->on_filaments_change(num_physical);
-        }
-    };
-
-    auto current_mixed_filament_ui_order = [this, &mixed]() {
-        std::vector<uint64_t> ordered_ids;
-        ordered_ids.reserve(p->m_mixed_filament_row_bindings.size());
-        for (const auto &binding : p->m_mixed_filament_row_bindings) {
-            if (binding.mixed_id < mixed.size() && mixed[binding.mixed_id].stable_id != 0)
-                ordered_ids.emplace_back(mixed[binding.mixed_id].stable_id);
-        }
-        return ordered_ids;
-    };
-
-    auto drop_insert_position = [this]() {
-        const wxPoint mouse_pos = wxGetMousePosition();
-        size_t        visible_idx = 0;
-        for (const auto &binding : p->m_mixed_filament_row_bindings) {
-            if (binding.row == nullptr || !binding.row->IsShown())
-                continue;
-
-            const wxPoint top_left = binding.row->ClientToScreen(wxPoint(0, 0));
-            const int     row_h = std::max(binding.row->GetSize().GetHeight(), binding.row->GetBestSize().GetHeight());
-            const int     center_y = top_left.y + row_h / 2;
-            if (mouse_pos.y < center_y)
-                return visible_idx;
-
-            ++visible_idx;
-        }
-        return visible_idx;
-    };
-
-    for (size_t display_mixed_idx = 0; display_mixed_idx < ordered_mixed_indices.size(); ++display_mixed_idx) {
-        const size_t mixed_id = ordered_mixed_indices[display_mixed_idx];
-        MixedFilament &mf = mixed[mixed_id];
-        const bool auto_row = !mf.custom;
-
-        auto *row = new wxPanel(rows_scroller, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        row->SetBackgroundColour(mixed_row_bg);
-        auto *row_sizer = new wxBoxSizer(wxVERTICAL);
-        p->m_mixed_filament_row_bindings.push_back({mixed_id, row});
-
-        auto *header_panel = new wxPanel(row, wxID_ANY);
-        header_panel->SetBackgroundColour(mixed_row_bg);
-        auto *header_sizer = new wxBoxSizer(wxHORIZONTAL);
-
-        const std::string synced_color = compute_entry_display_color(mf);
-        if (mf.display_color != synced_color)
-            mf.display_color = synced_color;
-        auto *drag_handle = new MixedFilamentDragHandle(header_panel, mixed_summary_fg, mixed_row_bg);
-        drag_handle->SetToolTip(_L("Drag to reorder mixed filaments in this panel."));
-        header_sizer->Add(drag_handle, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, compact_gap_x);
-
-        wxColour swatch_color = parse_mixed_color(mf.display_color);
-        auto *swatch = new wxPanel(header_panel, wxID_ANY, wxDefaultPosition, wxSize(FromDIP(12), FromDIP(12)));
-        swatch->SetBackgroundColour(swatch_color);
-        swatch->SetMinSize(wxSize(FromDIP(12), FromDIP(12)));
-        header_sizer->Add(swatch, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, compact_gap_x);
-
-        const int virtual_filament_id = int(num_physical + display_mixed_idx + 1);
-        auto *name_label = new wxStaticText(header_panel, wxID_ANY, wxString::Format("Mixed Filament %d", virtual_filament_id));
-        name_label->SetForegroundColour(mixed_text_fg);
-        header_sizer->Add(name_label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, compact_gap_x);
-
-        auto *summary_label = new wxStaticText(header_panel, wxID_ANY, mixed_summary_text(mf));
-        summary_label->SetForegroundColour(mixed_summary_fg);
-        header_sizer->Add(summary_label, 1, wxALIGN_CENTER_VERTICAL | wxLEFT, compact_gap_x);
-
-        header_sizer->AddStretchSpacer(1);
-
-        auto *enabled_chk = new wxCheckBox(header_panel, wxID_ANY, _L("Enabled"));
-        enabled_chk->SetValue(mf.enabled);
-        enabled_chk->SetForegroundColour(mixed_text_fg);
-        header_sizer->Add(enabled_chk, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, compact_gap_x);
-        enabled_chk->Bind(wxEVT_LEFT_UP, [](wxMouseEvent &evt) {
-            evt.StopPropagation();
-            evt.Skip();
-        });
-        enabled_chk->Bind(wxEVT_CHECKBOX, [mixed_id, enabled_chk, apply_mixed_entry_changes, preset_bundle](wxCommandEvent &) {
-            if (!preset_bundle || !enabled_chk)
-                return;
-            auto &mgr = preset_bundle->mixed_filaments;
-            auto &mfs = mgr.mixed_filaments();
-            if (mixed_id >= mfs.size())
-                return;
-            MixedFilament updated = mfs[mixed_id];
-            updated.enabled = enabled_chk->GetValue();
-            apply_mixed_entry_changes(mixed_id, updated, false, true);
-        });
-
-        auto *del_btn = new ScalableButton(header_panel, wxID_ANY, "cross"); 
-        del_btn->SetToolTip(_L("Delete mixed filament"));
-        header_sizer->Add(del_btn, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, compact_gap_x);
-        
-        del_btn->Bind(wxEVT_BUTTON, [this, mixed_id, num_physical, set_mixed_string, notify_mixed_change](wxCommandEvent&) {
-             if (wxGetApp().preset_bundle) {
-                 auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
-                 auto &mfs = mgr.mixed_filaments();
-                 if (mixed_id < mfs.size()) {
-                     const std::vector<MixedFilament> old_mixed = mfs;
-                     auto canonical_pair = [](unsigned int a, unsigned int b) {
-                         return std::make_pair(std::min(a, b), std::max(a, b));
-                     };
-                     MixedFilament &target = mfs[mixed_id];
-                     const auto target_pair = canonical_pair(target.component_a, target.component_b);
-                     const bool valid_auto_pair = target_pair.first >= 1 &&
-                                                  target_pair.second >= 1 &&
-                                                  target_pair.first <= num_physical &&
-                                                  target_pair.second <= num_physical &&
-                                                  target_pair.first != target_pair.second;
-                     if (target.custom && target.origin_auto && valid_auto_pair) {
-                         bool tombstoned_existing_auto = false;
-                         for (size_t idx = 0; idx < mfs.size(); ++idx) {
-                             if (idx == mixed_id)
-                                 continue;
-                             MixedFilament &candidate = mfs[idx];
-                             if (candidate.custom)
-                                 continue;
-                             if (canonical_pair(candidate.component_a, candidate.component_b) != target_pair)
-                                 continue;
-                             candidate.deleted = true;
-                             candidate.enabled = false;
-                             tombstoned_existing_auto = true;
-                             break;
-                         }
-
-                         if (tombstoned_existing_auto) {
-                             mfs.erase(mfs.begin() + mixed_id);
-                         } else {
-                             target.component_a = target_pair.first;
-                             target.component_b = target_pair.second;
-                             target.mix_b_percent = 50;
-                             target.ratio_a = 1;
-                             target.ratio_b = 1;
-                             target.manual_pattern.clear();
-                             target.gradient_component_ids.clear();
-                             target.gradient_component_weights.clear();
-                             target.pointillism_all_filaments = false;
-                             target.distribution_mode = int(MixedFilament::Simple);
-                             target.custom = false;
-                             target.origin_auto = true;
-                             target.deleted = true;
-                             target.enabled = false;
-                         }
-                     } else if (target.custom) {
-                         mfs.erase(mfs.begin() + mixed_id);
-                     } else {
-                         target.deleted = true;
-                         target.enabled = false;
-                     }
-                     p->m_expanded_mixed_filament_rows.clear();
-                     set_mixed_string("mixed_filament_definitions", mgr.serialize_custom_entries());
-                     wxGetApp().preset_bundle->update_mixed_filament_id_remap(old_mixed, num_physical, num_physical, mixed_id);
-                     notify_mixed_change();
-                     if (wxGetApp().plater())
-                         wxGetApp().plater()->update_project_dirty_from_presets();
-                     if (wxGetApp().plater()) {
-                         p->m_skip_mixed_filament_sync_once = true;
-                         wxGetApp().plater()->on_filaments_change(num_physical);
-                     }
-                 }
-             }
-        });
-
-        header_panel->SetSizer(header_sizer);
-        row_sizer->Add(header_panel, 0, wxEXPAND | wxALL, 0);
-
-        auto *editor_host = new wxPanel(row, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        editor_host->SetBackgroundColour(mixed_row_bg);
-        auto *editor_sizer = new wxBoxSizer(wxVERTICAL);
-        editor_host->SetSizer(editor_sizer);
-        editor_host->Hide();
-        row_sizer->Add(editor_host, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, compact_row_pad);
-
-        auto set_row_hover = [row, header_panel, editor_host, drag_handle, mixed_summary_fg, mixed_row_bg, mixed_row_hover_bg](bool hovered) {
-            const wxColour bg = hovered ? mixed_row_hover_bg : mixed_row_bg;
-            if (row) row->SetBackgroundColour(bg);
-            if (header_panel) header_panel->SetBackgroundColour(bg);
-            if (editor_host) editor_host->SetBackgroundColour(bg);
-            if (drag_handle) drag_handle->set_colors(mixed_summary_fg, bg);
-            if (row) row->Refresh();
-            if (header_panel) header_panel->Refresh();
-            if (editor_host) editor_host->Refresh();
-        };
-
-        auto row_contains_mouse = [row]() {
-            if (!row)
-                return false;
-            const wxPoint mouse_pos = wxGetMousePosition();
-            const wxPoint local = row->ScreenToClient(mouse_pos);
-            return row->GetClientRect().Contains(local);
-        };
-
-        auto ensure_editor = [this, mixed_id, num_physical, physical_colors, nozzle_diameters, palette, preview_settings, component_bias_enabled, preset_bundle,
-                              editor_host, editor_sizer, swatch, summary_label, header_panel, row,
-                              rows_scroller, mixed_summary_text, apply_mixed_entry_changes]() {
-            if (!preset_bundle || !editor_sizer || editor_sizer->GetItemCount() > 0)
-                return;
-
-            auto &mgr = preset_bundle->mixed_filaments;
-            auto &mfs = mgr.mixed_filaments();
-            if (mixed_id >= mfs.size())
-                return;
-
-            auto *editor = new MixedFilamentConfigPanel(editor_host, mixed_id, mfs[mixed_id], num_physical, physical_colors, nozzle_diameters, palette, preview_settings,
-                component_bias_enabled,
-                [this, mixed_id, swatch, summary_label, header_panel, row, rows_scroller, mixed_summary_text, apply_mixed_entry_changes](const MixedFilament &updated_mf) {
-                    apply_mixed_entry_changes(mixed_id, updated_mf, true);
-
-                    if (swatch) {
-                        swatch->SetBackgroundColour(parse_mixed_color(updated_mf.display_color));
-                        swatch->Refresh();
-                    }
-                    if (summary_label) {
-                        summary_label->SetLabel(mixed_summary_text(updated_mf));
-                    }
-                    if (header_panel)
-                        header_panel->Layout();
-                    if (row)
-                        row->Layout();
-                    if (rows_scroller) {
-                        rows_scroller->Layout();
-                        rows_scroller->FitInside();
-                    }
-                });
-
-            editor_sizer->Add(editor, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(4));
-            editor_host->Layout();
-        };
-
-        auto toggle_editor = [this, mixed_id, editor_host, ensure_editor, rows_scroller, adjust_rows_scroller_height]() {
-            if (!editor_host || !rows_scroller)
-                return;
-
-            if (editor_host->IsShown()) {
-                editor_host->Hide();
-                p->m_expanded_mixed_filament_rows.erase(mixed_id);
-            } else {
-                ensure_editor();
-                editor_host->Show();
-                p->m_expanded_mixed_filament_rows.insert(mixed_id);
-            }
-
-            rows_scroller->Layout();
-            rows_scroller->FitInside();
-            adjust_rows_scroller_height();
-            p->m_panel_mixed_filaments_content->Layout();
-            m_scrolled_sizer->Layout();
-            Layout();
-        };
-
-        auto bind_toggle_target = [&toggle_editor](wxWindow *target) {
-            if (!target)
-                return;
-            target->SetCursor(wxCursor(wxCURSOR_HAND));
-            target->Bind(wxEVT_LEFT_UP, [toggle_editor](wxMouseEvent &) {
-                toggle_editor();
-            });
-        };
-
-        auto bind_hover_target = [set_row_hover, row_contains_mouse](wxWindow *target) {
-            if (!target)
-                return;
-            target->Bind(wxEVT_ENTER_WINDOW, [set_row_hover](wxMouseEvent &evt) {
-                set_row_hover(true);
-                evt.Skip();
-            });
-            target->Bind(wxEVT_LEAVE_WINDOW, [set_row_hover, row_contains_mouse](wxMouseEvent &evt) {
-                set_row_hover(row_contains_mouse());
-                evt.Skip();
-            });
-        };
-
-        auto release_drag_capture = [this]() {
-            p->m_mixed_filament_drag_active = false;
-            p->m_mixed_filament_drag_source_mixed_id = size_t(-1);
-        };
-
-        auto bind_drag_target = [this,
-                                 mixed_id,
-                                 &mixed,
-                                 drop_insert_position,
-                                 current_mixed_filament_ui_order,
-                                 release_drag_capture](wxWindow *target) {
-            if (!target)
-                return;
-
-            target->Bind(wxEVT_LEFT_DOWN, [this, mixed_id, target](wxMouseEvent &evt) {
-                if (!target)
-                    return;
-                p->m_mixed_filament_drag_active = true;
-                p->m_mixed_filament_drag_source_mixed_id = mixed_id;
-                if (!target->HasCapture())
-                    target->CaptureMouse();
-                evt.StopPropagation();
-            });
-
-            target->Bind(wxEVT_MOTION, [this](wxMouseEvent &evt) {
-                if (p->m_mixed_filament_drag_active)
-                    evt.StopPropagation();
-            });
-
-            target->Bind(wxEVT_LEFT_UP, [this, &mixed, target, drop_insert_position, current_mixed_filament_ui_order](wxMouseEvent &evt) {
-                if (target && target->HasCapture())
-                    target->ReleaseMouse();
-
-                if (!p->m_mixed_filament_drag_active || p->m_mixed_filament_drag_source_mixed_id >= mixed.size()) {
-                    p->m_mixed_filament_drag_active = false;
-                    p->m_mixed_filament_drag_source_mixed_id = size_t(-1);
-                    evt.StopPropagation();
-                    return;
-                }
-
-                const size_t source_mixed_id = p->m_mixed_filament_drag_source_mixed_id;
-                p->m_mixed_filament_drag_active = false;
-                p->m_mixed_filament_drag_source_mixed_id = size_t(-1);
-
-                std::vector<size_t> current_mixed_ids;
-                current_mixed_ids.reserve(p->m_mixed_filament_row_bindings.size());
-                for (const auto &binding : p->m_mixed_filament_row_bindings) {
-                    if (binding.mixed_id < mixed.size() && !mixed[binding.mixed_id].deleted)
-                        current_mixed_ids.emplace_back(binding.mixed_id);
-                }
-
-                const auto source_it = std::find(current_mixed_ids.begin(), current_mixed_ids.end(), source_mixed_id);
-                if (source_it == current_mixed_ids.end()) {
-                    evt.StopPropagation();
-                    return;
-                }
-
-                const size_t source_pos = size_t(std::distance(current_mixed_ids.begin(), source_it));
-                size_t       insert_pos = drop_insert_position();
-                insert_pos = std::min(insert_pos, current_mixed_ids.size());
-
-                current_mixed_ids.erase(source_it);
-                if (insert_pos > source_pos)
-                    --insert_pos;
-                insert_pos = std::min(insert_pos, current_mixed_ids.size());
-                current_mixed_ids.insert(current_mixed_ids.begin() + ptrdiff_t(insert_pos), source_mixed_id);
-
-                std::vector<uint64_t> reordered_stable_ids;
-                reordered_stable_ids.reserve(current_mixed_ids.size());
-                for (const size_t row_mixed_id : current_mixed_ids) {
-                    if (row_mixed_id < mixed.size() && mixed[row_mixed_id].stable_id != 0)
-                        reordered_stable_ids.emplace_back(mixed[row_mixed_id].stable_id);
-                }
-
-                if (reordered_stable_ids != current_mixed_filament_ui_order()) {
-                    p->m_mixed_filament_ui_order = std::move(reordered_stable_ids);
-                    update_mixed_filament_panel(false);
-                }
-
-                evt.StopPropagation();
-            });
-
-            target->Bind(wxEVT_MOUSE_CAPTURE_LOST, [release_drag_capture](wxMouseCaptureLostEvent &) {
-                release_drag_capture();
-            });
-        };
-
-        header_panel->SetToolTip(auto_row ?
-            _L("Click to edit automatic mixed filament settings (saved as custom).") :
-            _L("Click to expand/retract mixed filament settings"));
-        bind_toggle_target(row);
-        bind_toggle_target(header_panel);
-        bind_toggle_target(name_label);
-        bind_toggle_target(summary_label);
-        bind_toggle_target(swatch);
-        bind_hover_target(row);
-        bind_hover_target(header_panel);
-        bind_hover_target(name_label);
-        bind_hover_target(summary_label);
-        bind_hover_target(swatch);
-        bind_hover_target(drag_handle);
-        bind_drag_target(drag_handle);
-
-        del_btn->Bind(wxEVT_LEFT_UP, [](wxMouseEvent &evt) {
-            evt.StopPropagation();
-            evt.Skip();
-        });
-
-        if (p->m_expanded_mixed_filament_rows.count(mixed_id) != 0) {
-            ensure_editor();
-            editor_host->Show();
-        }
-
-        row->SetSizer(row_sizer);
-        rows_sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(2));
-        rows_sizer->AddSpacer(FromDIP(2));
-    }
-
-    rows_sizer->AddSpacer(FromDIP(2));
-    rows_scroller->Layout();
-    rows_scroller->FitInside();
-    adjust_rows_scroller_height();
-    if (prev_rows_view_y > 0)
-        rows_scroller->Scroll(0, prev_rows_view_y);
-
-    content_sizer->Add(rows_scroller, 0, wxEXPAND | wxLEFT | wxRIGHT, FromDIP(2));
-    content_sizer->AddSpacer(FromDIP(2));
-    p->m_panel_mixed_filaments_content->Layout();
-    m_scrolled_sizer->Layout();
-    Layout();
-    refresh_model_canvas_colors();
-    update_color_mix_panel();
-#endif // Mixed Filaments panel UI
+    // Mixed Filaments panel UI
 }
 
 std::vector<unsigned int> Sidebar::get_ui_ordered_filament_ids() const
@@ -8116,7 +7300,7 @@ std::vector<unsigned int> Sidebar::get_ui_ordered_filament_ids() const
     if (wxGetApp().preset_bundle == nullptr)
         return ordered_filament_ids;
 
-    const auto &mixed = wxGetApp().preset_bundle->mixed_filaments.mixed_filaments();
+    const auto& mixed = wxGetApp().preset_bundle->mixed_filaments.mixed_filament_legacy_rows();
     if (mixed.empty())
         return ordered_filament_ids;
 
@@ -8142,7 +7326,7 @@ std::vector<unsigned int> Sidebar::get_ui_ordered_filament_ids() const
 }
 
 void Sidebar::add_filament() {
-    if (p->combos_filament.size() >= MAXIMUM_EXTRUDER_NUMBER) return;
+    if (p->combos_filament.size() >= MAXIMUM_PHYSICAL_FILAMENT_NUMBER) return;
     PresetBundle* pb = wxGetApp().preset_bundle;
     if (!pb || pb->mixed_filaments.total_filaments(p->combos_filament.size()) >= MAXIMUM_FILAMENT_NUMBER) return;
     wxColour    new_col        = Plater::get_next_color_for_filament();
@@ -8244,11 +7428,12 @@ void Sidebar::on_filaments_delete(size_t filament_id)
     }
 
     if (PresetBundle *pb = wxGetApp().preset_bundle) {
-        const bool can_add = pb->mixed_filaments.total_filaments(p->combos_filament.size()) < MAXIMUM_FILAMENT_NUMBER;
+        const bool can_add = p->combos_filament.size() < MAXIMUM_PHYSICAL_FILAMENT_NUMBER &&
+                             pb->mixed_filaments.total_filaments(p->combos_filament.size()) < MAXIMUM_FILAMENT_NUMBER;
         if (p->m_bpButton_add_filament)
             p->m_bpButton_add_filament->Enable(can_add);
         if (p->m_btn_add_color_mix)
-            p->m_btn_add_color_mix->Enable(can_add);
+            p->m_btn_add_color_mix->Enable(pb->mixed_filaments.registered_count() < MAXIMUM_MIXED_FILAMENT_NUMBER);
     }
 }
 
@@ -8341,8 +7526,8 @@ void Sidebar::change_filament(size_t from_id, size_t to_id)
         // If there are dependent mixed filaments, show warning dialog
         if (!dependent_mixed_indices.empty()) {
             wxString msg = _L("This filament is used in the following mixed filament configurations:\n\n");
-            
-            const auto& mfs = pb.mixed_filaments.mixed_filaments();
+
+            const auto& mfs         = pb.mixed_filaments.mixed_filament_legacy_rows();
             size_t visible_idx = 0;
             for (size_t j = 0; j < mfs.size(); ++j) {
                 if (mfs[j].deleted) continue;
@@ -8416,8 +7601,8 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
         BOOST_LOG_TRIVIAL(error) << "merge_mixed_filament: Cannot find mixed filament index for ID " << from_id;
         return;
     }
-    
-    auto& mfs = pb.mixed_filaments.mixed_filaments();
+
+    auto mfs = pb.mixed_filaments.mixed_filament_legacy_rows();
     if ((size_t)source_mixed_idx >= mfs.size()) {
         BOOST_LOG_TRIVIAL(error) << "merge_mixed_filament: Mixed filament index " << source_mixed_idx 
                                  << " out of range (size=" << mfs.size() << ")";
@@ -8439,7 +7624,8 @@ void Sidebar::merge_mixed_filament(size_t from_id, size_t to_id,
     // Mark source mixed filament as deleted
     mfs[source_mixed_idx].deleted = true;
     mfs[source_mixed_idx].enabled = false;
-    
+    pb.mixed_filaments.set_mixed_filament_legacy_row(size_t(source_mixed_idx), mfs[source_mixed_idx]);
+
     // Persist changes (skip when called from batch cleanup)
     if (!skip_serialize) {
         if (auto* opt = pb.project_config.option<ConfigOptionString>("mixed_filament_definitions"))
@@ -8501,7 +7687,7 @@ void Sidebar::delete_filament(size_t filament_id, int replace_filament_id,
         if (!dependent_mixed_indices.empty()) {
             wxString msg = _L("This filament is used in the following mixed filament configurations:\n\n");
 
-            const auto& mfs = pb.mixed_filaments.mixed_filaments();
+            const auto& mfs         = pb.mixed_filaments.mixed_filament_legacy_rows();
             size_t visible_idx = 0;
             for (size_t j = 0; j < mfs.size(); ++j) {
                 if (mfs[j].deleted) continue;
@@ -8733,9 +7919,8 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
             guard_config_ref(lr.second);
     }
 
-    RedundantFilamentSet red = compute_redundant_filaments(
-        num_physical, kept_physical, kept_mixed,
-        pb->mixed_filaments.mixed_filaments());
+    RedundantFilamentSet red = compute_redundant_filaments(num_physical, kept_physical, kept_mixed,
+                                                           pb->mixed_filaments.mixed_filament_legacy_rows());
 
     if (red.redundant_physical.empty() && red.redundant_mixed.empty()) {
         // No deletions needed, but add_batch_custom_filaments only calls
@@ -8752,7 +7937,7 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     // wrong rows (or run past the new vector end).  stable_id survives that
     // rebuild — it is the identity key build_filament_id_remap relies on —
     // so we re-match by stable_id against the post-deletion m_mixed below.
-    auto &mfs = pb->mixed_filaments.mixed_filaments();
+    auto&                 mfs = pb->mixed_filaments.mixed_filament_legacy_rows();
     std::vector<uint64_t> redundant_mixed_stable_ids;
     redundant_mixed_stable_ids.reserve(red.redundant_mixed.size());
     for (unsigned int redundant_id : red.redundant_mixed) {
@@ -8786,7 +7971,7 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     // reconstruction + K × panel rebuild + K × render with 1 of each.
     if (!red.redundant_physical.empty()) {
         // Snapshot pre-deletion mixed state for the composite remap.
-        const std::vector<MixedFilament> old_mixed_snapshot = pb->mixed_filaments.mixed_filaments();
+        const std::vector<MixedFilament> old_mixed_snapshot = pb->mixed_filaments.mixed_filament_legacy_rows();
         const size_t old_num_physical = num_physical;
         const size_t new_num_physical = red.new_num_physical;
 
@@ -8950,12 +8135,15 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     // survivor").
     const std::unordered_set<uint64_t> to_mark(redundant_mixed_stable_ids.begin(),
                                                redundant_mixed_stable_ids.end());
-    for (auto &mf : mfs) {
+    auto                               edited_rows = pb->mixed_filaments.mixed_filament_legacy_rows();
+    for (auto& mf : edited_rows) {
         if (mf.stable_id != 0 && to_mark.count(mf.stable_id) > 0) {
             mf.deleted = true;
             mf.enabled = false;
         }
     }
+
+    pb->mixed_filaments.set_mixed_filament_legacy_rows(edited_rows);
 
     // Apply the mixed-deletion remap now that the rows are marked (T3 epoch).
     // Mirrors the physical-deletion composite remap above.
@@ -9032,7 +8220,7 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
 }
 
 void Sidebar::add_custom_filament(wxColour new_col) {
-    if (p->combos_filament.size() >= MAXIMUM_EXTRUDER_NUMBER) return;
+    if (p->combos_filament.size() >= MAXIMUM_PHYSICAL_FILAMENT_NUMBER) return;
     PresetBundle* pb = wxGetApp().preset_bundle;
     if (!pb || pb->mixed_filaments.total_filaments(p->combos_filament.size()) >= MAXIMUM_FILAMENT_NUMBER) return;
 
@@ -9396,7 +8584,7 @@ void Sidebar::continue_sync_filament_dialog(bool got_machine_info, const std::st
 
     std::vector<MixedFilamentPreviewInfo> mixedInfos;
     int oldPhysicalCount = designFilamentList.size();
-    const auto& mixedFilaments = preset_bundle->mixed_filaments.mixed_filaments();
+    const auto&                           mixedFilaments   = preset_bundle->mixed_filaments.mixed_filament_legacy_rows();
     int enabledMixedIdx = 0;
     for (size_t i = 0; i < mixedFilaments.size(); ++i) {
         const auto& mf = mixedFilaments[i];
@@ -9432,7 +8620,7 @@ void Sidebar::continue_sync_filament_dialog(bool got_machine_info, const std::st
         size_t combo_Size = p->combos_filament.size();
         if (effective_size != combo_Size) {
             if (effective_size > combo_Size &&
-                    (effective_size > MAXIMUM_EXTRUDER_NUMBER ||
+                    (effective_size > MAXIMUM_PHYSICAL_FILAMENT_NUMBER ||
                         preset_bundle->mixed_filaments.total_filaments(effective_size) >= MAXIMUM_FILAMENT_NUMBER)) {
                 effective_size = combo_Size;
             }
@@ -9473,13 +8661,14 @@ void Sidebar::continue_sync_filament_dialog(bool got_machine_info, const std::st
         }
 
         if (dlg.shouldDeleteMixedFilaments()) {
-            auto& mixedList = preset_bundle->mixed_filaments.mixed_filaments();
+            auto mixedList = preset_bundle->mixed_filaments.mixed_filament_legacy_rows();
             for (auto& mf : mixedList) {
                 if (mf.enabled && !mf.deleted) {
                     mf.deleted = true;
                     mf.enabled = false;
                 }
             }
+            preset_bundle->mixed_filaments.set_mixed_filament_legacy_rows(mixedList);
             if (auto* opt = preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = preset_bundle->mixed_filaments.serialize_custom_entries();
         }
@@ -9544,7 +8733,6 @@ void Sidebar::show_SEMM_buttons(bool bshow)
 void Sidebar::update_dynamic_filament_list()
 {
     dynamic_filament_list.update();
-    dynamic_filament_list_1_based.update();
 }
 
 void Sidebar::update_nozzle_settings(bool switch_machine)
@@ -10799,12 +9987,12 @@ Plater::priv::priv(Plater *q, MainFrame *main_frame)
         "printable_area", "bed_exclude_area", "bed_custom_texture", "bed_custom_model", "print_sequence",
         "extruder_clearance_radius", "extruder_clearance_height_to_lid", "extruder_clearance_height_to_rod",
 		"nozzle_height", "skirt_type", "skirt_loops", "skirt_speed","min_skirt_length", "skirt_distance", "skirt_start_angle",
-        "brim_width", "brim_object_gap", "brim_type", "nozzle_diameter", "single_extruder_multi_material", "preferred_orientation",
+        "brim_width", "brim_object_gap", "brim_type", "brim_flow_ratio", "nozzle_diameter", "single_extruder_multi_material", "preferred_orientation",
         "enable_prime_tower", "wipe_tower_x", "wipe_tower_y", "prime_tower_width", "prime_tower_brim_width", "prime_volume",
         "extruder_colour", "filament_colour", "material_colour", "printable_height", "printer_model", "printer_technology",
         // These values are necessary to construct SlicingParameters by the Canvas3D variable layer height editor.
         "layer_height", "initial_layer_print_height", "min_layer_height", "max_layer_height",
-        "brim_width", "wall_loops", "wall_filament", "sparse_infill_density", "sparse_infill_filament", "solid_infill_filament", "top_shell_layers",
+        "wall_loops", "wall_filament", "sparse_infill_density", "sparse_infill_filament", "solid_infill_filament", "top_shell_layers",
         "enable_support", "support_filament", "support_interface_filament",
         "support_top_z_distance", "support_bottom_z_distance", "raft_layers",
         "wipe_tower_rotation_angle", "wipe_tower_cone_angle", "wipe_tower_extra_spacing", "wipe_tower_extra_flow", "local_z_wipe_tower_purge_lines", "wipe_tower_max_purge_speed",
@@ -12141,12 +11329,19 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                             if (current_project_empty) {
                                 static const t_config_option_keys imported_project_option_keys = {
                                     "filament_colour",
+                                    "filament_transmission_distance",
+                                    "filament_full_spectrum_material_id",
                                     "filament_multi_colors",
                                     "filament_colour_mode",
                                     "mixed_filament_definitions",
+                                    "dithering_local_z_mode",
+                                    "dithering_local_z_whole_objects",
+                                    "dithering_local_z_direct_multicolor",
+                                    "dithering_local_z_preserve_first_layer",
+                                    "dithering_local_z_independent_layer_height",
+                                    "dithering_local_z_gradient_layer_height",
+                                    "dithering_local_z_gradient_middle_filament_window",
                                     "mixed_filament_gradient_mode",
-                                    "mixed_filament_height_lower_bound",
-                                    "mixed_filament_height_upper_bound",
                                     "mixed_filament_advanced_dithering",
                                     "mixed_filament_pointillism_pixel_size",
                                     "mixed_filament_pointillism_line_gap",
@@ -12185,7 +11380,10 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
                         }
 
                         int filament_size = sidebar->combos_filament().size();
-                        const int filament_limit = std::min({size, int(MAXIMUM_EXTRUDER_NUMBER), int(MAXIMUM_FILAMENT_NUMBER)});
+                        // Filaments added to cover the model's extruder ids are new ones: stay within
+                        // the physical limit. (A geometry-only project import already adopted the
+                        // file's own physical count above, which may exceed it.)
+                        const int filament_limit = std::min({size, int(MAXIMUM_PHYSICAL_FILAMENT_NUMBER), int(MAXIMUM_FILAMENT_NUMBER)});
                         while (filament_size < filament_limit) {
                             int         filament_count = filament_size + 1;
                             wxGetApp().plater()->confirm_auto_generated_gradients(filament_count);
@@ -12793,6 +11991,12 @@ std::vector<size_t> Plater::priv::load_files(const std::vector<fs::path>& input_
         int model_idx = 0;
         for (ModelObject *model_object : model.objects) {
             if (!type_3mf && !type_any_amf) model_object->center_around_origin(false);
+
+            // BBS: a newly imported object is assigned filament 1 explicitly instead of
+            // staying on the "Default" (0) value; objects coming from an opened project
+            // keep their saved per-object filament untouched.
+            if (!is_project_file && !model_object->config.has("extruder"))
+                model_object->config.set_key_value("extruder", new ConfigOptionInt(1));
 
             // BBS
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << ":" << __LINE__ << boost::format("import 3mf IMPORT_LOAD_MODEL_OBJECTS \n");
@@ -13897,7 +13101,7 @@ bool Plater::priv::has_incompatible_mixed_filament_in_use() const
     // Early exit: if no incompatible mixed filament exists in the project,
     // we can skip the per-object scan entirely.
     bool any_incompatible = false;
-    for (const auto &mf : mgr.mixed_filaments()) {
+    for (const auto& mf : mgr.mixed_filament_legacy_rows()) {
         if (mf.enabled && !mf.deleted && !is_filament_compatible(mf)) {
             any_incompatible = true;
             break;
@@ -15783,6 +14987,63 @@ static void sync_nozzle_hrc_warning_notification(NotificationManager* nm, PartPl
             text);
 }
 
+// Recoverable-OOM notice, shared by the import / failed-slice / toolpath-
+// render paths: one dialog with the finalized product wording (kept verbatim)
+// and standard Yes/No buttons. Yes opens a file save dialog (directory and
+// file name in one step) and saves the
+// project there; No closes and does nothing - the choice (and the risk) stay
+// with the user. The save is best-effort; with a low-memory state it may
+// fail or be cut short by a deeper OOM (which ends the process via the
+// handler's own farewell).
+void Plater::offer_save_on_low_memory()
+{
+    // Nothing to rescue in an empty project - the dialog would only confuse.
+    if (p->model.objects.empty())
+        return;
+    // Runs from CallAfter on the wx event loop, which offers no exception
+    // guard for these events (same class of dispatch as idle/paint,
+    // wxWidgets #24704): an allocation failure inside the dialogs below must
+    // not escape, or the process dies without any notice. Best-effort only -
+    // on failure the notice is skipped and the app keeps running.
+    try {
+        WarningDialog ask_dlg(wxGetApp().mainframe, _L("Your project may be too large for the available memory. The operation has been "
+                                "automatically terminated. Try closing other applications, reducing the model "
+                                "complexity or plate count, and restart.\n\n"
+                                "We strongly recommend saving your current project. Continuing with Snapmaker Orca "
+                                "may cause the app to crash unexpectedly and lose unsaved changes. Save project now?"), wxEmptyString,
+                                wxYES_NO);
+        if (ask_dlg.ShowModal() != wxID_YES)
+            return;
+        const wxString project_file = get_project_filename(".3mf");
+        const std::string leaf = project_file.empty() ?
+            std::string("project.3mf") :
+            boost::filesystem::path(into_u8(project_file)).filename().string();
+        wxFileDialog save_dlg(this, _L("Save project"), "", from_u8(leaf),
+                            file_wildcards(FT_PROJECT), wxFD_SAVE | wxFD_OVERWRITE_PROMPT);
+        if (save_dlg.ShowModal() != wxID_OK)
+            return;
+        const boost::filesystem::path dest(save_dlg.GetPath().utf8_str().data());
+        // export_3mf reports failure by return code (no exception); Silence
+        // keeps the save a pure COPY - without it the default strategy would
+        // silently rebind the project's filename to the rescue copy, breaking
+        // the "dirty state untouched" promise above.
+        if (export_3mf(dest, SaveStrategy::Silence) == 0) {
+            MessageDialog dlg(wxGetApp().mainframe, _L("A copy of the project has been saved."), wxString::Format(_(L("%s")), SLIC3R_APP_FULL_NAME), wxOK);
+            dlg.ShowModal();
+        }
+        else {
+            WarningDialog dlg(wxGetApp().mainframe, _L("Saving the project failed. The project could not be saved."), wxEmptyString, wxOK);
+            dlg.ShowModal();
+        }
+    } catch (const std::bad_alloc&) {
+        show_error(wxGetApp().mainframe, _L("Saving failed because of low memory; the project could not be saved."));
+    } catch (const std::exception &e) {
+        show_error(wxGetApp().mainframe, _L("Save failed") + from_u8(e.what()));
+    } catch (...) {
+        // even the failure notices above may fail to allocate; swallow
+    }
+}
+
 //BBS: add project slice logic
 void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
 {
@@ -15854,14 +15115,67 @@ void Plater::priv::on_process_completed(SlicingProcessCompletedEvent &evt)
     // This bool stops showing export finished notification even when process_completed_with_error is false
     bool has_error = false;
     if (evt.error()) {
+        bool out_of_memory = false;
+        try {
+            evt.rethrow_exception();
+        } catch (const std::bad_alloc&) {
+            out_of_memory = true;
+        } catch (...) {
+        }
+        // Release the OOM bulk FIRST, before anything that allocates
+        // (format_error_message rethrows and builds strings) and independent
+        // of the popup-menu tracking below: the memory must go back no
+        // matter who consumes the message later. These steps are release-only
+        // plus one KB-level report, running after gigabytes were just
+        // returned - a secondary failure here is accepted (it ends in the
+        // generic terminate) rather than wrapped again.
+        if (out_of_memory) {
+            if (auto *gcode_result = this->background_process.get_current_gcode_result())
+                gcode_result->reset();
+            if (this->printer_technology == ptFFF) {
+                if (this->background_process.m_fff_print)
+                    this->background_process.m_fff_print->clear();
+            } else {
+                if (this->background_process.m_sla_print)
+                    this->background_process.m_sla_print->clear();
+            }
+            // Schedule the rescue dialog BEFORE the report: the CallAfter is a
+            // cheap queue push while the report builds strings - if the report
+            // itself dies on this unguarded event path, the user at least
+            // keeps the scheduled rescue (review trade-off, no extra wrapping).
+            q->CallAfter([plater = q] { plater->offer_save_on_low_memory(); });
+            // The OOM report lives at the catch sites (not in the new handler):
+            // the stack has unwound and the slicing data was just released, so
+            // running the Sentry SDK is safe here.
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                    "memory allocation failed (out of memory, background slicing)",
+                                    "on_process_completed", "out_of_memory", "true");
+            // The toolpath renderer keeps its own CPU-side copy of the move
+            // data (PathLayerStack per-node tables) which the gcode-result
+            // reset above does not touch. reset() drops the whole preview
+            // side (CPU + GPU) and the next successful slice rebuilds it.
+            this->preview->get_canvas3d()->get_gcode_viewer().reset();
+#ifdef _WIN32
+            HeapCompact(GetProcessHeap(), 0);
+#endif
+        }
         auto message = evt.format_error_message();
+        // The low-memory dialog was already scheduled inside the release block
+        // above (before the report), so it also runs for an OOM that arrived
+        // while a popup menu was tracked (the menu is closed by the time the
+        // posted event runs).
         if (evt.critical_error()) {
-            if (q->m_tracking_popup_menu) {
-                // We don't want to pop-up a message box when tracking a pop-up menu.
-                // We postpone the error message instead.
+            if (q->m_tracking_popup_menu && !out_of_memory) {
+                // We don't want to pop-up a message box when tracking a pop-up
+                // menu. We postpone the error message instead. An OOM takes the
+                // scheduled low-memory dialog above - postponing here as well
+                // would pop two dialogs once the menu closes.
                 q->m_tracking_popup_menu_error_message = message.first;
             } else {
-                show_error(q, message.first, message.second.size() != 0 && message.second[0] != 0);
+                if (!out_of_memory) {
+                    show_error(q, message.first, message.second.size() != 0 && message.second[0] != 0);
+                }
+
                 notification_manager->set_slicing_progress_hidden();
             }
         } else {
@@ -17147,7 +16461,16 @@ bool Plater::priv::can_set_instance_to_object() const
 
 bool Plater::priv::can_split(bool to_objects) const
 {
-    return sidebar->obj_list()->is_splittable(to_objects);
+    // Deciding this builds a full vertex-face index over the mesh (tens of MB
+    // on large models) and runs inside the idle-driven toolbar refresh, which
+    // wx dispatches without exception protection - an OOM here must not
+    // escape or the process dies without a dialog (crashpad grabs it).
+    try {
+        return sidebar->obj_list()->is_splittable(to_objects);
+    } catch (const std::bad_alloc&) {
+        BOOST_LOG_TRIVIAL(error) << "can_split: out of memory, disabling the split action";
+        return false;
+    }
 }
 
 bool Plater::priv::can_fillcolor() const
@@ -19240,6 +18563,8 @@ void Plater::calib_max_vol_speed(const Calib_Params& params)
         return;
 
     add_model(false, Slic3r::resources_dir() + "/calib/volumetric_speed/SpeedTestStructure.step");
+    if (model().objects.empty())
+        return;
 
     auto print_config = &wxGetApp().preset_bundle->prints.get_edited_preset().config;
     auto filament_config = &wxGetApp().preset_bundle->filaments.get_edited_preset().config;
@@ -19797,7 +19122,17 @@ std::vector<size_t> Plater::load_files(const std::vector<fs::path>& input_files,
     p->m_slice_all_only_has_gcode = false;
     //BBS: wish to reset all plates stats item selected state when load a new file
     p->preview->get_canvas3d()->reset_select_plate_toolbar_selection();
-    std::vector<size_t> loaded = p->load_files(input_files, strategy, ask_multi);
+    std::vector<size_t> loaded;
+    try {
+        loaded = p->load_files(input_files, strategy, ask_multi);
+    } catch (const std::bad_alloc& ex) {
+        // Importing a too large model is recoverable: log and route to the
+        // shared low-memory dialog (log + optional save) instead of letting
+        // the bad_alloc escape to OnExceptionInMainLoop, whose generic
+        // handler terminates the process.
+        BOOST_LOG_TRIVIAL(error) << "load_files: out of memory: " << ex.what();
+        CallAfter([this] { offer_save_on_low_memory(); });
+    }
     if (!loaded.empty())
     {
         // After loading a project, initialize the filament temp mixing state
@@ -22013,6 +21348,10 @@ void Plater::record_slice_preset(std::string action)
         auto filament_presets = wxGetApp().preset_bundle->filament_presets;
         for (int i = 0; i < filament_presets.size(); ++i) {
             auto filament_preset = wxGetApp().preset_bundle->filaments.find_preset(filament_presets[i]);
+            if (filament_preset == nullptr) {
+                BOOST_LOG_TRIVIAL(warning) << "Cannot record missing filament preset: " << filament_presets[i];
+                continue;
+            }
             if (filament_preset->is_system) {
                 j["filament_preset_" + std::to_string(i)] = filament_preset->name;
             }
@@ -22755,14 +22094,14 @@ void Plater::on_filaments_delete(size_t num_filaments, size_t filament_id, int r
 
 
 // BBS.
-void Plater::on_filaments_change(size_t num_filaments)
+void Plater::on_filaments_change(size_t num_filaments, bool mixed_edit)
 {
     // only update elements in plater
     update_filament_colors_in_full_config();
 
     const size_t old_num_filaments = sidebar().combos_filament().size();
     const bool auto_generate_before = MixedFilamentManager::auto_generate_enabled();
-    const bool allow_auto_gradients = p->confirm_auto_generated_gradients(this, num_filaments);
+    const bool   allow_auto_gradients  = (mixed_edit ? auto_generate_before : p->confirm_auto_generated_gradients(this, num_filaments));
     auto summarize_uint_vector = [](const std::vector<unsigned int> &values, size_t max_items = 24) {
         std::string out = "[";
         const size_t n = std::min(values.size(), max_items);
@@ -22827,6 +22166,23 @@ void Plater::on_filaments_change(size_t num_filaments)
         }
     }
 
+    // Manage publishes a complete recipe edit. Remap all config references as
+    // well as painted facets, and keep the saved recipe order during UI refresh.
+    if (mixed_edit && have_explicit_remap) {
+        remap_dynamic_config_feature_filament_ids(*p->config, id_remap, total_filaments);
+        remap_dynamic_config_feature_filament_ids(preset_bundle->project_config, id_remap, total_filaments);
+        remap_dynamic_config_feature_filament_ids(preset_bundle->prints.get_edited_preset().config, id_remap, total_filaments);
+        for (ModelObject* object : wxGetApp().model().objects) {
+            remap_model_config_filament_ids(object->config, id_remap, total_filaments);
+            for (ModelVolume* volume : object->volumes)
+                remap_model_config_filament_ids(volume->config, id_remap, total_filaments);
+            for (auto& range : object->layer_config_ranges)
+                remap_model_config_filament_ids(range.second, id_remap, total_filaments);
+        }
+        for (int i = 0; i < get_partplate_list().get_plate_count(); ++i)
+            remap_dynamic_config_feature_filament_ids(*get_partplate_list().get_plate(i)->config(), id_remap, total_filaments);
+    }
+
     size_t changed_entries = 0;
     std::string changed_map_preview = "[";
     for (size_t i = 1; i < state_map.size(); ++i) {
@@ -22885,7 +22241,7 @@ void Plater::on_filaments_change(size_t num_filaments)
 
     // Keep UI refresh after model remap. Some UI update paths may trigger
     // scene/model sync that assumes already-remapped MMU state.
-    sidebar().on_filaments_change(num_filaments);
+    sidebar().on_filaments_change(num_filaments, !mixed_edit);
     sidebar().obj_list()->update_objects_list_filament_column(num_filaments);
 
     Slic3r::GUI::PartPlateList &plate_list = get_partplate_list();
@@ -22962,11 +22318,13 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
 
         // ModelObject config
         bool uses_default_extruder = false;
+        std::vector<const ModelObject*> objects_on_plate;
         for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx)
         {
             const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
             if (!model_object_is_on_plate(plate, obj_idx, model_object))
                 continue;
+            objects_on_plate.push_back(model_object);
             collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
 
             // Height range modifiers override the extruder / feature filaments
@@ -22990,13 +22348,11 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
             }
         }
 
-        // Collect from the Plater working config. The approach balances
-        // sensitivity against false positives:
+        // Collect from the Plater working config:
         // - Global features (wipe tower, support) always apply → always collected.
-        // - Feature-specific keys (wall_filament, infill) depend on the global
-        //   process defaults. They are only collected when at least one object
-        //   on the plate uses the default extruder (e=0), which means those
-        //   defaults WILL affect the actual slicing output.
+        // - Feature-specific keys (wall_filament, infill) are resolved per object:
+        //   the global value flows into objects that have not overridden the key,
+        //   and a global "Default" (0) resolves to each object's own filament.
         {
             // Always collect: features that cannot be overridden per-object.
             static const std::vector<const char*> always_collect = {"wipe_tower_filament", "support_filament", "support_interface_filament"};
@@ -23007,18 +22363,7 @@ bool Plater::check_filament_temp_mixing(int plate_index, FilamentTempMixingDetai
                     used_slots_0_based.insert(option->value - 1);
             }
 
-            // If any object uses e=0, the global process defaults for
-            // wall / infill extruders apply and must be collected.
-            if (uses_default_extruder)
-            {
-                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-                for (const char* key : default_keys)
-                {
-                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
-                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                        used_slots_0_based.insert(option->value - 1);
-                }
-            }
+            collect_feature_filament_slots_from_global_config(objects_on_plate, *this->config(), num_filaments, used_slots_0_based);
         }
 
         // Resolve the global default extruder if any object on this plate
@@ -23297,10 +22642,12 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
         collect_filament_slots_from_config(*plate->config(), num_filaments, used_slots_0_based);
 
         bool uses_default_extruder = false;
+        std::vector<const ModelObject*> objects_on_plate;
         for (size_t obj_idx = 0; obj_idx < wxGetApp().model().objects.size(); ++obj_idx) {
             const ModelObject* model_object = wxGetApp().model().objects[obj_idx];
             if (!model_object_is_on_plate(plate, obj_idx, model_object))
                 continue;
+            objects_on_plate.push_back(model_object);
             collect_filament_slots_from_model_config(model_object->config, num_filaments, used_slots_0_based);
 
             // Height range modifiers override the extruder / feature filaments
@@ -23329,14 +22676,7 @@ bool Plater::check_flow_ratio_zero(int plate_index, FlowRatioZeroDetail& detail)
                     used_slots_0_based.insert(option->value - 1);
             }
 
-            if (uses_default_extruder) {
-                static const std::vector<const char*> default_keys = {"wall_filament", "sparse_infill_filament", "solid_infill_filament"};
-                for (const char* key : default_keys) {
-                    const ConfigOptionInt* option = config()->option<ConfigOptionInt>(key);
-                    if (option != nullptr && option->value >= 1 && option->value <= num_filaments)
-                        used_slots_0_based.insert(option->value - 1);
-                }
-            }
+            collect_feature_filament_slots_from_global_config(objects_on_plate, *this->config(), num_filaments, used_slots_0_based);
         }
 
         if (uses_default_extruder) {
@@ -25494,5 +24834,4 @@ SuppressBackgroundProcessingUpdate::~SuppressBackgroundProcessingUpdate()
 }
 
 }}    // namespace Slic3r::GUI
-
 

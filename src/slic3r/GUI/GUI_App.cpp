@@ -1,4 +1,5 @@
 #include "libslic3r/Technologies.hpp"
+#include "app_common/SentryWrapper.hpp"
 #include "libslic3r/AllowlistManager.hpp"
 #include "libslic3r/FilamentHotBedNozzleRules.hpp"
 #include "GUI_App.hpp"
@@ -958,11 +959,25 @@ static void generic_exception_handle()
         // bad_alloc in main thread is most likely fatal. Report immediately to the user (wxLogError would be delayed)
         // and terminate the app so it is at least certain to happen now.
         BOOST_LOG_TRIVIAL(error) << boost::format("std::bad_alloc exception: %1%") % ex.what();
+        // The OOM report lives at the catch sites (not in the new handler):
+        // the stack has unwound here, so running the Sentry SDK is safe.
+        try {
+            Slic3r::sentryReportLog(Slic3r::SENTRY_LOG_FATAL,
+                                    "memory allocation failed (out of memory, main thread)",
+                                    "generic_exception_handle", "out_of_memory", "true");
+        } catch (...) {
+        }
         flush_logs();
-        wxString errmsg = wxString::Format(_L("Snapmaker Orca will terminate because of running out of memory."
-                                              "It may be a bug. It will be appreciated if you report the issue to our team."));
-        wxMessageBox(errmsg + "\n\n" + wxString(ex.what()), _L("Fatal error"), wxOK | wxICON_ERROR);
+        wxString errmsg = wxString::Format(_L("Snapmaker Orca has run out of memory and must close.\n\n"
+                                              "Your project may be too large for the available memory. Try closing other applications, reducing the model complexity or plate count, and restart."));
+        wxMessageBox(errmsg, wxString::Format(_(L("%s error")), SLIC3R_APP_FULL_NAME), wxOK | wxICON_ERROR);
 
+        // terminate() gives the SDK no flush of its own; give the queued
+        // report the same bounded delivery window as the farewell path.
+        try {
+            Slic3r::flushSentry(5000);
+        } catch (...) {
+        }
         std::terminate();
         //throw;
      } catch (const boost::io::bad_format_string& ex) {
@@ -6985,25 +7000,26 @@ void GUI_App::load_current_presets(bool active_preset_combox/*= false*/, bool ch
 
     if (printer_technology == ptFFF && preset_bundle != nullptr) {
         static const t_config_option_keys mixed_project_option_keys = {
-            "mixed_filament_gradient_mode",
-            "mixed_filament_height_lower_bound",
-            "mixed_filament_height_upper_bound",
-            "mixed_filament_advanced_dithering",
-            "mixed_filament_component_bias_enabled",
-            "mixed_filament_surface_indentation",
-            "mixed_filament_region_collapse",
-            "mixed_color_layer_height_a",
-            "mixed_color_layer_height_b",
-            "dithering_z_step_size",
-            "dithering_local_z_mode",
-            "dithering_local_z_whole_objects",
-            "dithering_local_z_infill",
-            "dithering_local_z_direct_multicolor",
-            "dithering_step_painted_zones_only",
-            "mixed_filament_pointillism_pixel_size",
-            "mixed_filament_pointillism_line_gap",
-            "mixed_filament_definitions"
-        };
+                                                                       "mixed_filament_gradient_mode",
+                                                                       "mixed_filament_advanced_dithering",
+                                                                       "mixed_filament_component_bias_enabled",
+                                                                       "mixed_filament_surface_indentation",
+                                                                       "mixed_filament_region_collapse",
+                                                                       "mixed_color_layer_height_a",
+                                                                       "mixed_color_layer_height_b",
+                                                                       "dithering_z_step_size",
+                                                                       "dithering_local_z_mode",
+                                                                       "dithering_local_z_whole_objects",
+                                                                       "dithering_local_z_infill",
+                                                                       "dithering_local_z_direct_multicolor",
+                                                                       "dithering_local_z_preserve_first_layer",
+                                                                       "dithering_local_z_independent_layer_height",
+                                                                       "dithering_local_z_gradient_layer_height",
+                                                                       "dithering_local_z_gradient_middle_filament_window",
+                                                                       "dithering_step_painted_zones_only",
+                                                                       "mixed_filament_pointillism_pixel_size",
+                                                                       "mixed_filament_pointillism_line_gap",
+                                                                       "mixed_filament_definitions"};
 
         // Keep the Mixed Filaments sidebar state in sync when presets are reloaded
         // programmatically (for example after New Project). These options are also

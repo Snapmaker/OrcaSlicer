@@ -8,7 +8,9 @@
 #include "Flow.hpp"
 #include "Geometry/ConvexHull.hpp"
 #include "I18N.hpp"
-#include "LocalZOrderOptimizer.hpp"
+#include "LocalZ/LocalZSchedule.hpp"
+#include "LocalZ/LocalZMaskPreparation.hpp"
+#include "LocalZ/LocalZClipper.hpp"
 #include "ShortestPath.hpp"
 #include "Thread.hpp"
 #include "Time.hpp"
@@ -57,8 +59,6 @@ PrintRegion::PrintRegion(PrintRegionConfig &&config) : PrintRegion(std::move(con
 
 namespace {
 
-constexpr double LOCAL_Z_PERIMETER_MASK_EXPAND_MM = 0.10;
-
 struct LocalZWipeTowerToolchange
 {
     unsigned int old_tool { 0 };
@@ -72,50 +72,25 @@ struct LocalZWipeTowerPassRef
     std::vector<unsigned int> extruders;
 };
 
-static inline ExPolygons local_z_compensate_masks_for_wipe_tower(const ExPolygons &src_masks,
-                                                                 const float       delta_scaled,
-                                                                 const bool        fallback_to_source)
-{
-    if (src_masks.empty() || std::abs(delta_scaled) <= EPSILON)
-        return src_masks;
 
-    ExPolygons compensated = offset_ex(src_masks, delta_scaled);
-    if (!compensated.empty() && compensated.size() > 1)
-        compensated = union_ex(compensated);
 
-    if (compensated.empty() && fallback_to_source)
-        return src_masks;
-    return compensated;
-}
-
-static bool local_z_segments_exist(Polylines segments)
-{
-    for (Polyline &segment : segments) {
-        if (segment.is_valid())
-            return true;
-    }
-    return false;
-}
-
-static bool extrusion_collection_has_local_z_segment(const ExtrusionEntityCollection &source,
-                                                     const ExPolygons               &include_masks)
+static bool extrusion_collection_has_local_z_segment(const ExtrusionEntityCollection& source, const LocalZClipper& include_masks)
 {
     if (source.entities.empty() || include_masks.empty())
         return false;
 
-    ExtrusionEntityCollection flattened = source.flatten(false);
-    for (const ExtrusionEntity *entity : flattened.entities) {
+    for (const ExtrusionEntity* entity : source.flatten_refs()) {
         if (const auto *path = dynamic_cast<const ExtrusionPath*>(entity)) {
-            if (local_z_segments_exist(intersection_pl(Polylines{path->polyline}, include_masks)))
+            if (include_masks.intersects(path->polyline))
                 return true;
         } else if (const auto *multipath = dynamic_cast<const ExtrusionMultiPath*>(entity)) {
             for (const ExtrusionPath &path : multipath->paths) {
-                if (local_z_segments_exist(intersection_pl(Polylines{path.polyline}, include_masks)))
+                if (include_masks.intersects(path.polyline))
                     return true;
             }
         } else if (const auto *loop = dynamic_cast<const ExtrusionLoop*>(entity)) {
             for (const ExtrusionPath &path : loop->paths) {
-                if (local_z_segments_exist(intersection_pl(Polylines{path.polyline}, include_masks)))
+                if (include_masks.intersects(path.polyline))
                     return true;
             }
         }
@@ -124,7 +99,7 @@ static bool extrusion_collection_has_local_z_segment(const ExtrusionEntityCollec
     return false;
 }
 
-static bool layer_has_local_z_extrusions(const Layer &layer, const ExPolygons &pass_masks, bool include_infill)
+static bool layer_has_local_z_extrusions(const Layer& layer, const LocalZClipper& pass_masks, bool include_infill)
 {
     if (pass_masks.empty())
         return false;
@@ -151,16 +126,6 @@ static bool layer_has_local_z_extrusions(const Layer &layer, const ExPolygons &p
     return false;
 }
 
-static inline int shared_local_z_extruder_for_wipe_tower(const std::vector<unsigned int> &lhs,
-                                                         const std::vector<unsigned int> &rhs)
-{
-    for (unsigned int extruder_id : lhs) {
-        if (std::find(rhs.begin(), rhs.end(), extruder_id) != rhs.end())
-            return static_cast<int>(extruder_id);
-    }
-    return -1;
-}
-
 static std::vector<unsigned int> rotate_extruders_to_start_with(const std::vector<unsigned int> &extruders,
                                                                 unsigned int                      start_extruder)
 {
@@ -171,17 +136,15 @@ static std::vector<unsigned int> rotate_extruders_to_start_with(const std::vecto
     return rotated;
 }
 
-static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolchanges(
-    const Print                              &print,
-    const std::vector<GCode::LayerToPrint>   &layers,
-    int                                       start_extruder)
+static std::vector<LocalZWipeTowerPassRef> collect_local_z_wipe_tower_passes(const Print&                            print,
+                                                                             const std::vector<GCode::LayerToPrint>& layers)
 {
     std::vector<LocalZWipeTowerPassRef> pass_refs;
-    const bool  local_z_whole_objects_enabled = print.full_print_config().opt_bool("dithering_local_z_whole_objects");
     const bool  local_z_infill_enabled        = print.full_print_config().opt_bool("dithering_local_z_infill");
-    const float local_z_perimeter_mask_expand = float(scale_(LOCAL_Z_PERIMETER_MASK_EXPAND_MM));
 
     for (size_t layer_to_print_idx = 0; layer_to_print_idx < layers.size(); ++layer_to_print_idx) {
+        if (print.canceled())
+            throw CanceledException();
         const GCode::LayerToPrint &layer_to_print = layers[layer_to_print_idx];
         if (layer_to_print.object_layer == nullptr)
             continue;
@@ -191,65 +154,20 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
         if (print_object == nullptr)
             continue;
 
-        const size_t       layer_id   = size_t(layer_to_print.object_layer->id());
-        const auto        &intervals  = print_object->local_z_intervals();
-        const auto        &plans      = print_object->local_z_sublayer_plan();
-        const auto interval_it = std::find_if(intervals.begin(), intervals.end(), [layer_id](const LocalZInterval &interval) {
-            return interval.layer_id == layer_id;
-        });
-        if (interval_it == intervals.end() || !interval_it->has_mixed_paint || interval_it->sublayer_count <= 1 ||
-            interval_it->first_sublayer_idx >= plans.size()) {
+        const auto&           plans       = print_object->local_z_sublayer_plan();
+        const LocalZInterval* interval_it = print_object->local_z_interval_for_layer(size_t(layer_to_print.object_layer->id()));
+        if (interval_it == nullptr || !interval_it->is_managed(plans))
             continue;
-        }
 
         const size_t first_idx = interval_it->first_sublayer_idx;
         const size_t end_idx   = std::min(plans.size(), first_idx + interval_it->sublayer_count);
         for (size_t plan_idx = first_idx; plan_idx < end_idx; ++plan_idx) {
-            const SubLayerPlan &plan = plans[plan_idx];
+            const SubLayerPlan& plan = plans[plan_idx];
             if (!plan.split_interval)
                 continue;
 
-            const size_t plan_mask_slots =
-                std::max(plan.painted_masks_by_extruder.size(), plan.fixed_painted_masks_by_extruder.size());
-            std::vector<ExPolygons> compensated_masks_by_extruder(plan_mask_slots, ExPolygons());
-
-            ExPolygons fixed_raw_masks_union;
-            for (const ExPolygons &fixed_masks : plan.fixed_painted_masks_by_extruder) {
-                if (!fixed_masks.empty())
-                    append(fixed_raw_masks_union, fixed_masks);
-            }
-            if (!fixed_raw_masks_union.empty() && fixed_raw_masks_union.size() > 1)
-                fixed_raw_masks_union = union_ex(fixed_raw_masks_union);
-
-            const ExPolygons fixed_compensated_guard =
-                fixed_raw_masks_union.empty() ?
-                    ExPolygons() :
-                    local_z_compensate_masks_for_wipe_tower(fixed_raw_masks_union, local_z_perimeter_mask_expand, true);
-
-            for (size_t extruder_id = 0; extruder_id < plan_mask_slots; ++extruder_id) {
-                const ExPolygons mixed_raw_masks =
-                    extruder_id < plan.painted_masks_by_extruder.size() ? plan.painted_masks_by_extruder[extruder_id] : ExPolygons();
-                const ExPolygons fixed_raw_masks =
-                    extruder_id < plan.fixed_painted_masks_by_extruder.size() ? plan.fixed_painted_masks_by_extruder[extruder_id] :
-                                                                               ExPolygons();
-                if (mixed_raw_masks.empty() && fixed_raw_masks.empty())
-                    continue;
-
-                ExPolygons compensated;
-                if (!mixed_raw_masks.empty()) {
-                    ExPolygons compensated_mixed =
-                        local_z_compensate_masks_for_wipe_tower(mixed_raw_masks, local_z_perimeter_mask_expand, true);
-                    if (local_z_whole_objects_enabled && !fixed_compensated_guard.empty())
-                        compensated_mixed = diff_ex(compensated_mixed, fixed_compensated_guard);
-                    if (!compensated_mixed.empty())
-                        append(compensated, compensated_mixed);
-                }
-                if (!fixed_raw_masks.empty())
-                    append(compensated, fixed_raw_masks);
-                if (!compensated.empty() && compensated.size() > 1)
-                    compensated = union_ex(compensated);
-                compensated_masks_by_extruder[extruder_id] = std::move(compensated);
-            }
+            const auto  prepared_masks                = prepare_local_z_pass_masks(plan);
+            const auto& compensated_masks_by_extruder = prepared_masks.by_extruder;
 
             LocalZWipeTowerPassRef pass_ref;
             pass_ref.layer_to_print_idx = layer_to_print_idx;
@@ -257,10 +175,10 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
             for (size_t extruder_id = 0; extruder_id < plan.painted_masks_by_extruder.size(); ++extruder_id) {
                 if (extruder_id >= compensated_masks_by_extruder.size())
                     continue;
-                const ExPolygons &pass_masks = compensated_masks_by_extruder[extruder_id];
+                const ExPolygons& pass_masks = compensated_masks_by_extruder[extruder_id];
                 if (pass_masks.empty())
                     continue;
-                if (layer_has_local_z_extrusions(*layer_to_print.object_layer, pass_masks, local_z_infill_enabled))
+                if (layer_has_local_z_extrusions(*layer_to_print.object_layer, LocalZClipper(pass_masks), local_z_infill_enabled))
                     pass_ref.extruders.push_back(unsigned(extruder_id));
             }
 
@@ -268,7 +186,6 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
                 pass_refs.emplace_back(std::move(pass_ref));
         }
     }
-
     std::sort(pass_refs.begin(), pass_refs.end(), [](const LocalZWipeTowerPassRef &lhs, const LocalZWipeTowerPassRef &rhs) {
         assert(lhs.plan != nullptr && rhs.plan != nullptr);
         if (lhs.plan->print_z != rhs.plan->print_z)
@@ -278,225 +195,29 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
         return lhs.plan->pass_index < rhs.plan->pass_index;
     });
 
-    auto collect_toolchanges_legacy = [&](int start_tool) {
-        std::vector<LocalZWipeTowerToolchange> legacy_toolchanges;
-        int active_extruder = start_tool;
-        size_t pass_ref_idx = 0;
-        while (pass_ref_idx < pass_refs.size()) {
-            size_t pass_group_end = pass_ref_idx + 1;
-            while (pass_group_end < pass_refs.size() &&
-                   std::abs(pass_refs[pass_ref_idx].plan->print_z - pass_refs[pass_group_end].plan->print_z) <= EPSILON) {
-                ++pass_group_end;
-            }
+    return pass_refs;
+}
 
-            std::vector<unsigned int> pass_group_extruders;
-            for (size_t group_idx = pass_ref_idx; group_idx < pass_group_end; ++group_idx)
-                for (unsigned int extruder_id : pass_refs[group_idx].extruders)
-                    if (std::find(pass_group_extruders.begin(), pass_group_extruders.end(), extruder_id) == pass_group_extruders.end())
-                        pass_group_extruders.push_back(extruder_id);
-
-            std::vector<unsigned int> next_group_extruders;
-            if (pass_group_end < pass_refs.size()) {
-                size_t next_group_end = pass_group_end + 1;
-                while (next_group_end < pass_refs.size() &&
-                       std::abs(pass_refs[pass_group_end].plan->print_z - pass_refs[next_group_end].plan->print_z) <= EPSILON) {
-                    ++next_group_end;
-                }
-                for (size_t group_idx = pass_group_end; group_idx < next_group_end; ++group_idx)
-                    for (unsigned int extruder_id : pass_refs[group_idx].extruders)
-                        if (std::find(next_group_extruders.begin(), next_group_extruders.end(), extruder_id) == next_group_extruders.end())
-                            next_group_extruders.push_back(extruder_id);
-            }
-
-            const int preferred_last_extruder =
-                shared_local_z_extruder_for_wipe_tower(pass_group_extruders, next_group_extruders);
-            const std::vector<unsigned int> ordered_group_extruders =
-                LocalZOrderOptimizer::order_bucket_extruders(pass_group_extruders, active_extruder, preferred_last_extruder);
-
-            for (unsigned int extruder_id : ordered_group_extruders) {
-                if (active_extruder >= 0 && active_extruder != int(extruder_id))
-                    legacy_toolchanges.push_back(LocalZWipeTowerToolchange{unsigned(active_extruder), extruder_id});
-                active_extruder = int(extruder_id);
-            }
-
-            pass_ref_idx = pass_group_end;
-        }
-
-        return legacy_toolchanges;
-    };
-
-    const bool dependency_chain_mode =
-        !pass_refs.empty() &&
-        std::all_of(pass_refs.begin(), pass_refs.end(), [](const LocalZWipeTowerPassRef &pass_ref) {
-            return pass_ref.plan != nullptr && pass_ref.plan->dependency_group != 0;
-        });
-    if (!dependency_chain_mode)
-        return collect_toolchanges_legacy(start_extruder);
-
-    struct ChainKey {
-        size_t layer_to_print_idx { 0 };
-        size_t dependency_group { 0 };
-
-        bool operator<(const ChainKey &rhs) const
-        {
-            if (layer_to_print_idx != rhs.layer_to_print_idx)
-                return layer_to_print_idx < rhs.layer_to_print_idx;
-            return dependency_group < rhs.dependency_group;
-        }
-    };
-    struct PassState {
-        const LocalZWipeTowerPassRef *pass_ref { nullptr };
-        std::vector<unsigned int>     remaining_extruders;
-        size_t                        chain_idx { 0 };
-        size_t                        chain_pos { 0 };
-        bool                          ready { false };
-        bool                          completed { false };
-    };
-
-    std::map<ChainKey, size_t> chain_index_by_key;
-    std::vector<std::vector<size_t>> chains;
-    std::vector<PassState>           pass_states;
-    pass_states.reserve(pass_refs.size());
-    for (const LocalZWipeTowerPassRef &pass_ref : pass_refs) {
-        ChainKey chain_key { pass_ref.layer_to_print_idx, pass_ref.plan->dependency_group };
-        auto [it_chain, inserted] = chain_index_by_key.emplace(chain_key, chains.size());
-        if (inserted)
-            chains.emplace_back();
-
-        const size_t chain_idx = it_chain->second;
-        const size_t pass_state_idx = pass_states.size();
-        pass_states.push_back(PassState{ &pass_ref, pass_ref.extruders, chain_idx, 0, false, false });
-        chains[chain_idx].push_back(pass_state_idx);
+static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolchanges(const std::vector<LocalZWipeTowerPassRef>& pass_refs,
+                                                                                     int start_extruder)
+{
+    std::vector<LocalZSchedulePass> inputs;
+    inputs.reserve(pass_refs.size());
+    for (const auto& ref : pass_refs) {
+        const auto& plan = *ref.plan;
+        inputs.push_back(
+            {ref.layer_to_print_idx, plan.pass_index, plan.print_z, plan.dependency_group, plan.dependency_order, ref.extruders});
     }
-
-    for (std::vector<size_t> &chain : chains) {
-        std::sort(chain.begin(), chain.end(), [&pass_states](size_t lhs_idx, size_t rhs_idx) {
-            const SubLayerPlan &lhs = *pass_states[lhs_idx].pass_ref->plan;
-            const SubLayerPlan &rhs = *pass_states[rhs_idx].pass_ref->plan;
-            if (lhs.dependency_order != rhs.dependency_order)
-                return lhs.dependency_order < rhs.dependency_order;
-            if (std::abs(lhs.print_z - rhs.print_z) > EPSILON)
-                return lhs.print_z < rhs.print_z;
-            return lhs.pass_index < rhs.pass_index;
-        });
-        for (size_t chain_pos = 0; chain_pos < chain.size(); ++chain_pos)
-            pass_states[chain[chain_pos]].chain_pos = chain_pos;
-        if (!chain.empty())
-            pass_states[chain.front()].ready = true;
-    }
-
-    auto pass_contains_extruder = [](const PassState &pass_state, unsigned int extruder_id) {
-        return std::find(pass_state.remaining_extruders.begin(), pass_state.remaining_extruders.end(), extruder_id) !=
-               pass_state.remaining_extruders.end();
-    };
-
-    auto choose_ready_extruder = [&](int active_extruder) -> int {
-        std::vector<unsigned int> ready_extruders;
-        for (const PassState &pass_state : pass_states) {
-            if (!pass_state.ready || pass_state.completed)
-                continue;
-            for (unsigned int extruder_id : pass_state.remaining_extruders)
-                if (std::find(ready_extruders.begin(), ready_extruders.end(), extruder_id) == ready_extruders.end())
-                    ready_extruders.push_back(extruder_id);
-        }
-        if (ready_extruders.empty())
-            return -1;
-        if (active_extruder >= 0 &&
-            std::find(ready_extruders.begin(), ready_extruders.end(), unsigned(active_extruder)) != ready_extruders.end()) {
-            return active_extruder;
-        }
-
-        int    best_extruder = -1;
-        size_t best_ready_count = 0;
-        size_t best_future_count = 0;
-        for (unsigned int extruder_id : ready_extruders) {
-            size_t ready_count = 0;
-            size_t future_count = 0;
-            for (const PassState &pass_state : pass_states) {
-                if (pass_state.completed || !pass_contains_extruder(pass_state, extruder_id))
-                    continue;
-                ++future_count;
-                if (pass_state.ready)
-                    ++ready_count;
-            }
-
-            if (best_extruder < 0 ||
-                ready_count > best_ready_count ||
-                (ready_count == best_ready_count && future_count > best_future_count) ||
-                (ready_count == best_ready_count && future_count == best_future_count && extruder_id < unsigned(best_extruder))) {
-                best_extruder = int(extruder_id);
-                best_ready_count = ready_count;
-                best_future_count = future_count;
-            }
-        }
-        return best_extruder;
-    };
-
+    const auto schedule = build_local_z_schedule(inputs, start_extruder);
+    if (schedule.used_dependency_fallback)
+        BOOST_LOG_TRIVIAL(warning) << "Local-Z wipe tower scheduler used height-order fallback";
     std::vector<LocalZWipeTowerToolchange> toolchanges;
-    int                                    active_extruder = start_extruder;
-    size_t                                 completed_passes = 0;
-    while (completed_passes < pass_states.size()) {
-        const int chosen_extruder = choose_ready_extruder(active_extruder);
-        if (chosen_extruder < 0) {
-            BOOST_LOG_TRIVIAL(warning) << "Local-Z wipe tower dependency scheduler deadlocked, falling back"
-                                       << " start_extruder=" << start_extruder
-                                       << " pass_count=" << pass_refs.size();
-            return collect_toolchanges_legacy(start_extruder);
-        }
-
-        if (active_extruder >= 0 && active_extruder != chosen_extruder)
-            toolchanges.push_back(LocalZWipeTowerToolchange{unsigned(active_extruder), unsigned(chosen_extruder)});
-        active_extruder = chosen_extruder;
-
-        bool                completed_any = false;
-        std::vector<size_t> newly_completed;
-        for (size_t pass_state_idx = 0; pass_state_idx < pass_states.size(); ++pass_state_idx) {
-            PassState &pass_state = pass_states[pass_state_idx];
-            if (!pass_state.ready || pass_state.completed)
-                continue;
-
-            auto it_extruder = std::find(pass_state.remaining_extruders.begin(),
-                                         pass_state.remaining_extruders.end(),
-                                         unsigned(chosen_extruder));
-            if (it_extruder == pass_state.remaining_extruders.end())
-                continue;
-
-            pass_state.remaining_extruders.erase(it_extruder);
-            completed_any = true;
-            if (pass_state.remaining_extruders.empty())
-                newly_completed.push_back(pass_state_idx);
-        }
-
-        if (!completed_any) {
-            BOOST_LOG_TRIVIAL(warning) << "Local-Z wipe tower dependency scheduler made no progress, falling back"
-                                       << " start_extruder=" << start_extruder
-                                       << " active_extruder=" << active_extruder
-                                       << " chosen_extruder=" << chosen_extruder
-                                       << " pass_count=" << pass_refs.size();
-            return collect_toolchanges_legacy(start_extruder);
-        }
-
-        for (size_t pass_state_idx : newly_completed) {
-            PassState &pass_state = pass_states[pass_state_idx];
-            if (pass_state.completed)
-                continue;
-
-            pass_state.ready = false;
-            pass_state.completed = true;
-            ++completed_passes;
-
-            const std::vector<size_t> &chain = chains[pass_state.chain_idx];
-            const size_t next_chain_pos = pass_state.chain_pos + 1;
-            if (next_chain_pos < chain.size())
-                pass_states[chain[next_chain_pos]].ready = true;
-        }
+    int                                    active = start_extruder;
+    for (const auto& phase : schedule.phases) {
+        if (active >= 0 && active != int(phase.extruder_id))
+            toolchanges.push_back({unsigned(active), phase.extruder_id});
+        active = int(phase.extruder_id);
     }
-
-    BOOST_LOG_TRIVIAL(info) << "Local-Z wipe tower dependency scheduler"
-                            << " start_extruder=" << start_extruder
-                            << " pass_count=" << pass_refs.size()
-                            << " chain_count=" << chains.size()
-                            << " toolchanges=" << toolchanges.size();
     return toolchanges;
 }
 
@@ -734,6 +455,9 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         } else if (
                opt_key == "initial_layer_print_height"
             || opt_key == "nozzle_diameter"
+            // Local-Z pass heights are bounded by each nozzle's layer height limits.
+            || opt_key == "min_layer_height"
+            || opt_key == "max_layer_height"
             || opt_key == "filament_shrink"
             || opt_key == "filament_shrinkage_compensation_z"
             || opt_key == "resolution"
@@ -741,16 +465,21 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "dithering_z_step_size"
             || opt_key == "dithering_local_z_mode"
             || opt_key == "dithering_local_z_whole_objects"
+            || opt_key == "dithering_local_z_preserve_first_layer"
             || opt_key == "dithering_local_z_direct_multicolor"
+            || opt_key == "dithering_local_z_independent_layer_height"
+            || opt_key == "dithering_local_z_gradient_layer_height"
+            || opt_key == "dithering_local_z_gradient_middle_filament_window"
             || opt_key == "dithering_step_painted_zones_only"
             || opt_key == "mixed_filament_gradient_mode"
-            || opt_key == "mixed_filament_height_lower_bound"
-            || opt_key == "mixed_filament_height_upper_bound"
             || opt_key == "mixed_filament_advanced_dithering"
             || opt_key == "mixed_filament_component_bias_enabled"
             || opt_key == "mixed_filament_surface_indentation"
             || opt_key == "mixed_filament_region_collapse"
             || opt_key == "mixed_filament_definitions"
+            // Developer switch consumed inside slices_to_regions(): toggling must
+            // force a complete reslice, or the cached region slices hide the change.
+            || opt_key == "enable_overlap_area_carving"
             // Spiral Vase forces different kind of slicing than the normal model:
             // In Spiral Vase mode, holes are closed and only the largest area contour is kept at each layer.
             // Therefore toggling the Spiral Vase on / off requires complete reslicing.
@@ -847,8 +576,6 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             osteps.emplace_back(posSimplifySupportPath);
         } else if (
                opt_key == "initial_layer_line_width"
-            || opt_key == "min_layer_height"
-            || opt_key == "max_layer_height"
             //|| opt_key == "resolution"
             //BBS: when enable arc fitting, we must re-generate perimeter
             || opt_key == "enable_arc_fitting"
@@ -1117,6 +844,48 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
         int                  object_index;
         double         arrange_score;
         double               height;
+        // Y extent (scaled) of the geometry that reaches above extruder_clearance_height_to_rod.
+        // The X rod sits that far above the nozzle and spans the whole X axis, so this is the only
+        // part of an already-printed instance it can collide with while a later instance prints.
+        bool                 has_above_rod   = false;
+        coord_t              above_rod_min_y = 0;
+        coord_t              above_rod_max_y = 0;
+    };
+    // ORCA: Y extent of an instance's geometry above the rod height, in the same coordinates as the
+    // bounding boxes below. Conservative: any triangle with a vertex above the rod contributes all
+    // three of its vertices. Modifiers, blockers and negative volumes are not printed and are skipped.
+    const double rod_height = print.config().extruder_clearance_height_to_rod.value;
+    auto above_rod_y_range = [rod_height](const PrintInstance &instance, coord_t &min_y, coord_t &max_y) -> bool {
+        double ymin = std::numeric_limits<double>::max();
+        double ymax = std::numeric_limits<double>::lowest();
+        bool   any  = false;
+        const Transform3d inst_trafo = instance.model_instance->get_transformation().get_matrix();
+        for (const ModelVolume *volume : instance.print_object->model_object()->volumes) {
+            if (!volume->is_model_part())
+                continue;
+            const Transform3d           trafo = inst_trafo * volume->get_transformation().get_matrix();
+            const indexed_triangle_set &its   = volume->mesh().its;
+            std::vector<double> ys(its.vertices.size()), zs(its.vertices.size());
+            for (size_t i = 0; i < its.vertices.size(); ++i) {
+                const Vec3d p = trafo * its.vertices[i].cast<double>();
+                ys[i] = p.y();
+                zs[i] = p.z();
+            }
+            for (const auto &f : its.indices) {
+                if (zs[f(0)] <= rod_height && zs[f(1)] <= rod_height && zs[f(2)] <= rod_height)
+                    continue;
+                for (int j = 0; j < 3; ++j) {
+                    ymin = std::min(ymin, ys[f(j)]);
+                    ymax = std::max(ymax, ys[f(j)]);
+                }
+                any = true;
+            }
+        }
+        if (any) {
+            min_y = scaled<coord_t>(ymin);
+            max_y = scaled<coord_t>(ymax);
+        }
+        return any;
     };
     auto find_object_index = [](const Model& model, const ModelObject* obj) {
         for (int index = 0; index < model.objects.size(); index++)
@@ -1214,6 +983,16 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
                 struct print_instance_info print_info {&instance, convex_hull.bounding_box(), convex_hull};
                 print_info.height = instance.print_object->height();
                 print_info.object_index = find_object_index(print.model(), print_object->model_object());
+                if (print_object->max_z() > scaled<double>(rod_height)) {
+                    if (print_object->has_support_material()) {
+                        // Full expanded footprints protect unknown support, but also enlarge the legacy Y clearance.
+                        print_info.has_above_rod   = true;
+                        print_info.above_rod_min_y = print_info.bounding_box.min.y();
+                        print_info.above_rod_max_y = print_info.bounding_box.max.y();
+                    } else {
+                        print_info.has_above_rod = above_rod_y_range(instance, print_info.above_rod_min_y, print_info.above_rod_max_y);
+                    }
+                }
                 print_instance_with_bounding_box.push_back(std::move(print_info));
                 convex_hulls_other.emplace_back(std::move(convex_hull));
             }
@@ -1233,109 +1012,116 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
     double hc2              = scale_(print.config().extruder_clearance_height_to_rod); // height to rod
     double printable_height = scale_(print.config().printable_height);
 
-#if 0 //do not sort anymore, use the order in object list
-    auto bed_points = get_bed_shape(print_config);
-    float bed_width = bed_points[1].x() - bed_points[0].x();
-    // 如果扩大以后的多边形的距离小于这个值，就需要严格保证从左到右的打印顺序，否则会撞工具头右侧
-    float unsafe_dist = scale_(print_config.extruder_clearance_max_radius.value - print_config.extruder_clearance_radius.value);
-    struct VecHash
-    {
-        size_t operator()(const Vec2i32 &n1) const
-        {
-            return std::hash<coord_t>()(int(n1(0) * 100 + 100)) + std::hash<coord_t>()(int(n1(1) * 100 + 100)) * 101;
-        }
+    // Both ordering and validation use the same conservative material interval.
+    // The footprint already includes the arrangement tolerance; shrinking material can erase thin fins.
+    auto overlaps_in_y = [](const print_instance_info& tall, const print_instance_info& other) {
+        return tall.has_above_rod && tall.above_rod_min_y < other.bounding_box.max.y() && tall.above_rod_max_y > other.bounding_box.min.y();
     };
-    std::unordered_set<Vec2i32, VecHash> left_right_pair; // pairs in this vector must strictly obey the left-right order
-    for (size_t i = 0; i < print_instance_with_bounding_box.size();i++) {
-        auto &inst         = print_instance_with_bounding_box[i];
-        inst.index         = i;
-        Point pt           = inst.bounding_box.center();
-        inst.arrange_score = pt.x() / 2 + pt.y(); // we prefer print row-by-row, so cost on x-direction is smaller
-    }
-    for (size_t i = 0; i < print_instance_with_bounding_box.size(); i++) {
-        auto &inst         = print_instance_with_bounding_box[i];
-        auto &l            = print_instance_with_bounding_box[i];
-        for (size_t j = 0; j < print_instance_with_bounding_box.size(); j++) {
-            if (j != i) {
-                auto &r        = print_instance_with_bounding_box[j];
-                auto ly1       = l.bounding_box.min.y();
-                auto ly2       = l.bounding_box.max.y();
-                auto ry1       = r.bounding_box.min.y();
-                auto ry2       = r.bounding_box.max.y();
-                auto lx1       = l.bounding_box.min.x();
-                auto rx1       = r.bounding_box.min.x();
-                auto lx2       = l.bounding_box.max.x();
-                auto rx2       = r.bounding_box.max.x();
-                auto inter_min = std::max(ly1, ry1);
-                auto inter_max = std::min(ly2, ry2);
-                auto inter_y   = inter_max - inter_min;
 
-                // 如果y方向的重合超过轮廓的膨胀量，说明两个物体在一行，应该先打左边的物体，即先比较二者的x坐标。
-                // If the overlap in the y direction exceeds the expansion of the contour, it means that the two objects are in a row and the object on the left should be hit first, that is, the x coordinates of the two should be compared first.
-                if (inter_y > scale_(0.5 * print.config().extruder_clearance_radius.value)) {
-                    if (std::max(rx1 - lx2, lx1 - rx2) < unsafe_dist) {
-                        if (lx1 > rx1) {
-                            left_right_pair.insert({j, i});
-                            BOOST_LOG_TRIVIAL(debug) << "in-a-row, print_instance " << r.print_instance->model_instance->get_object()->name << "(" << r.arrange_score << ")"
-                                                     << " -> " << l.print_instance->model_instance->get_object()->name << "(" << l.arrange_score << ")";
-                        } else {
-                            left_right_pair.insert({i, j});
-                            BOOST_LOG_TRIVIAL(debug) << "in-a-row, print_instance " << l.print_instance->model_instance->get_object()->name << "(" << l.arrange_score << ")"
-                                                     << " -> " << r.print_instance->model_instance->get_object()->name << "(" << r.arrange_score << ")";
+    // Edge b -> a requires b before a. Reserve the last slot for the sole over-lid object.
+    // Cycles or multiple over-lid objects fall back to list order and the existing error path.
+    {
+        const size_t n = print_instance_with_bounding_box.size();
+
+        std::vector<size_t> fallback_order(n);
+        for (size_t i = 0; i < n; ++i) fallback_order[i] = i;
+        std::stable_sort(fallback_order.begin(), fallback_order.end(),
+            [&](size_t l, size_t r) {
+                return print_instance_with_bounding_box[l].object_index <
+                       print_instance_with_bounding_box[r].object_index;
+            });
+
+        auto by_object_index = [&](size_t l, size_t r) {
+            return print_instance_with_bounding_box[l].object_index < print_instance_with_bounding_box[r].object_index;
+        };
+
+        std::vector<size_t> must_be_last;
+        for (size_t i = 0; i < n; ++i)
+            if (print_instance_with_bounding_box[i].height > hc1)
+                must_be_last.push_back(i);
+
+        bool solved = false;
+        std::vector<size_t> solved_order;
+
+        if (must_be_last.size() <= 1) {
+            size_t last_idx = must_be_last.empty() ? std::numeric_limits<size_t>::max() : must_be_last.front();
+
+            // Edge b -> a means "b must be scheduled before a".
+            std::vector<std::vector<size_t>> adj(n);
+            std::vector<int> indegree(n, 0);
+            bool infeasible = false;
+            for (size_t a = 0; a < n && !infeasible; ++a) {
+                if (a == last_idx) continue;
+                // Nothing reaches the rod: no constraint.
+                if (!print_instance_with_bounding_box[a].has_above_rod)
+                    continue;
+                for (size_t b = 0; b < n; ++b) {
+                    if (b == a) continue;
+                    if (!overlaps_in_y(print_instance_with_bounding_box[a], print_instance_with_bounding_box[b]))
+                        continue;
+                    if (b == last_idx) {
+                        // 'a' can't tolerate the last-placed instance printing after it while
+                        // overlapping it, and the last instance can't be moved earlier by
+                        // definition (nothing else may be scheduled after it) -> unsolvable.
+                        infeasible = true;
+                        break;
+                    }
+                    adj[b].push_back(a);
+                    indegree[a]++;
+                }
+            }
+
+            if (!infeasible) {
+                // Kahn's algorithm; ties are broken by original object_index so the result is
+                // the minimal perturbation of the incoming order, not an arbitrary one.
+                std::vector<size_t> ready;
+                for (size_t i = 0; i < n; ++i)
+                    if (i != last_idx && indegree[i] == 0)
+                        ready.push_back(i);
+                std::sort(ready.begin(), ready.end(), by_object_index);
+
+                std::vector<size_t> order;
+                order.reserve(n);
+                while (!ready.empty()) {
+                    size_t cur = ready.front();
+                    ready.erase(ready.begin());
+                    order.push_back(cur);
+                    for (size_t nxt : adj[cur]) {
+                        if (--indegree[nxt] == 0) {
+                            auto pos = std::upper_bound(ready.begin(), ready.end(), nxt, by_object_index);
+                            ready.insert(pos, nxt);
                         }
                     }
                 }
-                if (l.height > hc1 && r.height < hc1) {
-                    // 当前物体超过了顶盖高度，必须后打
-                    left_right_pair.insert({j, i});
-                    BOOST_LOG_TRIVIAL(debug) << "height>hc1, print_instance " << r.print_instance->model_instance->get_object()->name << "(" << r.arrange_score << ")"
-                                             << " -> " << l.print_instance->model_instance->get_object()->name << "(" << l.arrange_score << ")";
+
+                if (last_idx != std::numeric_limits<size_t>::max())
+                    order.push_back(last_idx);
+
+                if (order.size() == n) {
+                    solved = true;
+                    solved_order = std::move(order);
                 }
-                else if (l.height > hc2 && l.height > r.height && l.arrange_score<r.arrange_score) {
-                    // 如果当前物体的高度超过滑杆，且比r高，就给它加一点代价，尽量让高的物体后打（只有物体高度超过滑杆时才有必要按高度来）
-                    if (l.arrange_score < r.arrange_score)
-                        l.arrange_score = r.arrange_score + 10;
-                    BOOST_LOG_TRIVIAL(debug) << "height>hc2, print_instance " << inst.print_instance->model_instance->get_object()->name
-                                             << ", right=" << r.print_instance->model_instance->get_object()->name << ", l.score: " << l.arrange_score
-                                             << ", r.score: " << r.arrange_score;
-                }
+                // else: a cycle among mutually Y-overlapping, over-hc2 instances -> genuinely
+                // unsolvable; fall through to the fallback order below.
             }
         }
+        // else: more than one instance requires the single "last" slot -> genuinely unsolvable.
+
+        {
+            std::vector<print_instance_info> reordered;
+            reordered.reserve(n);
+            for (size_t idx : (solved ? solved_order : fallback_order))
+                reordered.emplace_back(print_instance_with_bounding_box[idx]);
+            print_instance_with_bounding_box = std::move(reordered);
+        }
+
+        for (auto &inst : print_instance_with_bounding_box)
+            BOOST_LOG_TRIVIAL(debug) << "after sequential-print ordering, print_instance "
+                                     << inst.print_instance->model_instance->get_object()->name
+                                     << ", object_index: " << inst.object_index
+                                     << ", height: " << inst.height
+                                     << (solved ? " [reordered for clearance]" : " [object-list order]");
     }
-    // 多做几次代价传播，因为前一次有些值没有更新。
-    // TODO 更好的办法是建立一颗树，一步到位。不过我暂时没精力搞，先就这样吧
-    for (int k=0;k<5;k++)
-    for (auto p : left_right_pair) {
-        auto &l = print_instance_with_bounding_box[p(0)];
-        auto &r = print_instance_with_bounding_box[p(1)];
-        if(r.arrange_score<l.arrange_score)
-            r.arrange_score = l.arrange_score + 10;
-    }
-
-    BOOST_LOG_TRIVIAL(debug) << "bed width: " << unscale_(bed_width) << ", unsafe_dist:" << unscale_(unsafe_dist) << ", height_to_lid: " << unscale_(hc1) << ", height_to_rod:" << unscale_(hc2) << ", final dependency:";
-    for (auto p : left_right_pair) {
-        auto &l         = print_instance_with_bounding_box[p(0)];
-        auto &r         = print_instance_with_bounding_box[p(1)];
-        BOOST_LOG_TRIVIAL(debug) << "print_instance " << I18N::translate(l.print_instance->model_instance->get_object()->name) << "(" << l.arrange_score << ")"
-                                 << " -> " << I18N::translate(r.print_instance->model_instance->get_object()->name) << "(" << r.arrange_score << ")";
-    }
-    // sort the print instance
-    std::sort(print_instance_with_bounding_box.begin(), print_instance_with_bounding_box.end(),
-        [](print_instance_info& l, print_instance_info& r) {return l.arrange_score < r.arrange_score;});
-
-    for (auto &inst : print_instance_with_bounding_box)
-        BOOST_LOG_TRIVIAL(debug) << "after sorting print_instance " << inst.print_instance->model_instance->get_object()->name << ", score: " << inst.arrange_score
-                                 << ", height:"<< inst.height;
-#else
-    // sort the print instance
-    std::sort(print_instance_with_bounding_box.begin(), print_instance_with_bounding_box.end(),
-        [](print_instance_info& l, print_instance_info& r) {return l.object_index < r.object_index;});
-
-    for (auto &inst : print_instance_with_bounding_box)
-        BOOST_LOG_TRIVIAL(debug) << "after sorting print_instance " << inst.print_instance->model_instance->get_object()->name << ", object_index: " << inst.object_index
-                                 << ", height:"<< inst.height;
-
-#endif
     // sequential_print_vertical_clearance_valid
     {
         // Ignore the last instance printed.
@@ -1373,9 +1159,7 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
             auto inst = print_instance_with_bounding_box[k].print_instance;
             // 只需要考虑喷嘴到滑杆的偏移量，这个比整个工具头的碰撞半径要小得多
             // Only the offset from the nozzle to the slide bar needs to be considered, which is much smaller than the collision radius of the entire tool head.
-            auto bbox = print_instance_with_bounding_box[k].bounding_box.inflated(-scale_(0.5 * print.config().extruder_clearance_radius.value + object_skirt_offset));
-            auto iy1 = bbox.min.y();
-            auto iy2 = bbox.max.y();
+            const auto &info_k = print_instance_with_bounding_box[k];
             (const_cast<ModelInstance*>(inst->model_instance))->arrange_order = k+1;
             double height = (k == (print_instance_count - 1))?printable_height:hc1;
             /*if (has_interlaced_objects) {
@@ -1389,15 +1173,9 @@ StringObjectException Print::sequential_print_clearance_valid(const Print &print
                 }
             }*/
 
-            for (int i = k+1; i < print_instance_count; i++)
+            for (int i = k+1; info_k.has_above_rod && i < print_instance_count; i++)
             {
-                auto& p = print_instance_with_bounding_box[i].print_instance;
-                auto bbox2 = print_instance_with_bounding_box[i].bounding_box;
-                auto py1 = bbox2.min.y();
-                auto py2 = bbox2.max.y();
-                auto inter_min = std::max(iy1, py1); // min y of intersection
-                auto inter_max = std::min(iy2, py2); // max y of intersection. length=max_y-min_y>0 means intersection exists
-                if (inter_max - inter_min > 0) {
+                if (overlaps_in_y(info_k, print_instance_with_bounding_box[i])) {
                     height = hc2;
                     break;
                 }
@@ -3383,6 +3161,32 @@ void Print::_make_wipe_tower()
         const std::vector<std::pair<coordf_t, std::vector<GCode::LayerToPrint>>> layers_to_print = GCode::collect_layers_to_print(*this);
         size_t layers_to_print_idx = 0;
 
+        // Determine precisely which print heights the ordered planner will visit.
+        // Eligibility only reads extrusion geometry; tool choices still depend
+        // on the preceding height and are deliberately deferred to the loop below.
+        std::vector<unsigned char> prepare_local_z(layers_to_print.size(), 0);
+        size_t                     prepare_idx = 0;
+        for (const auto& layer_tools : m_wipe_tower_data.tool_ordering.layer_tools()) {
+            if (!layer_tools.has_wipe_tower)
+                continue;
+            while (prepare_idx + 1 < layers_to_print.size() && layers_to_print[prepare_idx].first + EPSILON < layer_tools.print_z)
+                ++prepare_idx;
+            if (prepare_idx < layers_to_print.size() && std::abs(layers_to_print[prepare_idx].first - layer_tools.print_z) <= EPSILON)
+                prepare_local_z[prepare_idx] = 1;
+            if (&layer_tools == &m_wipe_tower_data.tool_ordering.back() || (&layer_tools + 1)->wipe_tower_partitions == 0)
+                break;
+        }
+        // Retain only pass references and eligible tool IDs, never the temporary
+        // masks or clipped paths. Geometry scratch is bounded by active workers.
+        std::vector<std::vector<LocalZWipeTowerPassRef>> local_z_passes(layers_to_print.size());
+        this->throw_if_canceled();
+        tbb::parallel_for(tbb::blocked_range<size_t>(0, layers_to_print.size(), 8), [&](const tbb::blocked_range<size_t>& range) {
+            for (size_t i = range.begin(); i < range.end(); ++i)
+                if (prepare_local_z[i])
+                    local_z_passes[i] = collect_local_z_wipe_tower_passes(*this, layers_to_print[i].second);
+        });
+        this->throw_if_canceled();
+
         // wipe_tower.set_retract();
         // wipe_tower.set_zhop();
 
@@ -3415,7 +3219,7 @@ void Print::_make_wipe_tower()
 
                 if (layers_with_same_print_z != nullptr) {
                     const std::vector<LocalZWipeTowerToolchange> local_z_toolchanges =
-                        collect_local_z_wipe_tower_toolchanges(*this, *layers_with_same_print_z, int(current_extruder_id));
+                        collect_local_z_wipe_tower_toolchanges(local_z_passes[layers_to_print_idx], int(current_extruder_id));
                     for (const LocalZWipeTowerToolchange &toolchange : local_z_toolchanges) {
                         wipe_tower.plan_local_z_toolchange((float) layer_tools.print_z, (float) layer_tools.wipe_tower_layer_height,
                                                            toolchange.old_tool, toolchange.new_tool, effective_wipe_tower_volume(m_config, toolchange.new_tool));

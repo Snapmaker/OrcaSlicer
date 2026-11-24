@@ -25,8 +25,20 @@ namespace Slic3r { namespace GUI {
 
 // Forward declarations (only pointers are stored)
 class MixedGradientSelector;
+class MixedGradientStops;
 class MixedColorMatchPanel;
 class MatchRangeSlider;
+class MixedSwatchGrid;
+
+// Rendered color field of a triangle picker. Predicting it takes thousands of blends, far
+// too slow to repeat on every paint, so it is kept until what it was rendered from changes.
+struct MixedTriGradientCache
+{
+    wxBitmap    bitmap;
+    wxSize      size;       // client size it was rendered for, which also fixes the corners
+    wxColour    background;
+    std::string blend_key;  // blend_preview_key() of the three corner colors
+};
 
 class MixedFilamentDialog : public DPIDialog
 {
@@ -41,8 +53,12 @@ public:
 private:
     void build_ui();
     void rebuild_filament_rows();
+    void                on_filament_selection_changed(size_t slot, int filament_index);
+    wxString            filament_label(int filament_index) const;
     void on_mode_changed(int mode_index);
     void update_preview();
+    MixedFilament       gradient_editor_entry() const;
+    MixedGradientStops* m_gradient_stops{nullptr};
     void update_gradient_selector_colors();
     void build_swatch_grid();
     void rebuild_swatch_sizer();
@@ -83,7 +99,8 @@ private:
     wxSizerItem*            m_ratio_tri_spacer      = nullptr;
     wxPanel*                m_strip_panel         = nullptr;
     wxPanel*                m_cycle_strip_panel   = nullptr;
-    wxPanel*                m_swatch_grid_panel   = nullptr;
+    MixedSwatchGrid*        m_swatch_grid_panel   = nullptr;
+    wxStaticText*                           m_swatch_title          = nullptr;
     std::vector<int>         m_swatch_min_weights;
     wxPanel*                m_error_panel           = nullptr;
     Label*                   m_error_text            = nullptr;
@@ -153,6 +170,8 @@ private:
 
     double m_tri_wx{1.0/3.0}, m_tri_wy{1.0/3.0}, m_tri_wz{1.0/3.0};
     bool   m_tri_dragging{false};
+    MixedTriGradientCache m_tri_cache;
+    MixedTriGradientCache m_match_tri_cache;
 
     // Match-specific tri-picker state (fully independent from ratio)
     std::vector<int>    m_match_tri_indices;
@@ -181,6 +200,7 @@ private:
     struct FilamentRow {
         wxPanel*         swatch           = nullptr;
         ComboBox*        combo            = nullptr;
+        int              selected_filament = 0;
         std::vector<int> filament_indices; // combo index → actual filament index
     };
     std::vector<FilamentRow> m_filament_rows;

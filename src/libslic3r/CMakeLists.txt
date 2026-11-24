@@ -280,6 +280,19 @@ set(lisbslic3r_sources
     Layer.cpp
     Layer.hpp
     LayerRegion.cpp
+    LocalZ/LocalZClipDecision.cpp
+    LocalZ/LocalZClipDecision.hpp
+    LocalZ/LocalZClipper.cpp
+    LocalZ/LocalZClipper.hpp
+    LocalZ/LocalZHeight.hpp
+    LocalZ/LocalZPlan.hpp
+    LocalZ/LocalZPlan.cpp
+    LocalZ/LocalZPlanner.hpp
+    LocalZ/LocalZPlanner.cpp
+    LocalZ/LocalZMaskPreparation.hpp
+    LocalZ/LocalZMaskPreparation.cpp
+    LocalZ/LocalZSchedule.hpp
+    LocalZ/LocalZSchedule.cpp
     libslic3r.cpp
     libslic3r.h
     Line.cpp
@@ -295,7 +308,27 @@ set(lisbslic3r_sources
     MinAreaBoundingBox.hpp
     MinimumSpanningTree.cpp
     MinimumSpanningTree.hpp
+    MixedFilament/ChannelMap.hpp
+    MixedFilament/Common.cpp
+    MixedFilament/Definition.cpp
+    MixedFilament/Display.cpp
+    MixedFilament/Gradient.cpp
+    MixedFilament/GradientPreview.cpp
+    MixedFilament/LayerTracker.hpp
+    MixedFilament/LegacyRow.cpp
+    MixedFilament/Manager.cpp
+    MixedFilament/Pattern.cpp
+    MixedFilament/Preview.cpp
+    MixedFilament/Resolver.cpp
+    MixedFilament/Recommendations.cpp
+    MixedFilament/Recommendations.hpp
+    MixedFilament/Serialization.cpp
+    MixedFilament/Serialization.hpp
+    MixedFilament/Slicing.hpp
+    MixedFilament/Slicing.cpp
     MixedFilament.cpp
+    FullSpectrumKSPairResidual.cpp
+    FullSpectrumICCPolynomialEstimator.cpp
     MixedFilament.hpp
     filament_mixer.cpp
     filament_mixer.h
@@ -377,6 +410,8 @@ set(lisbslic3r_sources
     ShortEdgeCollapse.hpp
     ShortestPath.cpp
     ShortestPath.hpp
+    Slicing/LayerGeometryBatch.hpp
+    Slicing/PaintedLayerOutlineCache.hpp
     SLA/AGGRaster.hpp
     SLA/BoostAdapter.hpp
     SLA/Clustering.cpp
@@ -562,6 +597,17 @@ target_include_directories(libslic3r SYSTEM PUBLIC ${OpenCASCADE_INCLUDE_DIR})
 target_link_libraries(libslic3r PUBLIC nlohmann_json)
 
 find_package(JPEG REQUIRED)
+
+# Vendored jpeg/png/zlib headers must win over toolchain includes contributed by
+# system packages (e.g. Strawberry Perl's classic libjpeg lacks the turbo
+# extensions JCS_EXT_RGBA that GCode/Thumbnails.cpp requires). Scope the BEFORE
+# ordering to exactly these deps so every other header keeps its find_package
+# resolution order.
+foreach(_dep_inc_dir ${JPEG_INCLUDE_DIR} ${PNG_INCLUDE_DIRS} ${ZLIB_INCLUDE_DIRS})
+    if (WIN32 AND _dep_inc_dir AND EXISTS "${_dep_inc_dir}")
+        target_include_directories(libslic3r SYSTEM BEFORE PUBLIC "${_dep_inc_dir}")
+    endif()
+endforeach()
 
 
 

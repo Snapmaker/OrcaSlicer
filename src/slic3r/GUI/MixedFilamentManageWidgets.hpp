@@ -67,6 +67,31 @@ private:
     void                  on_left_up(wxMouseEvent& event);
 };
 
+// Pill button (e.g. "Remove all" / "Cancel removal"): fully rounded fill, no
+// border. Colors are set by the owner so the same widget renders both states.
+class BatchPillButton : public wxPanel
+{
+public:
+    BatchPillButton(wxWindow* parent, const wxString& label, std::function<void()> on_clicked);
+    void set_label(const wxString& label);
+    void set_style(const wxColour& background, const wxColour& background_hover, const wxColour& text);
+    void rescale();
+
+private:
+    void update_min_size();
+    void on_paint(wxPaintEvent& event);
+    void on_enter(wxMouseEvent& event);
+    void on_leave(wxMouseEvent& event);
+    void on_left_up(wxMouseEvent& event);
+
+    std::function<void()> m_on_clicked;
+    wxString              m_label;
+    wxColour              m_background;
+    wxColour              m_background_hover;
+    wxColour              m_text_color;
+    bool                  m_hovered = false;
+};
+
 class CollapsibleSubSection : public wxPanel
 {
 public:

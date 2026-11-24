@@ -55,6 +55,10 @@ static std::map<wxColour, wxColour> gDarkColors{
     {"#8F8F8F", "#8A8A95"}, // rgb(143, 143, 143) Label text (Hex:, Preview, percentages)
     {"#EBEBEB", "#45454B"}, // rgb(235, 235, 235)  Slider track background
     {"#FDE8E8", "#4D2020"}, // rgb(253, 232, 232)  Error banner background
+    {"#FFE2E2", "#542B2B"}, // rgb(255, 226, 226)  Manage dialog: remove-all pill background
+    {"#FFD6D6", "#613434"}, // rgb(255, 214, 214)  Manage dialog: remove-all pill on hover
+    {"#FF383C", "#FF6B6B"}, // rgb(255, 56, 60)    Manage dialog: remove-all text red
+    {"#DCDCDC", "#4A4A52"}, // rgb(220, 220, 220)  Manage dialog: cancel-removal pill on hover
     {"#D32F2F", "#EF5350"}, // rgb(211, 47, 47)    Error text
     {"#FFF3EB", "#452A1A"}, // rgb(255, 243, 235)  Warning banner background
     {"#FF842D", "#FF9F43"}, // rgb(255, 132, 45)   Warning text

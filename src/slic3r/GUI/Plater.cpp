@@ -6263,7 +6263,7 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
     p->m_color_mix_icon = new ScalableButton(p->m_panel_color_mix_title, wxID_ANY, "color_palette");
     auto* label = new Label(p->m_panel_color_mix_title, _L("Color Mixing"), LB_PROPAGATE_MOUSE_EVENT);
 
-    p->m_btn_manage_color_mix = new Button(p->m_panel_color_mix_title, _L("Manage"), "color_palette", 0, 14);
+    p->m_btn_manage_color_mix = new Button(p->m_panel_color_mix_title, _L("Manage"), "", 0, 0);
     p->m_btn_manage_color_mix->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
     p->m_btn_manage_color_mix->SetToolTip(_L("Browse mixed colors made from the current filaments and choose combinations to add."));
     p->m_btn_manage_color_mix->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { show_mixed_filament_manager(this); });

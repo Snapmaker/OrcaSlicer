@@ -102,9 +102,10 @@ private:
     std::array<CollapsibleSubSection*, 2> m_groups{};
     std::array<BatchSwatchGrid*, 2>       m_recommendation_grids{};
     std::array<std::vector<size_t>, 2>    m_group_indices;
-    Button*                               m_confirm    = nullptr;
-    Button*                               m_cancel     = nullptr;
-    Button*                               m_remove_all = nullptr;
+    Button*                               m_confirm           = nullptr;
+    Button*                               m_cancel            = nullptr;
+    BatchPillButton*                      m_remove_all        = nullptr;
+    bool                                  m_remove_all_active = false;
 
     wxStaticText* label(wxWindow* parent, const wxString& text, bool heading = false)
     {
@@ -190,16 +191,18 @@ private:
                     refresh_state();
                 },
                 FromDIP(8));
-            m_remove_all = new Button(saved_body, _CTX("Remove all", "MixedFilaments"));
-            m_remove_all->SetStyle(ButtonStyle::Regular, ButtonType::Choice);
-            m_remove_all->SetToolTip(_L("Mark all saved mixed filaments for removal. Changes are applied when you click Confirm."));
-            m_remove_all->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) {
+            m_remove_all = new BatchPillButton(m_saved_section->get_header_panel(), _CTX("Remove all", "MixedFilaments"), [this]() {
+                // Toggles between "Remove all" and "Cancel removal" depending on
+                // whether every saved entry is already marked for removal.
+                const bool all_removed = m_catalog.removals() == m_catalog.saved.size();
                 for (auto& saved : m_catalog.saved)
-                    saved.removed = true;
-                track_manage("remove_all", {{"count", m_catalog.removals()}});
+                    saved.removed = !all_removed;
+                track_manage(all_removed ? "cancel_remove_all" : "remove_all", {{"count", m_catalog.removals()}});
                 refresh_state();
             });
-            saved_sizer->Add(m_remove_all, 0, wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(8));
+            m_remove_all->SetToolTip(_L("Mark all saved mixed filaments for removal. Changes are applied when you click Confirm."));
+            apply_remove_all_pill_style(false);
+            m_saved_section->add_header_control(m_remove_all, true);
         }
 
         content->Add(m_saved_section, 0, wxEXPAND | wxALL, FromDIP(8));
@@ -316,6 +319,15 @@ private:
         CenterOnParent();
     }
 
+    // Dark-mode pill variants come from the gDarkColors table via darkModeColorFor.
+    void apply_remove_all_pill_style(bool cancel)
+    {
+        const wxColour background = StateColor::darkModeColorFor(cancel ? wxColour("#E8E8E8") : wxColour("#FFE2E2"));
+        const wxColour hover      = StateColor::darkModeColorFor(cancel ? wxColour("#DCDCDC") : wxColour("#FFD6D6"));
+        const wxColour text       = StateColor::darkModeColorFor(cancel ? wxColour("#000000") : wxColour("#FF383C"));
+        m_remove_all->set_style(background, hover, text);
+    }
+
     void refresh_state()
     {
         const bool had_error = m_error->IsShown();
@@ -355,9 +367,17 @@ private:
         for (size_t i = 0; i < m_catalog.saved.size(); ++i)
             m_saved_grid->set_mark(i, m_catalog.saved[i].removed ? -1 : 0);
         if (m_remove_all) {
-            const bool can_remove = m_catalog.removals() < m_catalog.saved.size();
-            if (m_remove_all->IsEnabled() != can_remove)
-                m_remove_all->Enable(can_remove);
+            // The pill toggles: "Remove all" while some entries are kept,
+            // "Cancel removal" once every saved entry is marked for removal.
+            const bool all_removed = m_catalog.removals() == m_catalog.saved.size();
+            if (m_remove_all_active != all_removed) {
+                m_remove_all_active = all_removed;
+                m_remove_all->set_label(all_removed ? _L("Cancel removal") : _CTX("Remove all", "MixedFilaments"));
+                m_remove_all->SetToolTip(all_removed ?
+                                             _L("Unmark all saved mixed filaments. Changes are applied when you click Confirm.") :
+                                             _L("Mark all saved mixed filaments for removal. Changes are applied when you click Confirm."));
+                apply_remove_all_pill_style(all_removed);
+            }
         }
         // Swatch marks never change geometry. Only removing an error banner
         // requires the expensive parent layout.
@@ -442,7 +462,7 @@ private:
         m_confirm->Rescale();
         m_cancel->Rescale();
         if (m_remove_all)
-            m_remove_all->Rescale();
+            m_remove_all->rescale();
         for (auto* grid : m_grids)
             grid->rescale();
         m_select_all->rescale();

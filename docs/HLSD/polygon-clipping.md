@@ -29,10 +29,10 @@ as for predictable geometry.
 
 ## Vendored Clipper2
 
-`deps_src/clipper2` builds the static target `Clipper2`. It carries five
+`deps_src/clipper2` builds the static target `Clipper2`. It carries four
 changes to the upstream sources that must be carried over when Clipper2 is
 updated. The namespace switch sits at the top of every header and source, the
-other four are marked with `Orca:` comments.
+other three are marked with `Orca:` comments.
 
 | Change | Files | Why |
 | --- | --- | --- |
@@ -40,7 +40,6 @@ other four are marked with `Orca:` comments.
 | Engine nodes from tbbmalloc | `clipper.engine.h`, `clipper.engine.cpp` | Vertices, active edges, output points and records, local minima and `PolyTree` nodes are allocated one by one. `CLIPPER2_NODE_ALLOCATOR` routes them through `scalable_malloc`, because the default heap does not scale when all slicing threads clip at once. |
 | Concave joins at the edge crossing | `clipper.offset.cpp` | For closed paths, a concave corner is joined at the crossing of the two offset edges when that point lies within half of both adjacent edges. The upstream 3-point loop makes inward offsets of dense curves very slow to union. |
 | Rounded arc steps | `clipper.offset.cpp` | Round joins use the rounded number of steps, not the ceiling, which keeps the vertex count of round offsets that the rest of the code is tuned for. |
-| End type kept to the path | `clipper.offset.cpp` | A joined path of only two points gets open ends. Upstream changes the end type of the whole group for it, so the closed paths after it in the same group lose their closing edge. The end type is restored after every path. Clipper2 main still behaves this way (checked 2026-11). |
 
 ## ClipperUtils semantics
 

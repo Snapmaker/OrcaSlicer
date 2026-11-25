@@ -635,3 +635,47 @@ TEST_CASE("PolyTree64 misnesting is repaired across all five consumers", "[Clipp
         REQUIRE(depth0_objs.count(3) == 0);
     }
 }
+
+TEST_CASE("offset(Polygons) preserves CW contour in concave notch and drops zero-area paths on shrink", "[ClipperUtils]") {
+    SECTION("CW triangle inside concave U-shape notch is not swallowed") {
+        const Polygon u_shape({ {0, 0}, {1000, 0}, {1000, 1000}, {800, 1000}, {800, 200}, {200, 200}, {200, 1000}, {0, 1000} });
+        const Polygon cw_tri({ {400, 500}, {500, 800}, {600, 500} });
+        REQUIRE(u_shape.area() > 0.);
+        REQUIRE(cw_tri.area() < 0.);
+        const Polygons res = offset(Polygons{ u_shape, cw_tri }, 10.f);
+        REQUIRE(res.size() == 2);
+        std::vector<double> areas{ res[0].area(), res[1].area() };
+        std::sort(areas.begin(), areas.end());
+        // The CW triangle in the concave notch survives as a shrunk standalone contour, while the U-shape expands.
+        REQUIRE(areas[0] > 15000.);
+        REQUIRE(areas[0] < std::abs(cw_tri.area()));
+        REQUIRE(areas[1] > u_shape.area());
+    }
+
+    SECTION("Zero-area bow-tie mixed with valid square vanishes under negative offset") {
+        const Polygon bow_tie({ {0, 0}, {200, 200}, {200, 0}, {0, 200} });
+        const Polygon square({ {500, 0}, {700, 0}, {700, 200}, {500, 200} });
+        REQUIRE(bow_tie.area() == 0.);
+        const Polygons res = offset(Polygons{ bow_tie, square }, -10.f);
+        REQUIRE(res.size() == 1);
+        REQUIRE(res.front().area() == Catch::Approx(180. * 180.));
+    }
+
+    SECTION("Zero-area bow-tie with inner CW path does not trigger inverted positive group offset") {
+        const Polygon big_bow_tie({ {0, 0}, {1000, 1000}, {1000, 0}, {0, 1000} });
+        const Polygon inner_cw({ {200, 400}, {200, 600}, {400, 600}, {400, 400} });
+        REQUIRE(big_bow_tie.area() == 0.);
+        REQUIRE(inner_cw.area() < 0.);
+        const Polygons res = offset(Polygons{ big_bow_tie, inner_cw }, 10.f);
+        REQUIRE(! res.empty());
+        double total_area = 0.;
+        bool   has_ccw    = false;
+        for (const Polygon &p : res) {
+            total_area += p.area();
+            if (p.area() > 0.)
+                has_ccw = true;
+        }
+        REQUIRE(has_ccw);
+        REQUIRE(total_area > 0.);
+    }
+}

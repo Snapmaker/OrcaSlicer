@@ -638,21 +638,126 @@ void c2_offset_setup(C2::ClipperOffset &co, float delta, JoinType joinType, doub
     }
 }
 
-// A single group offsets like Clipper1's path by path offset only if every CW path is a hole of a CCW path.
+bool c2_segments_intersect(const C2::Point64 &a1, const C2::Point64 &a2, const C2::Point64 &b1, const C2::Point64 &b2)
+{
+    if (std::max(a1.x, a2.x) < std::min(b1.x, b2.x) || std::max(b1.x, b2.x) < std::min(a1.x, a2.x) ||
+        std::max(a1.y, a2.y) < std::min(b1.y, b2.y) || std::max(b1.y, b2.y) < std::min(a1.y, a2.y))
+        return false;
+    const Vec2crd pa1(a1.x, a1.y), pa2(a2.x, a2.y), pb1(b1.x, b1.y), pb2(b2.x, b2.y);
+    const int o1 = int128::orient(pa1, pa2, pb1);
+    const int o2 = int128::orient(pa1, pa2, pb2);
+    const int o3 = int128::orient(pb1, pb2, pa1);
+    const int o4 = int128::orient(pb1, pb2, pa2);
+    if (o1 != o2 && o3 != o4)
+        return true;
+    auto on_seg = [](const C2::Point64 &p, const C2::Point64 &q, const C2::Point64 &r) {
+        return q.x >= std::min(p.x, r.x) && q.x <= std::max(p.x, r.x) &&
+               q.y >= std::min(p.y, r.y) && q.y <= std::max(p.y, r.y);
+    };
+    return (o1 == 0 && on_seg(a1, b1, a2)) || (o2 == 0 && on_seg(a1, b2, a2)) ||
+           (o3 == 0 && on_seg(b1, a1, b2)) || (o4 == 0 && on_seg(b1, a2, b2));
+}
+
+bool c2_paths_touch(const C2::Path64 &a, const C2::Path64 &b, const C2::Rect64 &box_a, const C2::Rect64 &box_b)
+{
+    auto collect_edges = [](const C2::Path64 &p, const C2::Rect64 &box, std::vector<size_t> &edges) {
+        edges.clear();
+        const size_t n = p.size();
+        for (size_t i = 0; i < n; ++i) {
+            const C2::Point64 &u = p[i];
+            const C2::Point64 &v = p[(i + 1 == n) ? 0 : i + 1];
+            if (std::max(u.x, v.x) < box.left || std::min(u.x, v.x) > box.right ||
+                std::max(u.y, v.y) < box.top  || std::min(u.y, v.y) > box.bottom)
+                continue;
+            edges.push_back(i);
+        }
+    };
+    std::vector<size_t> edges_b;
+    collect_edges(b, box_a, edges_b);
+    if (edges_b.empty())
+        return false;
+    std::vector<size_t> edges_a;
+    collect_edges(a, box_b, edges_a);
+    if (edges_a.empty())
+        return false;
+    const size_t na = a.size();
+    const size_t nb = b.size();
+    for (size_t ia : edges_a) {
+        const C2::Point64 &a1 = a[ia];
+        const C2::Point64 &a2 = a[(ia + 1 == na) ? 0 : ia + 1];
+        for (size_t ib : edges_b) {
+            const C2::Point64 &b1 = b[ib];
+            const C2::Point64 &b2 = b[(ib + 1 == nb) ? 0 : ib + 1];
+            if (c2_segments_intersect(a1, a2, b1, b2))
+                return true;
+        }
+    }
+    return false;
+}
+
+// A single group offsets like Clipper1's path by path offset only if every CW path is strictly
+// enclosed inside a CCW path (positive winding, no touching boundaries) and no zero-area path
+// can confuse Clipper2's group orientation detection.
 bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &areas)
 {
-    std::vector<C2::Rect64> contours;
-    for (size_t i = 0; i < paths.size(); ++ i)
-        if (areas[i] > 0.)
-            contours.emplace_back(C2::GetBounds(paths[i]));
-    for (size_t i = 0; i < paths.size(); ++ i)
-        if (areas[i] < 0.) {
-            const C2::Rect64 hole = C2::GetBounds(paths[i]);
-            if (std::none_of(contours.begin(), contours.end(), [&hole](const C2::Rect64 &r) {
-                    return r.left < hole.left && r.right > hole.right && r.top < hole.top && r.bottom > hole.bottom;
-                }))
+    bool has_cw   = false;
+    bool has_zero = false;
+    for (double a : areas) {
+        if (a < 0.)
+            has_cw = true;
+        else if (a == 0.)
+            has_zero = true;
+    }
+    if (! has_cw)
+        return true;
+    if (has_zero)
+        return false;
+
+    std::vector<C2::Rect64> bounds;
+    bounds.reserve(paths.size());
+    std::vector<C2BBoxNode> bbox_nodes;
+    bbox_nodes.reserve(paths.size());
+    for (size_t i = 0; i < paths.size(); ++i) {
+        bounds.emplace_back(C2::GetBounds(paths[i]));
+        bbox_nodes.emplace_back(i, bounds.back());
+    }
+    AABBTreeIndirect::Tree<2, coord_t> aabb;
+    aabb.build(std::move(bbox_nodes));
+
+    std::vector<size_t> candidates;
+    for (size_t i = 0; i < paths.size(); ++i) {
+        if (areas[i] >= 0.)
+            continue;
+        const C2::Rect64 &hole_box = bounds[i];
+        const AABBTreeIndirect::Tree<2, coord_t>::BoundingBox query_box(
+            Vec2crd(hole_box.left, hole_box.top), Vec2crd(hole_box.right, hole_box.bottom));
+        candidates.clear();
+        AABBTreeIndirect::traverse(
+            aabb,
+            AABBTreeIndirect::intersecting(query_box),
+            [&](const AABBTreeIndirect::Tree<2, coord_t>::Node &n) {
+                if (n.idx != i)
+                    candidates.push_back(n.idx);
+                return true;
+            });
+
+        const C2::Point64 &probe   = paths[i].front();
+        int                winding = 0;
+        for (size_t j : candidates) {
+            if (c2_paths_touch(paths[i], paths[j], hole_box, bounds[j]))
                 return false;
+            const C2::Rect64 &rb = bounds[j];
+            if (probe.x >= rb.left && probe.x <= rb.right && probe.y >= rb.top && probe.y <= rb.bottom) {
+                const int pip = c2_point_in_path(probe, paths[j]);
+                if (pip == -1)
+                    return false;
+                if (pip == 1)
+                    winding += (areas[j] > 0. ? 1 : -1);
+            }
         }
+        if (winding <= 0)
+            return false;
+    }
     return true;
 }
 
@@ -661,20 +766,34 @@ void c2_offset_closed_paths(C2::Paths64 &&paths, float delta, JoinType joinType,
 {
     std::vector<double> areas;
     areas.reserve(paths.size());
-    for (const C2::Path64 &path : paths)
-        areas.emplace_back(C2::Area(path));
+    if (delta < 0.) {
+        // Clipper2 would grow zero-area paths even for a negative offset; drop them one by one.
+        size_t write = 0;
+        for (size_t i = 0; i < paths.size(); ++i) {
+            const double a = C2::Area(paths[i]);
+            if (a == 0.)
+                continue;
+            if (write != i)
+                paths[write] = std::move(paths[i]);
+            areas.emplace_back(a);
+            ++write;
+        }
+        paths.resize(write);
+        if (paths.empty())
+            return;
+    } else {
+        for (const C2::Path64 &path : paths)
+            areas.emplace_back(C2::Area(path));
+    }
     C2::ClipperOffset co;
     c2_offset_setup(co, delta, joinType, miterLimit);
     if (c2_offset_as_group(paths, areas)) {
-        // Clipper2 would grow degenerate paths even for a negative offset.
-        if (delta < 0. && std::all_of(areas.begin(), areas.end(), [](double a) { return a == 0.; }))
-            return;
         co.AddPaths(paths, to_c2(joinType), C2::EndType::Polygon);
         co.Execute(delta, out);
         return;
     }
     C2::Paths64 offsetted, single;
-    for (size_t i = 0; i < paths.size(); ++ i) {
+    for (size_t i = 0; i < paths.size(); ++i) {
         if (areas[i] == 0. && delta < 0.)
             continue;
         co.Clear();

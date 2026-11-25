@@ -732,3 +732,24 @@ TEST_CASE("simplify_polygons, simplify_polygons_ex and polygons_simplify split s
             REQUIRE_FALSE(has_dup_vertex(p));
     }
 }
+
+TEST_CASE("ExPolygon opening and safety-offset clipping normalize input orientations consistently", "[ClipperUtils]") {
+    const Polygon   cw_contour({ {0, 0}, {0, 1000}, {1000, 1000}, {1000, 0} });
+    const Polygon   ccw_hole({ {300, 300}, {700, 300}, {700, 700}, {300, 700} });
+    const ExPolygons inverted{ ExPolygon(cw_contour, ccw_hole) };
+
+    const Polygons   op    = opening(inverted, 10.f);
+    const ExPolygons op_ex = opening_ex(inverted, 10.f);
+    REQUIRE(op.size() == 2);
+    REQUIRE(op_ex.size() == 1);
+    double op_area = 0.;
+    for (const Polygon &p : op)
+        op_area += p.area();
+    REQUIRE(op_area == Catch::Approx(op_ex.front().area()));
+
+    const Polygon    subj({ {0, 0}, {1000, 0}, {1000, 1000}, {0, 1000} });
+    const ExPolygons diff_safe = diff_ex(Polygons{ subj }, inverted, ApplySafetyOffset::Yes);
+    REQUIRE(diff_safe.size() == 1);
+    REQUIRE(diff_safe.front().holes.empty());
+    REQUIRE(diff_safe.front().area() == Catch::Approx(380. * 380.));
+}

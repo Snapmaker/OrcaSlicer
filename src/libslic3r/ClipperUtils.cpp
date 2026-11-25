@@ -901,12 +901,48 @@ Polygons c2_offset_lines(PathsProvider &&src, float delta, JoinType joinType, do
 }
 
 template<class PathsProvider>
-C2::Paths64 c2_clip_paths(PathsProvider &&clip, ApplySafetyOffset do_safety_offset)
+C2::Paths64 c2_clip_paths(const PathsProvider &clip, ApplySafetyOffset do_safety_offset)
 {
     if (do_safety_offset == ApplySafetyOffset::No)
-        return to_paths64(std::forward<PathsProvider>(clip));
+        return to_paths64(clip);
     C2::Paths64 out;
-    c2_offset_closed(std::forward<PathsProvider>(clip), ClipperSafetyOffset, DefaultJoinType, DefaultMiterLimit, out);
+    c2_offset_closed(clip, ClipperSafetyOffset, DefaultJoinType, DefaultMiterLimit, out);
+    return out;
+}
+
+C2::Paths64 c2_clip_paths(const ClipperUtils::ExPolygonProvider &clip, ApplySafetyOffset do_safety_offset)
+{
+    if (do_safety_offset == ApplySafetyOffset::No)
+        return to_paths64(clip);
+    C2::Paths64 out;
+    c2_offset_expolygons(std::array<const ExPolygon*, 1>{ &clip.data() }, ClipperSafetyOffset, DefaultJoinType, DefaultMiterLimit, out);
+    return out;
+}
+
+C2::Paths64 c2_clip_paths(const ClipperUtils::ExPolygonsProvider &clip, ApplySafetyOffset do_safety_offset)
+{
+    if (do_safety_offset == ApplySafetyOffset::No)
+        return to_paths64(clip);
+    C2::Paths64 out;
+    c2_offset_expolygons(clip.data(), ClipperSafetyOffset, DefaultJoinType, DefaultMiterLimit, out);
+    return out;
+}
+
+C2::Paths64 c2_clip_paths(const ClipperUtils::SurfacesProvider &clip, ApplySafetyOffset do_safety_offset)
+{
+    if (do_safety_offset == ApplySafetyOffset::No)
+        return to_paths64(clip);
+    C2::Paths64 out;
+    c2_offset_expolygons(clip.data(), ClipperSafetyOffset, DefaultJoinType, DefaultMiterLimit, out);
+    return out;
+}
+
+C2::Paths64 c2_clip_paths(const ClipperUtils::SurfacesPtrProvider &clip, ApplySafetyOffset do_safety_offset)
+{
+    if (do_safety_offset == ApplySafetyOffset::No)
+        return to_paths64(clip);
+    C2::Paths64 out;
+    c2_offset_expolygons(clip.data(), ClipperSafetyOffset, DefaultJoinType, DefaultMiterLimit, out);
     return out;
 }
 
@@ -1011,14 +1047,6 @@ Slic3r::ExPolygons closing_ex(const Slic3r::Polygons &polygons, const float delt
     c2_offset2_closed(ClipperUtils::PolygonsProvider(polygons), delta1, - delta2, joinType, miterLimit, out);
     return c2_to_expolygons(out);
 }
-Slic3r::ExPolygons closing_ex(const Slic3r::Surfaces &surfaces, const float delta1, const float delta2, JoinType joinType, double miterLimit)
-{
-    assert(delta1 > 0);
-    assert(delta2 > 0);
-    C2::PolyTree64 out;
-    c2_offset2_closed(ClipperUtils::SurfacesProvider(surfaces), delta1, - delta2, joinType, miterLimit, out);
-    return c2_to_expolygons(out);
-}
 
 // Offset inside, then outside produces morphological opening. All deltas should be positive.
 Slic3r::Polygons opening(const Slic3r::Polygons &polygons, const float delta1, const float delta2, JoinType joinType, double miterLimit)
@@ -1033,16 +1061,18 @@ Slic3r::Polygons opening(const Slic3r::ExPolygons &expolygons, const float delta
 {
     assert(delta1 > 0);
     assert(delta2 > 0);
-    C2::Paths64 out;
-    c2_offset2_closed(ClipperUtils::ExPolygonsProvider(expolygons), - delta1, delta2, joinType, miterLimit, out);
+    C2::Paths64 first, out;
+    c2_offset_expolygons(expolygons, - delta1, joinType, miterLimit, first);
+    c2_offset_closed(first, delta2, joinType, miterLimit, out);
     return c2_to_polygons(out);
 }
 Slic3r::Polygons opening(const Slic3r::Surfaces &surfaces, const float delta1, const float delta2, JoinType joinType, double miterLimit)
 {
     assert(delta1 > 0);
     assert(delta2 > 0);
-    C2::Paths64 out;
-    c2_offset2_closed(ClipperUtils::SurfacesProvider(surfaces), - delta1, delta2, joinType, miterLimit, out);
+    C2::Paths64 first, out;
+    c2_offset_expolygons(surfaces, - delta1, joinType, miterLimit, first);
+    c2_offset_closed(first, delta2, joinType, miterLimit, out);
     return c2_to_polygons(out);
 }
 

@@ -184,6 +184,7 @@ namespace ClipperUtils {
         iterator cend()   const { return iterator(m_expoly, m_expoly.holes.size() + 1); }
         iterator end()    const { return this->cend(); }
         size_t   size()   const { return m_expoly.holes.size() + 1; }
+        const ExPolygon &data() const { return m_expoly; }
 
     private:
         const ExPolygon &m_expoly;
@@ -224,6 +225,7 @@ namespace ClipperUtils {
         iterator cend()   const { return iterator(m_expolygons.cend()); }
         iterator end()    const { return this->cend(); }
         size_t   size()   const { return m_size; }
+        const ExPolygons &data() const { return m_expolygons; }
 
     private:
         const ExPolygons &m_expolygons;
@@ -265,6 +267,7 @@ namespace ClipperUtils {
         iterator cend()   const { return iterator(m_surfaces.cend()); }
         iterator end()    const { return this->cend(); }
         size_t   size()   const { return m_size; }
+        const Surfaces &data() const { return m_surfaces; }
 
     private:
         const Surfaces &m_surfaces;
@@ -306,6 +309,7 @@ namespace ClipperUtils {
         iterator cend()   const { return iterator(m_surfaces.cend()); }
         iterator end()    const { return this->cend(); }
         size_t   size()   const { return m_size; }
+        const SurfacesPtr &data() const { return m_surfaces; }
 
     private:
         const SurfacesPtr &m_surfaces;

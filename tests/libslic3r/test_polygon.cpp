@@ -148,3 +148,30 @@ SCENARIO("Remove collinear points from Polygon", "[Polygon]") {
         }
     }
 }
+
+// A triangle of the supported coordinate range, whose edge crosses a line through the corners with a cross product
+// past the signed 64 bit integers: (ip - pt) x (ipNext - pt) is 10230000000000000000 for (1e8, 1e8) on the hypotenuse.
+static const Polygon large_triangle{ Point(coord_t(3300000000), 0), Point(0, coord_t(3300000000)), Point(0, 0) };
+
+TEST_CASE("A point of a large polygon is classified in exact arithmetic", "[Polygon]") {
+    // In the material.
+    CHECK(contains(large_triangle, Point(100000000, 100000000), false));
+    CHECK(contains(large_triangle, Point(100000000, 100000000), true));
+    CHECK(contains(large_triangle, Point(1000000000, 1000000000), false));
+    // Outside.
+    CHECK_FALSE(contains(large_triangle, Point(2000000000, 2000000000), false));
+    // On the boundary: the two corners and the middle of the hypotenuse.
+    const Point hypotenuse_middle(1650000000, 1650000000);
+    CHECK(contains(large_triangle, Point(0, 0), true));
+    CHECK_FALSE(contains(large_triangle, Point(0, 0), false));
+    CHECK(contains(large_triangle, hypotenuse_middle, true));
+    CHECK_FALSE(contains(large_triangle, hypotenuse_middle, false));
+    // The other way around, the same classification.
+    Polygon reversed = large_triangle;
+    reversed.reverse();
+    CHECK(contains(reversed, Point(100000000, 100000000), false));
+    CHECK(contains(reversed, Point(1000000000, 1000000000), false));
+    CHECK_FALSE(contains(reversed, Point(2000000000, 2000000000), false));
+    CHECK_FALSE(contains(reversed, Point(0, 0), false));
+    CHECK_FALSE(contains(reversed, hypotenuse_middle, false));
+}

@@ -759,6 +759,8 @@ bool overlaps(const Polygons& polys1, const Polygons& polys2)
 }
 
 // Clipper1's PointInPolygon(): 1 inside, 0 outside, -1 on the boundary.
+// The side of an edge the point is on is decided by int128::orient(), which computes the cross product in 128 bits
+// when the 64 bit one may overflow: a triangle as large as the supported coordinate range would overflow it.
 static int point_in_polygon(const Point &pt, const Points &path)
 {
     int result = 0;
@@ -774,14 +776,15 @@ static int point_in_polygon(const Point &pt, const Points &path)
                 if (ipNext.x() > pt.x())
                     result = 1 - result;
                 else {
-                    int64_t d = int64_t(ip.x() - pt.x()) * int64_t(ipNext.y() - pt.y()) - int64_t(ipNext.x() - pt.x()) * int64_t(ip.y() - pt.y());
-                    if (! d) return -1;
-                    if ((d > 0) == (ipNext.y() > ip.y())) result = 1 - result;
+                    // The sign of (ip - pt) x (ipNext - pt), as the cross product d below computed it.
+                    const int sign = int128::orient(pt, ip, ipNext);
+                    if (! sign) return -1;
+                    if ((sign > 0) == (ipNext.y() > ip.y())) result = 1 - result;
                 }
             } else if (ipNext.x() > pt.x()) {
-                int64_t d = int64_t(ip.x() - pt.x()) * int64_t(ipNext.y() - pt.y()) - int64_t(ipNext.x() - pt.x()) * int64_t(ip.y() - pt.y());
-                if (! d) return -1;
-                if ((d > 0) == (ipNext.y() > ip.y())) result = 1 - result;
+                const int sign = int128::orient(pt, ip, ipNext);
+                if (! sign) return -1;
+                if ((sign > 0) == (ipNext.y() > ip.y())) result = 1 - result;
             }
         }
         ip = ipNext;

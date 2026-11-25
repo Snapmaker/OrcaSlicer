@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include "libslic3r/MixedFilament.hpp"
+#include "libslic3r/MixedFilament/GradientDomain.hpp"
+#include "libslic3r/GCode/ThumbnailMaterialId.hpp"
+#include "libslic3r/MultiMaterialSegmentation.hpp"
 #include "libslic3r/MixedFilament/Serialization.hpp"
 #include "libslic3r/FullSpectrumKSPairResidual.hpp"
 #include "libslic3r/Print.hpp"
@@ -13,6 +16,7 @@
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/PresetBundle.hpp"
 #include <boost/filesystem.hpp>
 #include <fstream>
 #include <cmath>
@@ -23,6 +27,129 @@
 
 using namespace Slic3r;
 using Catch::Approx;
+
+TEST_CASE("Uncalibrated three-color recipe has the same automatic preview after refresh", "[ProductPort][Remediation]")
+{
+    MixedFilament row;
+    row.distribution_mode          = int(MixedFilament::LayerCycle);
+    row.gradient_component_ids     = "123";
+    row.gradient_component_weights = "33/33/34";
+    MixedFilamentDisplayContext context;
+    context.num_physical                  = 4;
+    context.physical_colors               = {"#FF0000", "#00FF00", "#0000FF", "#111111"};
+    context.color_engine                  = MixedFilamentColorEngine::FullSpectrumKSPairResidual;
+    context.preview_settings.local_z_mode = false;
+    const auto editor                     = blend_mixed_components({1, 2, 3}, {33, 33, 34}, context);
+    CHECK(compute_mixed_filament_display_color(row, context) == editor);
+    context.color_engine = MixedFilamentColorEngine::FilamentMixer;
+    CHECK(compute_mixed_filament_display_color(row, context) == editor);
+}
+
+TEST_CASE("Material thumbnail RGB preserves the full slot identity", "[Remediation][Thumbnail]")
+{
+    CHECK_FALSE(thumbnail_material_id_needs_rgb(255));
+    CHECK(thumbnail_material_id_needs_rgb(256));
+    CHECK(thumbnail_material_id_needs_rgb(257));
+    for (unsigned int id : {0u, 1u, 255u, 256u, 257u, 258u, 272u, 320u, 65536u}) {
+        const auto rgb = encode_thumbnail_material_id(id);
+        CHECK(decode_thumbnail_material_id(rgb.data()) == id);
+    }
+}
+
+TEST_CASE("Gradient domains combine transformed parts using each painted triangle", "[Remediation][Gradient]")
+{
+    Model model;
+    auto* object = model.add_object();
+    object->config.set("extruder", 5);
+    auto*       tall       = object->add_volume(make_cube(4., 2., 2.));
+    auto*       short_part = object->add_volume(make_cube(4., 2., 1.));
+    Transform3d transform  = Transform3d::Identity();
+    transform.translate(Vec3d(8., 0., 1.));
+    transform.rotate(Eigen::AngleAxisd(PI / 2, Vec3d::UnitX()));
+    auto             domains = mixed_gradient_part_bounds(*tall, tall->get_matrix());
+    TriangleSelector paint(short_part->mesh());
+    for (size_t i = 0; i < short_part->mesh().its.indices.size(); ++i)
+        paint.set_facet(int(i), static_cast<EnforcerBlockerType>(5));
+    short_part->mmu_segmentation_facets.set(paint);
+    auto part = mixed_gradient_part_bounds(*short_part, transform * short_part->get_matrix());
+    REQUIRE(part.count(5) == 1);
+    CHECK(part.at(5).min.z() == Approx(1.));
+    domains.at(5).merge(part.at(5));
+    CHECK(domains.at(5).min.z() == Approx(0.));
+    CHECK(domains.at(5).max.z() == Approx(3.));
+    auto joined = tall->mesh();
+    auto second = short_part->mesh();
+    joined.transform(tall->get_matrix());
+    second.transform(transform * short_part->get_matrix());
+    joined.merge(second);
+    auto*      combined = object->add_volume(joined);
+    const auto control  = mixed_gradient_part_bounds(*combined, combined->get_matrix());
+    CHECK(control.at(5).max.z() == Approx(domains.at(5).max.z()));
+}
+
+TEST_CASE("Surface-only painting establishes the same shell before beam interlocking", "[Remediation][Segmentation]")
+{
+    for (bool surface : {false, true}) {
+        for (bool beam : {false, true}) {
+            CAPTURE(surface, beam);
+            Model model;
+            auto* object = model.add_object();
+            auto* volume = object->add_volume(make_cube(10., 10., 4.));
+            object->config.set("extruder", 1);
+            const auto&      mesh = volume->mesh().its;
+            TriangleSelector paint(volume->mesh());
+            for (size_t i = 0; i < mesh.indices.size(); ++i) {
+                const auto& tri = mesh.indices[i];
+                if (mesh.vertices[tri[0]].z() != mesh.vertices[tri[1]].z() || mesh.vertices[tri[1]].z() != mesh.vertices[tri[2]].z())
+                    paint.set_facet(int(i), static_cast<EnforcerBlockerType>(2));
+            }
+            volume->mmu_segmentation_facets.set(paint);
+            object->add_instance();
+            auto cfg = DynamicPrintConfig::full_print_config();
+            cfg.set_num_extruders(2);
+            cfg.set_num_filaments(2);
+            cfg.option<ConfigOptionStrings>("filament_colour")->values  = {"#FF0000", "#0000FF"};
+            cfg.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.75};
+            cfg.set("layer_height", .2);
+            cfg.set("initial_layer_print_height", .2);
+            cfg.set("wall_loops", 2);
+            cfg.set_key_value("outer_wall_line_width", new ConfigOptionFloatOrPercent(.42, false));
+            cfg.set_key_value("inner_wall_line_width", new ConfigOptionFloatOrPercent(.42, false));
+            cfg.set("fs_surface_paint_only", surface);
+            cfg.set("fs_painted_zone_extra_perimeters", 0);
+            cfg.set("interlocking_beam", beam);
+            Print print;
+            print.set_status_silent();
+            print.apply(model, cfg);
+            auto* printed = print.get_object(0);
+            printed->slice();
+            const auto segments = multi_material_segmentation_by_painting(*printed, [] {});
+            REQUIRE(segments.size() > 2);
+            REQUIRE(segments[2].size() > 2);
+            const auto& mask    = segments[2][2];
+            const Point point   = Point::new_scale(5., 1.) - printed->center_offset();
+            const bool  painted = std::any_of(mask.begin(), mask.end(), [&](const auto& poly) { return poly.contains(point); });
+            CHECK(painted == !surface);
+            if (surface)
+                CHECK(area(mask) * SCALING_FACTOR * SCALING_FACTOR == Approx(30.7776).margin(.05));
+
+            const Point core               = Point::new_scale(5., 5.) - printed->center_offset();
+            bool        final_edge_painted = false, final_core_painted = false;
+            for (const LayerRegion* region : printed->get_layer(2)->regions()) {
+                if (region->region().config().wall_filament.value != 2)
+                    continue;
+                for (const auto& slice : region->slices.surfaces) {
+                    final_edge_painted |= slice.expolygon.contains(point);
+                    final_core_painted |= slice.expolygon.contains(core);
+                }
+            }
+            if (surface)
+                CHECK_FALSE(final_core_painted);
+            if (!beam)
+                CHECK(final_edge_painted == !surface);
+        }
+    }
+}
 
 TEST_CASE("Typed mixes retain product gradient order and widths", "[ProductPort][Refactor]")
 {
@@ -285,6 +412,26 @@ TEST_CASE("Product color library identifies the shipping bundle and its TD value
     library.Reload();
     FilamentColorInfo bundle;
     REQUIRE(library.FindFilamentById("14170311270", bundle));
+    PresetBundle presets;
+    auto         preset = presets.filaments.default_preset().config;
+    presets.filaments.load_preset("", bundle.filamentName, preset, false);
+    presets.filament_presets = {"Previous material"};
+    presets.update_multi_material_filament_presets();
+    presets.project_config.option<ConfigOptionStrings>("filament_colour")->values = {"#008BB3"};
+    presets.set_filament_preset(0, bundle.filamentName);
+    presets.update_multi_material_filament_presets();
+    CHECK(presets.project_config.option<ConfigOptionFloats>("filament_transmission_distance")->values.front() == Approx(5.5));
+    CHECK(presets.project_config.option<ConfigOptionStrings>("filament_full_spectrum_material_id")->values.front() == "snapmaker:34267");
+    auto& config                                                          = presets.project_config;
+    config.option<ConfigOptionStrings>("filament_colour")->values.front() = "#E11234";
+    presets.update_multi_material_filament_presets();
+    CHECK(config.option<ConfigOptionFloats>("filament_transmission_distance")->values.front() == 0.);
+    CHECK(config.option<ConfigOptionStrings>("filament_full_spectrum_material_id")->values.front().empty());
+    config.option<ConfigOptionFloats>("filament_transmission_distance")->values.front()      = 7.25;
+    config.option<ConfigOptionStrings>("filament_full_spectrum_material_id")->values.front() = "custom:red";
+    presets.update_multi_material_filament_presets();
+    CHECK(config.option<ConfigOptionFloats>("filament_transmission_distance")->values.front() == Approx(7.25));
+    CHECK(config.option<ConfigOptionStrings>("filament_full_spectrum_material_id")->values.front() == "custom:red");
     for (const auto& [sku, td] :
          std::vector<std::pair<std::string, double>>{{"34267", 5.5}, {"34268", 5.5}, {"34269", 9.5}, {"34265", 6.5}}) {
         const auto found = std::find_if(bundle.colors.begin(), bundle.colors.end(), [&](const auto& item) { return item.sku == sku; });

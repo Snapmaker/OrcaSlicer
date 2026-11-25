@@ -64,8 +64,7 @@ static constexpr size_t kMultiColorComponentCount     = 3;
 // UI-list cap: the number of source/palette color rows the legend renders. Past this cap
 // the tail colors are dropped (see load_palette_colors) and a deferred warning is shown once
 // build_ui is up. The palette is every physical slot plus every enabled mixed recipe, so the
-// cap is the combined slot space (MAXIMUM_EXTRUDER_NUMBER + MAXIMUM_MIXED_FILAMENT_NUMBER):
-// a project at both limits still lists every color. The number of NEW mixed rows a match may
+// cap includes the full historical slot range so older projects still list every color. The number of new mixed rows a match may
 // create is a separate limit (MAXIMUM_MIXED_FILAMENT_NUMBER), enforced at apply time by
 // add_batch_custom_filaments and predicted post-match by predict_slot_overflow.
 static constexpr size_t kMaxColors = MAXIMUM_FILAMENT_NUMBER;
@@ -2370,17 +2369,18 @@ bool MixedFilamentBatchDialog::predict_slot_overflow() const
         if (!mapping.is_pure_recipe && !mapping.in_place_edited && !edits_existing_row(mapping))
             ++new_mixed_rows;
     // Batch insertion precedes cleanup; count disabled saved recipes as well.
-    return bundle->mixed_filaments.registered_count() + new_mixed_rows > MAXIMUM_MIXED_FILAMENT_NUMBER;
+    return new_mixed_rows > 0 && bundle->mixed_filaments.registered_count() + new_mixed_rows > MAXIMUM_MIXED_FILAMENT_NUMBER;
 }
 
 bool MixedFilamentBatchDialog::try_show_slot_overflow_advisory()
 {
     // Single source of truth for the overflow banner + the "overflow wins over ratio"
     // priority. Returns true (and shows the red advisory) when applying m_result would
-    // exceed the 256-mixed-recipe cap; otherwise returns false and leaves the banners as they are
+    // exceed the saved recipe limit; otherwise returns false and leaves the banners as they are
     // so the caller is free to surface the lower-priority ratio hint.
     if (!predict_slot_overflow()) return false;
-    display_error_advisory(_L("Mixed filament limit reached (256 recipes). Excess mixed colors will be removed."));
+    display_error_advisory(wxString::Format(_L("Mixed filament limit reached (%u recipes). Excess mixed colors will be removed."),
+                                            static_cast<unsigned>(MAXIMUM_MIXED_FILAMENT_NUMBER)));
     return true;
 }
 

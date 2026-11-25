@@ -73,6 +73,8 @@ void GLGizmoMmuSegmentation::on_opening()
 
 void GLGizmoMmuSegmentation::on_shutdown()
 {
+    m_rectangle_mask_active = m_polygon_mask_active = false;
+    cancel_mask_gesture();
     m_parent.use_slope(false);
     m_parent.toggle_model_objects_visibility(true);
 }
@@ -340,14 +342,7 @@ bool GLGizmoMmuSegmentation::on_key_down_select_tool_type(int keyCode)
         return false;
     }
 
-    if (selectedTool != m_current_tool)
-    {
-        const wchar_t oldTool = m_current_tool;
-        // Keep the drag painting with the new tool as a separate stroke.
-        SplitPaintingStroke();
-        m_current_tool = selectedTool;
-        tool_changed(oldTool, m_current_tool);
-    }
+    select_paint_tool(selectedTool);
     return true;
 }
 
@@ -455,7 +450,6 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     y = std::min(y, bottom_limit - approx_height);
     GizmoImguiSetNextWIndowPos(x, y, ImGuiCond_Always);
 
-    wchar_t old_tool = m_current_tool;
 
     // BBS
     ImGuiWrapper::push_toolbar_style(m_parent.get_scale());
@@ -720,15 +714,8 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(1);
 
-        if (btn_clicked && (m_current_tool != tool_ids[i] || m_rectangle_mask_active || m_polygon_mask_active)) {
-            FinishPaintingInteraction();
-            m_current_tool          = tool_ids[i];
-            m_rectangle_mask_active = false;
-            m_polygon_mask_active   = false;
-            m_rect_dragging         = false;
-            m_polygon_points.clear();
-            m_polygon_dragged_vertex = -1;
-        }
+        if (btn_clicked)
+            select_paint_tool(tool_ids[i]);
 
         if (ImGui::IsItemHovered()) {
             m_imgui->tooltip(tool_tips[i], max_tooltip_width);
@@ -736,9 +723,6 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     }
 
     ImGui::Dummy(ImVec2(0.0f, ImGui::GetFontSize() * 0.1));
-
-    if (m_current_tool != old_tool)
-        this->tool_changed(old_tool, m_current_tool);
 
     if (m_current_tool == ImGui::CircleButtonIcon || m_current_tool == ImGui::SphereButtonIcon) {
         if (m_current_tool == ImGui::CircleButtonIcon)
@@ -917,9 +901,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     if (m_imgui->bbl_checkbox(_L("Rectangle mask"), m_rectangle_mask_active)) {
         FinishPaintingInteraction();
         m_polygon_mask_active = false;
-        m_polygon_points.clear();
-        m_polygon_dragged_vertex = -1;
-        m_rect_dragging          = false;
+        cancel_mask_gesture();
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(
@@ -929,9 +911,7 @@ void GLGizmoMmuSegmentation::on_render_input_window(float x, float y, float bott
     if (m_imgui->bbl_checkbox(_L("Polygon mask"), m_polygon_mask_active)) {
         FinishPaintingInteraction();
         m_rectangle_mask_active = false;
-        m_rect_dragging         = false;
-        m_polygon_points.clear();
-        m_polygon_dragged_vertex = -1;
+        cancel_mask_gesture();
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip(
@@ -1139,6 +1119,26 @@ void GLGizmoMmuSegmentation::update_from_model_object(bool first_update)
         this->init_extruders_data(current_extruder_colors);
 
     this->init_model_triangle_selectors();
+}
+
+void GLGizmoMmuSegmentation::cancel_mask_gesture()
+{
+    m_rect_dragging = false;
+    m_polygon_points.clear();
+    m_polygon_dragged_vertex = -1;
+}
+
+void GLGizmoMmuSegmentation::select_paint_tool(wchar_t tool)
+{
+    if (tool == m_current_tool && !m_rectangle_mask_active && !m_polygon_mask_active)
+        return;
+    FinishPaintingInteraction();
+    const wchar_t previous  = m_current_tool;
+    m_current_tool          = tool;
+    m_rectangle_mask_active = m_polygon_mask_active = false;
+    cancel_mask_gesture();
+    if (previous != tool)
+        tool_changed(previous, tool);
 }
 
 void GLGizmoMmuSegmentation::tool_changed(wchar_t old_tool, wchar_t new_tool)

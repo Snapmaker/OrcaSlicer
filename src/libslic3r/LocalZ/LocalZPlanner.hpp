@@ -10,9 +10,18 @@ namespace Slic3r {
 class Print;
 class PrintObject;
 
+// A painted island that would print at the nominal height, in its physical filament on this layer.
+struct LocalZNominalZone
+{
+    unsigned int filament;
+    ExPolygons   islands;
+};
+using LocalZNominalZones = std::vector<LocalZNominalZone>;
+
 struct LocalZPlanningInput
 {
     std::vector<std::vector<ExPolygons>> segmentation;
+    std::vector<LocalZNominalZones>      nominal_zones;
     bool                                 whole_object_scope_active = false;
 };
 

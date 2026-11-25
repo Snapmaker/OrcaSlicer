@@ -21,6 +21,11 @@ struct SubLayerPlan
     size_t                  dependency_order{0};
     std::vector<ExPolygons> painted_masks_by_extruder;
     std::vector<ExPolygons> fixed_painted_masks_by_extruder;
+    // Areas of the row's region that this pass leaves out, because it would be printed into what is there already
+    // (the tip of a colour zone at a step of its edge). They are not part of the masks above. The walls of this
+    // pass come from LayerRegion::local_z_alt_perimeters, which are generated for the region without these areas,
+    // so that the pass ends in an ordinary seam where it stops short.
+    ExPolygons held_back_masks;
 };
 
 struct LocalZInterval

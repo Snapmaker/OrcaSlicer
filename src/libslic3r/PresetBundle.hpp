@@ -168,6 +168,14 @@ public:
     // Filament preset names for a multi-extruder or multi-material print.
     // extruders.size() should be the same as printers.get_edited_preset().config.nozzle_diameter.size()
     std::vector<std::string>    filament_presets;
+    struct SlotCalibrationSource
+    {
+        std::string preset;
+        std::string library_color;
+        std::string library_material_id;
+        double      library_td{0.0};
+    };
+    std::vector<SlotCalibrationSource> calibration_sources;
     // BBS: ams
     std::map<int, DynamicPrintConfig> filament_ams_list;
     std::vector<std::vector<std::string>> ams_multi_color_filment;

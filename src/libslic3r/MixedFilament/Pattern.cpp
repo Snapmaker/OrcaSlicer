@@ -1,4 +1,5 @@
 #include "Internal.hpp"
+#include <stdexcept>
 
 #include <algorithm>
 #include <cctype>
@@ -124,6 +125,9 @@ std::string legacy_manual_pattern_from_mixed_filament_pattern(const MixedFilamen
                 encoded += char('0' + ref.id);
             else if (ref.id > 9)
                 encoded += "[" + std::to_string(ref.id) + "]";
+            else
+                throw std::runtime_error(
+                    "Legacy manual patterns can reference physical slots 1 and 2 only when they are primary components A or B.");
         }
         if (!encoded.empty()) {
             if (!result.empty())

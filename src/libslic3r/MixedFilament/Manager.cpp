@@ -118,6 +118,24 @@ void shift_definition_after_physical_deletion(MixedFilamentDefinition& definitio
     for (auto& id : definition.behavior.gradient.color_order)
         if (id > deleted_physical_id)
             --id;
+
+    // Slot 3 can become slot 2. The legacy pattern can then name it only as A or B.
+    // Keep the physical sequence and its component weights when choosing that alias.
+    auto& components = definition.recipe.blend.components;
+    if (!definition.recipe.manual_pattern || deleted_physical_id > 2 || components.size() < 2 || components[0].filament.id == 2 ||
+        components[1].filament.id == 2)
+        return;
+    const auto& groups = definition.recipe.manual_pattern->groups;
+    if (std::none_of(groups.begin(), groups.end(), [](const auto& group) {
+            return std::any_of(group.begin(), group.end(), [](const auto& ref) { return ref.id == 2; });
+        }))
+        return;
+    auto slot_two = std::find_if(components.begin() + 2, components.end(), [](const auto& component) { return component.filament.id == 2; });
+    if (slot_two == components.end()) {
+        components.push_back({{2}, 0});
+        slot_two = std::prev(components.end());
+    }
+    std::iter_swap(components.begin() + (components[1].filament.id == 1 ? 0 : 1), slot_two);
 }
 
 MixedFilamentLegacyRow legacy_row_from_definition_for_manager(const MixedFilamentDefinition& definition)
@@ -350,7 +368,7 @@ void MixedFilamentManager::remove_physical_filament(unsigned int deleted_filamen
     invalidate_legacy_cache();
 }
 
-void MixedFilamentManager::add_custom_filament(unsigned int                    component_a,
+bool MixedFilamentManager::add_custom_filament(unsigned int                    component_a,
                                                unsigned int                    component_b,
                                                int                             mix_b_percent,
                                                const std::vector<std::string>& filament_colours)
@@ -358,7 +376,7 @@ void MixedFilamentManager::add_custom_filament(unsigned int                    c
     MixedFilamentDefinition definition;
     const int               pct_b      = clamp_int(mix_b_percent, 0, 100);
     definition.recipe.blend.components = {{{component_a}, 100 - pct_b}, {{component_b}, pct_b}};
-    add_custom_filament_definition(std::move(definition), filament_colours);
+    return add_custom_filament_definition(std::move(definition), filament_colours);
 }
 
 size_t MixedFilamentManager::registered_count() const
@@ -700,14 +718,15 @@ void MixedFilamentManager::load_custom_entries(const std::string&              s
             }
 
             auto it_auto = auto_rows_by_pair.find(key);
-            if (it_auto == auto_rows_by_pair.end()) {
+            if (it_auto == auto_rows_by_pair.end() && !auto_generate_enabled()) {
                 ++skipped_rows;
                 BOOST_LOG_TRIVIAL(warning) << "MixedFilamentManager::load_custom_entries auto row missing after regenerate"
                                            << ", row=" << row << ", a=" << std::min(a, b) << ", b=" << std::max(a, b);
                 continue;
             }
 
-            MixedFilament mf             = *it_auto->second;
+            // A saved pair may lie outside the first 64 generated pairs. Keep its stored position and identity.
+            MixedFilament mf             = it_auto == auto_rows_by_pair.end() ? MixedFilament{} : *it_auto->second;
             mf.component_a               = std::min(a, b);
             mf.component_b               = std::max(a, b);
             mf.stable_id                 = dedupe_stable_id(stable_id != 0 ? stable_id : mf.stable_id);
@@ -780,11 +799,12 @@ void MixedFilamentManager::load_custom_entries(const std::string&              s
 
     // Keep any newly generated auto rows that were not present in serialized
     // definitions and append them at the end to preserve existing virtual IDs.
+    size_t registered = std::count_if(rebuilt.begin(), rebuilt.end(), [](const auto& mf) { return !mf.deleted; });
     for (const MixedFilament* auto_mf_ptr : auto_rows_in_order) {
         if (auto_mf_ptr == nullptr)
             continue;
         const uint64_t key = canonical_pair_key(auto_mf_ptr->component_a, auto_mf_ptr->component_b);
-        if (consumed_auto_pairs.count(key) != 0)
+        if (consumed_auto_pairs.count(key) != 0 || (!auto_mf_ptr->deleted && registered >= MAXIMUM_MIXED_FILAMENT_NUMBER))
             continue;
         MixedFilament      mf = *auto_mf_ptr;
         const unsigned int lo = std::min(mf.component_a, mf.component_b);
@@ -794,6 +814,8 @@ void MixedFilamentManager::load_custom_entries(const std::string&              s
         mf.stable_id          = dedupe_stable_id(mf.stable_id);
         mf.custom             = false;
         mf.origin_auto        = true;
+        if (!mf.deleted)
+            ++registered;
         rebuilt.push_back(std::move(mf));
         ++appended_auto;
     }

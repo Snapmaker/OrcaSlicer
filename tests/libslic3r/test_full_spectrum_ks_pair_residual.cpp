@@ -529,8 +529,11 @@ TEST_CASE("Display context routes physical TDs into KM/K-S prediction", "[MixedF
     context.nozzle_diameters = {0.4, 0.4};
     context.physical_tds     = {3.2, 5.0};
 
+    // These custom TDs fall outside the color-only identification tolerance.
+    context.physical_material_ids = {CYAN_MATERIAL_ID, MAGENTA_MATERIAL_ID};
     const std::string routed_td = compute_mixed_filament_display_color(row, context);
-    CHECK(routed_td == MixedFilamentManager::blend_color("#008BB3", "#AD4A76", 50, 50, 3.2, 5.0));
+    CHECK(routed_td == MixedFilamentManager::blend_color("#008BB3", "#AD4A76", 50, 50, 3.2, 5.0, std::string(CYAN_MATERIAL_ID),
+                                                         std::string(MAGENTA_MATERIAL_ID)));
 
     context.physical_tds.clear();
     const std::string without_td = compute_mixed_filament_display_color(row, context);
@@ -563,6 +566,6 @@ TEST_CASE("Display context routes stable material IDs into KM/K-S prediction",
 
     context.physical_material_ids.clear();
     const std::string inferred = compute_mixed_filament_display_color(row, context);
-    CHECK(inferred == "#C0638E");
+    CHECK(inferred == MixedFilamentManager::blend_color_multi({{"#FFFFFF", 50}, {"#AD4A76", 50}}, MixedFilamentColorEngine::FilamentMixer));
     CHECK(inferred != identified);
 }

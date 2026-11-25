@@ -16,7 +16,7 @@
 #include "FilamentColorMapBoxGroup.hpp"
 #include "FilamentSyncAlgorithm.hpp"
 #include "PlaterPreview.hpp"
-#include "libslic3r/GCode/ThumbnailData.hpp"
+#include "libslic3r/GCode/ThumbnailMaterialId.hpp"
 #include "libslic3r/PrintConfig.hpp"
 #include "libslic3r/MixedFilament.hpp"
 #include "slic3r/GUI/I18N.hpp"
@@ -631,30 +631,41 @@ void SyncFilamentColorDialog::loadCoverPreview()
     }
 
     if (plate->no_light_thumbnail_data.is_valid() && !filamentMapping.empty()) {
-        wxBitmap coverBmp = generateCoverPreview(plate->thumbnail_data,
-                                                  plate->no_light_thumbnail_data,
-                                                  filamentMapping,
-                                                  m_mixedFilamentInfos,
-                                                  m_filamentIdRemap,
-                                                  m_designDataList.size(),
-                                                  m_bMappingMode,
-                                                  m_shouldDeleteMixedFilaments);
+        const bool wide_ids = thumbnail_material_id_needs_rgb(m_designDataList.size()) ||
+                              std::any_of(m_mixedFilamentInfos.begin(), m_mixedFilamentInfos.end(),
+                                          [](const auto& info) { return thumbnail_material_id_needs_rgb(info.m_virtual_filament_id + 1); });
+        const ThumbnailData* material_ids = nullptr;
+        if (wide_ids) {
+            auto& ids    = m_material_id_thumbnails[plateIndex];
+            auto* canvas = plater->get_view3D_canvas3D();
+            if ((!ids.is_valid() || ids.width != plate->thumbnail_data.width || ids.height != plate->thumbnail_data.height) && canvas &&
+                canvas->make_current_for_postinit() && wxGetApp().get_shader("flat")) {
+                const ThumbnailsParams params{{}, false, true, true, true, int(plateIndex), true};
+                canvas->render_thumbnail(ids, plate->thumbnail_data.width, plate->thumbnail_data.height, params, Camera::EType::Ortho);
+            }
+            material_ids = &ids;
+        }
+        wxBitmap coverBmp = generateCoverPreview(plate->thumbnail_data, plate->no_light_thumbnail_data, material_ids, filamentMapping,
+                                                 m_mixedFilamentInfos, m_filamentIdRemap, m_designDataList.size(), m_bMappingMode,
+                                                 m_shouldDeleteMixedFilaments);
         m_pPlaterPreview->setCoverPreview(coverBmp);
     } else {
         m_pPlaterPreview->setCoverPreview(thumbnailToBitmap(plate->thumbnail_data));
     }
 }
 
-wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thumb,
-                                                        const ThumbnailData& noLightThumb,
-                                                        const std::vector<FilamentData>& filamentMapping,
-                                                        const std::vector<MixedFilamentPreviewInfo>& mixedFilamentInfos,
-                                                        const std::vector<unsigned int>& filamentIdRemap,
-                                                        int  originalFilamentCount,
-                                                        bool isMappingMode,
-                                                        bool shouldDeleteMixedFilaments)
+wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData&                         thumb,
+                                                       const ThumbnailData&                         noLightThumb,
+                                                       const ThumbnailData*                         materialIds,
+                                                       const std::vector<FilamentData>&             filamentMapping,
+                                                       const std::vector<MixedFilamentPreviewInfo>& mixedFilamentInfos,
+                                                       const std::vector<unsigned int>&             filamentIdRemap,
+                                                       int                                          originalFilamentCount,
+                                                       bool                                         isMappingMode,
+                                                       bool                                         shouldDeleteMixedFilaments)
 {
-    if (thumb.width != noLightThumb.width || thumb.height != noLightThumb.height)
+    if (thumb.width != noLightThumb.width || thumb.height != noLightThumb.height ||
+        (materialIds && (!materialIds->is_valid() || materialIds->width != thumb.width || materialIds->height != thumb.height)))
         return thumbnailToBitmap(thumb);
 
     wxImage image(thumb.width, thumb.height);
@@ -728,6 +739,10 @@ wxBitmap SyncFilamentColorDialog::generateCoverPreview(const ThumbnailData& thum
 
             // noLight alpha = 255 - (extruder_id - 1)  →  filament_id = 255 - alpha
             int filament_id = g_alphaDecode - noLightPx[3];
+            if (materialIds) {
+                const unsigned char* id = materialIds->pixels.data() + 4 * (rr + c);
+                filament_id             = int(decode_thumbnail_material_id(id)) - 1;
+            }
 
             const wxColour* targetColor = nullptr;
             if (filament_id < originalFilamentCount) {

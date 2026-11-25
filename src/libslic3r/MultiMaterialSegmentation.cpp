@@ -2246,11 +2246,12 @@ std::vector<std::vector<ExPolygons>> multi_material_segmentation_by_painting(con
     const size_t num_physical_filaments = print_object.print()->config().filament_colour.size();
     const size_t num_total_filaments    = print_object.print()->mixed_filament_manager().total_filaments(num_physical_filaments);
     const size_t num_facets_states      = num_total_filaments + 1;
-    const float  max_width              = print_object.config().fs_surface_paint_only.value ?
-                                              surface_paint_shell_width(print_object) :
-                                              float(print_object.config().mmu_segmented_region_max_width.value);
-    const float  interlocking_depth = float(print_object.config().mmu_segmented_region_interlocking_depth.value);
-    const bool   interlocking_beam  = print_object.config().interlocking_beam.value;
+    const bool   surface_only           = print_object.config().fs_surface_paint_only.value;
+    const float  max_width              = surface_only ? surface_paint_shell_width(print_object) :
+                                                         float(print_object.config().mmu_segmented_region_max_width.value);
+    // Establish the painted shell before the beam generator builds its interface microstructure.
+    const float interlocking_depth       = surface_only ? 0.f : float(print_object.config().mmu_segmented_region_interlocking_depth.value);
+    const bool  skip_width_cut_for_beams = !surface_only && print_object.config().interlocking_beam.value;
 
     size_t max_painted_state = 0;
     for (const ModelVolume *mv : print_object.model_object()->volumes) {
@@ -2280,7 +2281,8 @@ std::vector<std::vector<ExPolygons>> multi_material_segmentation_by_painting(con
         return {mv.mmu_segmentation_facets, mv.is_mm_painted(), false};
     };
 
-    return segmentation_by_painting(print_object, extract_facets_info, num_facets_states, max_width, interlocking_depth, interlocking_beam, IncludeTopAndBottomLayers::Yes, throw_on_cancel_callback);
+    return segmentation_by_painting(print_object, extract_facets_info, num_facets_states, max_width, interlocking_depth,
+                                    skip_width_cut_for_beams, IncludeTopAndBottomLayers::Yes, throw_on_cancel_callback);
 }
 
 // Returns fuzzy skin segmentation based on painting in fuzzy skin segmentation gizmo

@@ -145,7 +145,7 @@ TEST_CASE("Selection only stages unregistered recommendations and leaves saved r
     CHECK(result.mixed_filament_definitions()[1].behavior.gradient.enabled);
 }
 
-TEST_CASE("Manage supports the full 2600-candidate palette and 256 saved mixes", "[MixedManage]")
+TEST_CASE("Manage supports the full 2600-candidate palette and 64 saved mixes", "[MixedManage]")
 {
     std::vector<std::string> colors;
     for (unsigned int i = 0; i < 16; ++i) {
@@ -173,17 +173,17 @@ TEST_CASE("Manage supports the full 2600-candidate palette and 256 saved mixes",
     CHECK_THROWS_AS(catalog.prepare(manager), std::length_error);
     CHECK(manager.registered_count() == 0);
     catalog.select_all(false);
-    for (size_t i = 0; i < 256; ++i)
+    for (size_t i = 0; i < 64; ++i)
         catalog.recommendations[i].selected = true;
     CHECK_FALSE(catalog.exceeds_limit());
     auto candidate = catalog.prepare(manager);
-    CHECK(candidate.registered_count() == 256);
-    CHECK(candidate.total_filaments(16) == 272);
+    CHECK(candidate.registered_count() == 64);
+    CHECK(candidate.total_filaments(16) == 80);
     CHECK_FALSE(candidate.add_custom_filament_definition(blend(0, {{{1}, 50}, {{2}, 50}}), colors));
     const auto json = serialize_mixed_filaments_json(candidate.mixed_filament_definitions(), 16);
-    CHECK(deserialize_mixed_filaments_json(json, 16).size() == 256);
+    CHECK(deserialize_mixed_filaments_json(json, 16).size() == 64);
     CHECK(key(catalog.recommendations.front()) == initial_first);
-    catalog.recommendations[256].selected = true;
+    catalog.recommendations[64].selected = true;
     CHECK(catalog.exceeds_limit());
     CHECK_THROWS_AS(catalog.prepare(manager), std::length_error);
     CHECK(manager.registered_count() == 0);
@@ -196,7 +196,7 @@ TEST_CASE("Manage supports the full 2600-candidate palette and 256 saved mixes",
     CHECK(edit.exceeds_limit());
     edit.saved.front().removed = true;
     CHECK_FALSE(edit.exceeds_limit());
-    CHECK(edit.prepare(candidate).registered_count() == 256);
+    CHECK(edit.prepare(candidate).registered_count() == 64);
 }
 
 TEST_CASE("Manage previews use calibration identities and FilamentMixer fallback", "[MixedManage]")
@@ -223,6 +223,24 @@ TEST_CASE("Manage previews use calibration identities and FilamentMixer fallback
                                                                            MixedFilamentColorEngine::FilamentMixer));
     }
     CHECK(MixedFilamentManager::color_engine() == old_engine);
+}
+
+TEST_CASE("Manage allows older projects above 64 to remove mixes in stages", "[MixedManage]")
+{
+    const auto                           context = palette({"#FF0000", "#0000FF"});
+    std::vector<MixedFilamentDefinition> definitions;
+    for (unsigned id = 1; id <= 66; ++id)
+        definitions.push_back(blend(id, {{{1}, 42}, {{2}, 58}}));
+    MixedFilamentManager manager;
+    manager.set_mixed_filament_definitions(definitions, context.physical_colors);
+    MixedFilamentRecommendations catalog(context, {"PLA", "PLA"}, definitions);
+    catalog.saved.front().removed = true;
+    REQUIRE(catalog.prepare(manager).registered_count() == 65);
+    catalog.recommendations.front().selected = true;
+    CHECK_THROWS_AS(catalog.prepare(manager), std::length_error);
+    catalog.saved[1].removed = true;
+    catalog.saved[2].removed = true;
+    CHECK(catalog.prepare(manager).registered_count() == 64);
 }
 
 TEST_CASE("Recommendation loading rejects incomplete or oversized palettes", "[MixedManage]")
@@ -268,20 +286,20 @@ TEST_CASE("Removing edited generated mixes survives regeneration and legacy relo
 TEST_CASE("Disabled recipes count toward the mixed limit and auto generation cannot overfill it", "[MixedManage]")
 {
     const std::vector<std::string>       colors(16, "#808080");
-    std::vector<MixedFilamentDefinition> definitions(256);
+    std::vector<MixedFilamentDefinition> definitions(64);
     for (size_t i = 0; i < definitions.size(); ++i) {
         definitions[i]                    = blend(i + 1, {{{1}, 50}, {{2}, 50}});
         definitions[i].visibility.enabled = false;
     }
     MixedFilamentManager manager;
     manager.set_mixed_filament_definitions(definitions, colors);
-    CHECK(manager.registered_count() == 256);
+    CHECK(manager.registered_count() == 64);
     CHECK(manager.enabled_count() == 0);
     CHECK_FALSE(manager.add_custom_filament_definition(blend(0, {{{1}, 50}, {{2}, 50}}), colors));
     const bool old_auto = MixedFilamentManager::auto_generate_enabled();
     MixedFilamentManager::set_auto_generate_enabled(true);
     manager.auto_generate(colors);
     MixedFilamentManager::set_auto_generate_enabled(old_auto);
-    CHECK(manager.registered_count() == 256);
+    CHECK(manager.registered_count() == 64);
     CHECK(manager.enabled_count() == 0);
 }

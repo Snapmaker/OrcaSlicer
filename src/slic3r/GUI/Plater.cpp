@@ -3199,7 +3199,8 @@ Sidebar::Sidebar(Plater *parent)
             ConfigOptionStrings *co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
             std::vector<std::string> colors = co ? co->values : std::vector<std::string>();
             // Add a custom gradient (50% mix)
-            mgr.add_custom_filament(1, 2, 50, colors);
+            if (!mgr.add_custom_filament(1, 2, 50, colors))
+                return;
             // Persist the custom entries so they survive the clear/load cycle in update_mixed_filament_panel
             if (ConfigOptionString *opt = wxGetApp().preset_bundle->project_config.option<ConfigOptionString>("mixed_filament_definitions"))
                 opt->value = mgr.serialize_custom_entries();
@@ -3219,7 +3220,8 @@ Sidebar::Sidebar(Plater *parent)
             ConfigOptionStrings *co = wxGetApp().preset_bundle->project_config.option<ConfigOptionStrings>("filament_colour");
             std::vector<std::string> colors = co ? co->values : std::vector<std::string>();
             // Add a custom pattern filament (will be configured by user)
-            mgr.add_custom_filament(1, 2, 50, colors);
+            if (!mgr.add_custom_filament(1, 2, 50, colors))
+                return;
             // Set manual pattern for the newly added filament
             auto mfs = mgr.mixed_filament_legacy_rows();
             if (!mfs.empty()) {
@@ -3259,7 +3261,8 @@ Sidebar::Sidebar(Plater *parent)
         const MixedFilamentDisplayContext display_context = build_mixed_filament_display_context(colors);
         auto &mgr = wxGetApp().preset_bundle->mixed_filaments;
         mgr.set_display_context(display_context);
-        mgr.add_custom_filament(recipe.component_a, recipe.component_b, recipe.mix_b_percent, colors);
+        if (!mgr.add_custom_filament(recipe.component_a, recipe.component_b, recipe.mix_b_percent, colors))
+            return;
         auto mfs = mgr.mixed_filament_legacy_rows();
         if (!mfs.empty()) {
             MixedFilament &created = mfs.back();
@@ -6318,10 +6321,9 @@ void Sidebar::init_color_mix_panel(wxWindow* parent, wxSizer* sizer)
         if (dlg.ShowModal() != wxID_OK) return;
 
         auto& mgr = pb->mixed_filaments;
-        if (mgr.registered_count() >= MAXIMUM_MIXED_FILAMENT_NUMBER)
-            return;
         const MixedFilament& r = dlg.GetResult();
-        mgr.add_custom_filament(r.component_a, r.component_b, r.mix_b_percent, colors);
+        if (!mgr.add_custom_filament(r.component_a, r.component_b, r.mix_b_percent, colors))
+            return;
         auto mfs = mgr.mixed_filament_legacy_rows();
         if (!mfs.empty()) {
             mfs.back().distribution_mode       = r.distribution_mode;
@@ -7919,8 +7921,13 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
             guard_config_ref(lr.second);
     }
 
-    RedundantFilamentSet red = compute_redundant_filaments(num_physical, kept_physical, kept_mixed,
-                                                           pb->mixed_filaments.mixed_filament_legacy_rows());
+    // A rejected match leaves its original assignment in the model. Its physical
+    // filament or recipe components may be outside the selected palette.
+    const bool           complete = std::all_of(match_result.mappings.begin(), match_result.mappings.end(),
+                                                [](const auto& mapping) { return mapping.target_filament_id != 0; });
+    RedundantFilamentSet red;
+    if (complete)
+        red = compute_redundant_filaments(num_physical, kept_physical, kept_mixed, pb->mixed_filaments.mixed_filament_legacy_rows());
 
     if (red.redundant_physical.empty() && red.redundant_mixed.empty()) {
         // No deletions needed, but add_batch_custom_filaments only calls

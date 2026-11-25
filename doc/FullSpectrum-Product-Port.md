@@ -131,3 +131,24 @@ Tower integration now honors an actual required tool change even above the last 
 The project mesh, original triangle paint annotations and saved settings were reproduced in a headless slicing harness, with the original 3MF left untouched. With the tower enabled, all 1,239 model extrusion moves above the painted region now use green at 0.20 mm; previously 1,139 used yellow. The 0.12 mm comparison also uses green for all 2,183 model extrusion moves above its painted region. These are generated-G-code checks, not physical print validation.
 
 A focused regression checks that exhausted and skipped sparse tower layers still request a needed tool change, while an already active filament requires no tower output. The Windows DLL, launcher and tests build successfully. The regression run has 228 cases: 226 passed and two existing expected failures, with 114,436 assertions.
+
+## Local-Z at the edge of a painted colour zone
+
+Each row keeps its own Z cursor, so a row that is already running (for example the gradient around a painted zone) may resume below the bottom of the current nominal layer. Where it covers area that belonged to another colour zone on the previous layer, its next pass would be printed into what that zone already printed there. The zone can be a mixed row with its own passes, or a painted zone printed at the nominal layer height (a solid colour, or a mix that is not subdivided). What happens depends on whether the zone ends there.
+
+Where a zone ends, its last layer is cut down and the resuming pass keeps its height:
+
+- anything above the point where the row resumes is not printed, because the resuming pass occupies that space;
+- the pass or layer that straddles that point is cut down to it and no further. A nominal layer is printed there as one shorter pass, in the filament that layer would have used. If less than half the minimum sublayer height for the nozzle would remain, it is not printed.
+
+Where a zone continues and only its edge steps back, the zone is left exactly as painted and nothing changes height. The one pass that resumes below the top of the zone's tip stops short of the tip instead:
+
+- that pass ends at the edge the zone had on the layer below, where the row's passes underneath end as well;
+- its walls are generated a second time for the row's region without the tip, so the pass turns inwards and ends in an ordinary seam there rather than being cut off;
+- the next pass of the row starts above the tip and covers it. Between the tip and that pass a gap remains, no taller than the pass that stopped short and one step long.
+
+This is the same joint an edge gets where a zone grows instead of shrinking: there the row's passes of the layer below end at the old edge, and the zone's next layer reaches over them.
+
+Strips narrower than `0.2 mm` and unpainted regions are left as they are. Infill is only affected when **Apply subdivision to infill** is on.
+
+[Implementation notes and regression cases](local-z-zone-edge-overlap-fix.md)

@@ -117,12 +117,7 @@ std::string compute_mixed_filament_display_color(const MixedFilament& entry, con
         const auto [apparent_pct_a, apparent_pct_b] = mixed_filament_apparent_pair_percentages(entry, context.preview_settings,
                                                                                                context.nozzle_diameters,
                                                                                                context.component_bias_enabled);
-        return MixedFilamentManager::blend_color(context.physical_colors[entry.component_a - 1],
-                                                 context.physical_colors[entry.component_b - 1], apparent_pct_a, apparent_pct_b,
-                                                 physical_td_for_id(context, entry.component_a),
-                                                 physical_td_for_id(context, entry.component_b),
-                                                 physical_material_id_for_id(context, entry.component_a),
-                                                 physical_material_id_for_id(context, entry.component_b));
+        return blend_mixed_components({entry.component_a, entry.component_b}, {apparent_pct_a, apparent_pct_b}, context);
     }
 
     const std::string normalized_pattern = MixedFilamentManager::normalize_manual_pattern(entry.manual_pattern);
@@ -140,16 +135,10 @@ std::string compute_mixed_filament_display_color(const MixedFilament& entry, con
         if (gradient_ids.size() >= 3) {
             const std::vector<int> gradient_weights = decode_gradient_component_weights(entry.gradient_component_weights,
                                                                                         gradient_ids.size());
-            if (context.preview_settings.local_z_mode && context.preview_settings.local_z_direct_multicolor)
-                return blend_mixed_components(gradient_ids,
-                                              gradient_weights.empty() ? std::vector<int>(gradient_ids.size(), 1) : gradient_weights,
-                                              context);
-            const std::vector<unsigned int> sequence = build_weighted_gradient_sequence(gradient_ids,
-                                                                                        gradient_weights.empty() ?
-                                                                                            std::vector<int>(gradient_ids.size(), 1) :
-                                                                                            gradient_weights);
-            if (!sequence.empty())
-                return blend_display_color_from_sequence(context.physical_colors, context.num_physical, sequence, fallback, context);
+            // The printable cadence may be rounded to a bounded number of passes.
+            // Display the recipe weights used by the editor and recommendations.
+            return blend_mixed_components(gradient_ids,
+                                          gradient_weights.empty() ? std::vector<int>(gradient_ids.size(), 1) : gradient_weights, context);
         }
     }
 
@@ -167,11 +156,7 @@ std::string compute_mixed_filament_display_color(const MixedFilament& entry, con
     }
 
     const int mix_b = std::clamp(entry.mix_b_percent, 0, 100);
-    return MixedFilamentManager::blend_color(context.physical_colors[entry.component_a - 1], context.physical_colors[entry.component_b - 1],
-                                             100 - mix_b, mix_b, physical_td_for_id(context, entry.component_a),
-                                             physical_td_for_id(context, entry.component_b),
-                                             physical_material_id_for_id(context, entry.component_a),
-                                             physical_material_id_for_id(context, entry.component_b));
+    return blend_mixed_components({entry.component_a, entry.component_b}, {100 - mix_b, mix_b}, context);
 }
 
 std::string MixedFilamentManager::blend_color_multi(const std::vector<std::pair<std::string, int>>& color_percents)

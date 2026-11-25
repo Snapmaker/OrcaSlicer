@@ -3,6 +3,7 @@
 uniform bool ban_light;
 uniform vec4 uniform_color;
 uniform float emission_factor;
+uniform vec2 z_range;
 
 // x = tainted, y = specular;
 in vec2 intensity;
@@ -11,7 +12,7 @@ in vec4 world_pos;
 
 void main()
 {
-    if (world_pos.z < 0.0)
+    if (world_pos.z < max(0.0, z_range.x) || world_pos.z > z_range.y)
         discard;
     if(ban_light){
        gl_FragColor = uniform_color;

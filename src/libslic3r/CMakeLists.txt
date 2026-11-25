@@ -285,6 +285,7 @@ set(lisbslic3r_sources
     LocalZ/LocalZClipper.cpp
     LocalZ/LocalZClipper.hpp
     LocalZ/LocalZHeight.hpp
+    LocalZ/LocalZPassOrder.hpp
     LocalZ/LocalZPlan.hpp
     LocalZ/LocalZPlan.cpp
     LocalZ/LocalZPlanner.hpp

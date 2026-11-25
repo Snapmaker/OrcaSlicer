@@ -87,7 +87,7 @@ msgid "Erase"
 msgstr "擦除"
 
 msgid "Erase all painting"
-msgstr "擦除所有自訂支撐"
+msgstr "清除所有塗色"
 
 msgid "Highlight overhang areas"
 msgstr "突顯出懸空區域"
@@ -224,7 +224,7 @@ msgid "Painted using: Filament %1%"
 msgstr "上色：線材 %1%"
 
 msgid "Filament remapping finished."
-msgstr ""
+msgstr "已完成線材重新對應。"
 
 msgid "Move"
 msgstr "移動"
@@ -15230,7 +15230,7 @@ msgid ""
 msgstr ""
 
 msgid "Object name"
-msgstr ""
+msgstr "物件名稱"
 
 msgid "Support: generate contact points"
 msgstr "支撐：正在產生接觸點"
@@ -18274,6 +18274,441 @@ msgstr "啟用內支撐肋以增強擦料塔的穩定性。"
 
 msgid "Enable tower interface features"
 msgstr "啟用料塔接觸層最佳化"
+
+
+#: src/libslic3r/PrintConfig.cpp:2159
+msgid "Transmission distance"
+msgstr "透射距離"
+
+#: src/libslic3r/PrintConfig.cpp:2160
+msgid "Measured optical transmission distance for color calibration, in millimeters. Use 0 when unknown."
+msgstr "用于顏色校準的實測光學透射距離，單位為毫米。未知時填 0。"
+
+#: src/libslic3r/PrintConfig.cpp:2168
+msgid "FullSpectrum material ID"
+msgstr "FullSpectrum 材料 ID"
+
+#: src/libslic3r/PrintConfig.cpp:2169
+msgid "Stable material identifier from the FullSpectrum calibration database. Leave empty for uncalibrated filaments; color-only matching is used as a limited legacy fallback."
+msgstr "FullSpectrum 校準資料庫中的固定材料標識。未經校準的耗材請留空。為兼容舊項目，部分情況下會僅按顏色匹配。"
+
+#: src/libslic3r/PrintConfig.cpp:3670
+msgid "Surface paint only"
+msgstr "僅表面涂色"
+
+#: src/libslic3r/PrintConfig.cpp:3671
+msgid "Restricts color-painted regions to the object's wall shell instead of filling the painted area through solid infill."
+msgstr "將涂色區域限制在模型的壁殼內，避免顏色貫穿內部實心填充。"
+
+#: src/libslic3r/PrintConfig.cpp:3678
+msgid "Extra perimeters in painted zones"
+msgstr "涂色區域額外墻數"
+
+#: src/libslic3r/PrintConfig.cpp:3679
+msgid "Adds this many perimeter walls to color-painted regions, on top of the object's normal perimeter count. The rest of the object keeps its normal perimeter count."
+msgstr "在模型原有墻數的基礎上，為涂色區域增加指定圈數的墻。其他區域保持原有墻數。"
+
+#: src/libslic3r/PrintConfig.cpp:4601
+msgid "Subdivide all mix layers"
+msgstr "細分所有混色層"
+
+#: src/libslic3r/PrintConfig.cpp:4603
+msgid "Gradients automatically subdivide their mixed layers. Enable this override to also subdivide non-gradient mixed filaments.\n\nSubdivision blends colors by varying layer heights instead of using a fixed ratio of equal-height layers. This only affects blended color zones; non-blended areas keep their nominal layer height and cadence when possible.\n\nThe minimum sublayer height limits the achievable ratio. For example, at 0.20 mm cycle height with a 0.06 mm minimum, a requested 75/25 blend uses 0.14 mm and 0.06 mm passes."
+msgstr "漸變會自動細分混色層。啟用此選項后，非漸變混色耗材也會細分。\n\n細分通過改變各子層的厚度來混色。僅混色區域受影響，其他區域會盡可能保持原有層高和列印順序。\n\n可實現的混色比例受最小子層高度限制。例如，周期高度為 0.20 毫米、最小子層高度為 0.06 毫米時，75/25 的混色比例將使用 0.14 和 0.06 毫米的子層。"
+
+#: src/libslic3r/PrintConfig.cpp:4613
+msgid "Full domain for all mixes"
+msgstr "所有混色使用完整區域"
+
+#: src/libslic3r/PrintConfig.cpp:4615
+msgid "A mixed filament assigned to an entire object or volume automatically uses the full domain when it uses layer subdivision. Enable this override to extend full-domain subdivision to all eligible mixed wall regions.\n\nThis also lets subdivision continue through default mixed walls around painted areas instead of limiting the effect strictly to painted masks."
+msgstr "為整個對象或部件指定混色耗材后，細分會自動覆蓋其完整區域。啟用此選項可將完整區域細分擴展到所有符合條件的混色墻體。\n\n細分還會延伸到涂色區域周圍使用預設混色耗材的墻體。"
+
+#: src/libslic3r/PrintConfig.cpp:4623
+msgid "Apply subdivision to infill"
+msgstr "填充也使用細分"
+
+#: src/libslic3r/PrintConfig.cpp:4625
+msgid "Experimental. When Subdivide Mix Layer is enabled, also apply the same subdivision to infill inside mixed-color areas.\n\nThis is enabled automatically with Subdivide Mix Layer. Turn it off to keep infill on the normal layer height.\n\nIt can improve internal color mixing, but may add toolchanges and affect infill behavior."
+msgstr "實驗功能。啟用混色層細分時，也對混色區域內的填充使用相同的細分方式。\n\n啟用混色層細分時會自動開啟此選項。關閉后，填充將使用正常層高。\n\n此功能可改善內部混色效果，但可能增加換料次數并影響填充路徑。"
+
+#: src/libslic3r/PrintConfig.cpp:4632
+msgid "Use direct multicolor Local-Z solver"
+msgstr "使用 Local-Z 直接多色計算"
+
+#: src/libslic3r/PrintConfig.cpp:4634
+msgid "For non-gradient mixed rows with 3 or more physical filaments, allocate Local-Z sublayers directly across all active components instead of collapsing them into pair cadence.\n\nMulti-stop gradients use Local-Z pair cadence.\n\nThis can reduce visible banding in multicolor Local-Z blends at the cost of more toolchanges. It is ignored when explicit Local-Z A/B heights are set."
+msgstr "對于使用三種或更多實際耗材的非漸變配方，直接將 Local-Z 子層分配給所有參與混色的耗材。\n\n多色標漸變仍按兩種耗材交替列印。\n\n此方式可減少多色混合中可見的色帶，但會增加換料次數。手動指定 Local-Z 的 A/B 層高時，此設置無效。"
+
+#: src/libslic3r/PrintConfig.cpp:4643
+msgid "Keep first layer unsplit"
+msgstr "保留完整首層"
+
+#: src/libslic3r/PrintConfig.cpp:4645
+msgid "Keep the first object layer at its initial layer height when gradients or SML subdivide mixed layers.\n\nThis prevents the first layer from being divided into very thin sublayers that may not adhere reliably."
+msgstr "漸變或混色層細分啟用時，保持對象首層的設定高度。\n\n這樣可避免首層子層過薄而導致附著不牢。"
+
+#: src/libslic3r/PrintConfig.cpp:4651
+msgid "Use independent Local-Z layer heights"
+msgstr "使用獨立的 Local-Z 層高"
+
+#: src/libslic3r/PrintConfig.cpp:4653
+msgid "Experimental. Decouple direct multicolor Local-Z pass heights from the nominal layer height. The smallest active component uses the Local-Z minimum sublayer height and the other component heights are scaled to preserve the exact blend ratio. The resulting cadence may span multiple nominal layers.\n\nFor example, a 1/1/3 blend with a 0.04 mm Local-Z minimum uses a repeating 0.04/0.04/0.12 mm cadence even when the normal layer height is 0.08 mm.\n\nEvery pass is capped to the printer profile's maximum layer height. If a component's ratio requires more thickness, it is divided into multiple equal passes while preserving the total ratio."
+msgstr "實驗功能。直接多色混合時，Local-Z 子層可獨立于正常層高。占比最小的耗材使用最小子層高度，其他耗材按比例增加厚度，整個周期可跨越多個正常層。\n\n例如，比例為 1/1/3、最小子層高度為 0.04 毫米時，即使正常層高為 0.08 毫米，仍按 0.04/0.04/0.12 毫米循環列印。\n\n每個子層都受印表機預設的最大層高限制。某種耗材需要更大厚度時，會分成多個等厚子層以維持總比例。"
+
+#: src/libslic3r/PrintConfig.cpp:4664
+msgid "Gradient mix subdivision layer height"
+msgstr "漸變混色細分層高"
+
+#: src/libslic3r/PrintConfig.cpp:4666
+msgid "Independent nominal height used to build gradient Local-Z A/B cycles. This does not change the object's normal slicing layer height. Gradient passes may span multiple normal layers, so gradients continue to work even when the normal layer height is too small to contain two Local-Z passes.\n\nThe effective value is automatically raised when necessary so two active components can each satisfy the Local-Z minimum sublayer height."
+msgstr "用于生成漸變 Local-Z A/B 周期的獨立標稱層高。對象的正常切片層高保持不變。漸變周期可跨越多個正常層，因此即使正常層高放不下兩個 Local-Z 子層，仍可列印漸變。\n\n必要時會自動增大該值，使兩種耗材的子層都達到 Local-Z 最小高度。"
+
+#: src/libslic3r/PrintConfig.cpp:4677
+msgid "Middle filament window"
+msgstr "中間耗材純色區寬度"
+
+#: src/libslic3r/PrintConfig.cpp:4679
+msgid "Sets the portion of a multi-filament Local-Z gradient occupied only by each internal filament. The window is centered on that filament's gradient stop, with the adjacent two-filament transitions ending and starting at the window edges. The requested width is capped at the neighboring transition stops so transition regions never overlap.\n\nFor example, 22% gives the middle filament a centered window covering 22% of the gradient whenever the surrounding stops leave enough room."
+msgstr "設置多耗材 Local-Z 漸變中，每種中間耗材單獨列印的區間占比。純色區以該耗材的色標為中心，兩側的雙色過渡在純色區邊緣結束或開始。寬度受相鄰過渡色標限制，以免過渡區重疊。\n\n例如，設為 22% 時，只要相鄰色標間距足夠，中間純色區就會占整個漸變的 22%。"
+
+#: src/libslic3r/PrintObjectSlice.cpp:885
+msgid "Local-Z could not fit the nozzle layer height limits into part of a mixed region, so that part is printed without its full color ratio. Check the nozzle minimum and maximum layer heights in the printer settings."
+msgstr "部分混色區域無法滿足噴嘴的層高限制，因此該處無法按設定的比例混色。請檢查印表機設置中的噴嘴最小和最大層高。"
+
+#: src/libslic3r/GCode.cpp:3475
+msgid "Some filament changes could not be matched to the prime tower plan and were made without purging on the tower. Check the print for color contamination."
+msgstr "部分換料未能匹配擦料塔計劃，換料時未在塔上清洗噴嘴。請檢查列印件是否串色。"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:888
+msgid "Paint precision"
+msgstr "涂色精度"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:897
+msgid "Subdivides the mesh more finely at painted boundaries. Higher values use more CPU and memory."
+msgstr "在涂色邊界處更精細地細分網格。數值越大，占用的處理器和記憶體資源越多。"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:899
+msgid "Rectangle mask"
+msgstr "矩形選區"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:909
+msgid "Drag a screen-space rectangle to paint front-facing facets inside it. Shift-drag erases; right-click cancels."
+msgstr "在螢幕上拖出矩形，為其中朝向螢幕的面涂色。按住 Shift 拖動可擦除，右鍵取消。"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:911
+msgid "Polygon mask"
+msgstr "多邊形選區"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:921
+msgid "Click to place vertices, drag an existing vertex to edit it, then click the first vertex to paint. Right-click cancels."
+msgstr "單擊放置頂點，拖動已有頂點可調整形狀。單擊第一個頂點完成涂色，右鍵取消。"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:168
+msgid "Choose a filament for the selected color stop. Selecting a filament already in use swaps the two stops."
+msgstr "為選中的色標選擇耗材。如果選擇已在使用的耗材，兩個色標將交換耗材。"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:379
+msgid "Position:"
+msgstr "位置："
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:194
+msgid "Solid width:"
+msgstr "純色寬度："
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:200
+msgid "Width of this solid color as a percentage of the complete gradient. Drag the square handles below the bar to adjust it."
+msgstr "此純色區的寬度占整個漸變的百分比。拖動色帶下方的方形手柄可調整寬度。"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:207
+msgid "Min Stop Gap:"
+msgstr "最小色標間距："
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:237
+msgid "Drag circles to move colors, white ticks to adjust transitions, and the square handles below each interior color to adjust its solid-color width."
+msgstr "拖動圓點移動色標，拖動白色刻線調整過渡，拖動中間色標下方的方形手柄調整純色區寬度。"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:368
+msgid "Switch"
+msgstr "交換"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:379
+msgid "Position (relative):"
+msgstr "相對位置："
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:791
+msgid "Swap filaments"
+msgstr "交換耗材"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1139
+msgid "Select Gradient"
+msgstr "選擇漸變"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1175
+msgid "Layered"
+msgstr "分層效果"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1175
+msgid "Blended"
+msgstr "混色效果"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2411
+msgid "Mixing Recommendations"
+msgstr "推薦混色"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2411
+msgid "Gradient Recommendations"
+msgstr "推薦漸變"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3111
+msgid "2-Material Gradients"
+msgstr "雙材料漸變"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3111
+msgid "3-Material Gradients"
+msgstr "三材料漸變"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3112
+msgid "2-Material Mixes"
+msgstr "雙材料混色"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3112
+msgid "3-Material Mixes"
+msgstr "三材料混色"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:670
+msgid "Selected filament"
+msgstr "已選線材"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:386
+msgid "Edit Mix"
+msgstr "編輯混色"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:372
+msgid "Add Mix"
+msgstr "新增混色"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:507
+msgid "Ratio"
+msgstr "比例"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:507
+msgid "Cycle"
+msgstr "循環"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:507
+msgid "Match"
+msgstr "配色"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:507
+msgid "Gradient"
+msgstr "漸變"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:651
+msgid "Target Color"
+msgstr "目標顏色"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:748
+msgid "Please enter a valid 6-digit Hex value."
+msgstr "請輸入有效的六位十六進位色碼。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:784
+msgid "Filament Selection"
+msgstr "選擇線材"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:874
+msgid "Mixing Ratio"
+msgstr "混色比例"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:942
+msgid "Mix Effect"
+msgstr "混色效果"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1017
+msgid "Min Mix Ratio"
+msgstr "最低混色比例"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1302
+msgid "Append filament %d to pattern"
+msgstr "將線材 %d 加到排列末端"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1344
+msgid "Allowed Input: Only digits, square brackets ([ and ]), and commas (,)."
+msgstr "只能輸入數字、半形方括號（[ 和 ]）以及半形逗號（,）。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2538
+msgid "Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."
+msgstr "線材 %d 和線材 %d 無法混色。請選擇相同類型的線材。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2540
+msgid "Different filament types cannot be mixed. Please correct the settings."
+msgstr "不同類型的線材無法混色。請調整設定。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2546
+msgid "Same filament colors cannot produce new colors. Please select different colors for mixing."
+msgstr "相同顏色的線材無法混出新顏色。請選擇不同顏色的線材。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2549
+msgid "Excessive filaments in the mix may affect the result. Please use with caution."
+msgstr "使用過多線材可能會影響混色效果，請謹慎選擇。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2666
+msgid "Filament %d ratio is too high. Mix may be affected."
+msgstr "線材 %d 的比例過高，可能會影響混色效果。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3495
+msgid "Leading or trailing commas are not allowed."
+msgstr "開頭和結尾不能使用逗號。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3500
+msgid "Invalid characters found. Only digits, square brackets ([ and ]), and commas (,) are allowed."
+msgstr "含有無效字元。只能輸入數字、半形方括號（[ 和 ]）以及半形逗號（,）。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3505
+msgid "Unrecognized pattern format. Please check the pattern syntax."
+msgstr "無法辨識排列格式。請檢查輸入內容。"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3516
+msgid "Filament %d not recognized. Please re-enter."
+msgstr "無法辨識線材 %d。請重新輸入。"
+
+#: src/slic3r/GUI/Plater.cpp:2475
+msgid "Filament Management"
+msgstr "線材管理"
+
+#: src/slic3r/GUI/Plater.cpp:6244
+msgid "Color Mixing"
+msgstr "混色"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:260
+msgid "Color Mixing Match"
+msgstr "混色配對"
+
+#: src/slic3r/GUI/Plater.cpp:6246
+msgid "Manage"
+msgstr "管理"
+
+#: src/slic3r/GUI/Plater.cpp:6248
+msgid "Browse mixed colors made from the current filaments and choose combinations to add."
+msgstr "瀏覽目前線材可調出的顏色，並選擇要新增的組合。"
+
+#: src/slic3r/GUI/Plater.cpp:6641
+msgid "Merge with"
+msgstr "合併至"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1326
+msgid "Remove filament"
+msgstr "移除線材"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1342
+msgid "Add filament"
+msgstr "新增線材"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1158
+msgid "Filament color limit reached (%d colors). Colors over the limit have been removed."
+msgstr "已達線材顏色上限（%d 種）。超出上限的顏色已移除。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1215
+msgid "Match Mode"
+msgstr "配色模式"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1261
+msgid "Start Matching"
+msgstr "開始配色"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1262
+msgid "Rematch"
+msgstr "重新配色"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1310
+msgid "Filament Setup"
+msgstr "線材設定"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1578
+msgid "Original"
+msgstr "原始"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1582
+msgid "Matched"
+msgstr "配色結果"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1657
+msgid "Isometric"
+msgstr "等角視圖"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1658
+msgid "Top-Front"
+msgstr "前上方"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1693
+msgid "Color Mapping"
+msgstr "顏色對應"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1743
+msgid "Stop Matching"
+msgstr "停止配色"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1807
+msgid "Are you sure you want to discard this match? The current configuration will not be saved."
+msgstr "確定要捨棄此次配色嗎？目前的設定將不會儲存。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1808
+msgid "Discard Matching"
+msgstr "捨棄配色"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1846
+msgid "Official Full Spectrum filaments are not configured. Configured filaments will be used instead. Once the official filaments are added, the previously selected filaments can be replaced in the filament list without affecting the color mixing match result."
+msgstr "尚未設定官方 Full Spectrum 線材，將使用已設定的線材。新增官方線材後，可在線材清單中替換先前選取的線材，配色結果不受影響。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1847
+msgid "Note"
+msgstr "提示"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2047
+msgid "Manually select filaments from the current list for color mixing."
+msgstr "從目前的清單中手動選擇用於混色的線材。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2048
+msgid "Automatically select an official filament set for color mixing match. Two-color ratios: 15%–85%; three-color ratios: 15%–70%."
+msgstr "自動選擇官方線材組合來配色。雙色混合比例為 15%–85%，三色混合比例為 15%–70%。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2165
+msgid "The mix ratios for %s in the Color Mapping list are outside the recommended ranges. Adjust the mix ratios manually for better results."
+msgstr "顏色對應清單中 %s 的混色比例超出建議範圍。請手動調整比例以改善配色效果。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2383
+#, c-format
+msgid "Mixed filament limit reached (%u recipes). Excess mixed colors will be removed."
+msgstr "已達混色線材上限（%u 組配方）。超出上限的混色將被移除。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2395
+msgid "No model detected. Import a multi-color model to continue."
+msgstr "找不到模型。請匯入多色模型以繼續。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2407
+msgid "Automatic color mixing matching is not supported for the current nozzle diameter. Please use manual matching or replace with a smaller-size nozzle."
+msgstr "目前的噴嘴直徑不支援自動混色配對。請改用手動配色或更換較小直徑的噴嘴。"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2409
+msgid "Got it"
+msgstr "知道了"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2993
+msgid "Good"
+msgstr "良好"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2994
+msgid "Fair"
+msgstr "普通"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2995
+msgid "Poor"
+msgstr "不佳"
+
+#: src/slic3r/GUI/MixedFilamentManageDialog.cpp
+#, c-format
+msgid "The limit is %u mixed filaments. Deselect some recommendations before confirming."
+msgstr "混色線材上限為 %u 組配方。請先取消勾選部分建議配方，再按確認。"
 
 msgid "Jump to: Support on build plate only"
 msgstr "跳至：僅限列印板上支撐"

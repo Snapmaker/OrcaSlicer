@@ -38,6 +38,7 @@ struct ThumbnailsParams
 	bool 			show_bed;
 	bool 			transparent_background;
     int             plate_id;
+    bool            material_ids = false; // Render one-based material IDs into RGB, with zero for background.
 };
 
 typedef std::function<ThumbnailsList(const ThumbnailsParams&)> ThumbnailsGeneratorCallback;

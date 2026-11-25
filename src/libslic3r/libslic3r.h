@@ -69,8 +69,9 @@ static constexpr size_t MAXIMUM_EXTRUDER_NUMBER = 64;
 // and printers that already carry more still load, so per-extruder storage and the filament id
 // space below keep the full MAXIMUM_EXTRUDER_NUMBER range.
 static constexpr size_t MAXIMUM_PHYSICAL_FILAMENT_NUMBER = 16;
-static constexpr size_t MAXIMUM_MIXED_FILAMENT_NUMBER    = 256;
-static constexpr size_t MAXIMUM_FILAMENT_NUMBER          = MAXIMUM_EXTRUDER_NUMBER + MAXIMUM_MIXED_FILAMENT_NUMBER;
+static constexpr size_t MAXIMUM_MIXED_FILAMENT_NUMBER    = 64;
+// Previously saved projects may use 256 mixed recipes. Keep their painted and assigned IDs readable.
+static constexpr size_t MAXIMUM_FILAMENT_NUMBER = MAXIMUM_EXTRUDER_NUMBER + 256;
 
 // Orca: maximum line width is 5 times the nozzle diameter
 static constexpr float MAX_LINE_WIDTH_MULTIPLIER = 5;

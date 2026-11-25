@@ -413,7 +413,8 @@ private:
     void confirm()
     {
         if (m_catalog.exceeds_limit()) {
-            error(_L("The limit is 256 mixed filaments. Deselect some recommendations before confirming."));
+            error(wxString::Format(_L("The limit is %u mixed filaments. Deselect some recommendations before confirming."),
+                                   static_cast<unsigned>(MAXIMUM_MIXED_FILAMENT_NUMBER)));
             track_manage("limit", {{"count", m_catalog.saved.size() - m_catalog.removals() + m_catalog.additions()}});
             return;
         }

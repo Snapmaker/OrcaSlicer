@@ -3528,7 +3528,7 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
                                   bool                      ban_light)
 {
     GLShaderProgram* shader = nullptr;
-    if (for_picking)
+    if (for_picking || thumbnail_params.material_ids)
         shader = wxGetApp().get_shader("flat");
     else
         shader = wxGetApp().get_shader("thumbnail");
@@ -3567,7 +3567,7 @@ void GLCanvas3D::render_thumbnail(ThumbnailData& thumbnail_data, unsigned int w,
                                   bool                      ban_light)
 {
     GLShaderProgram* shader = nullptr;
-    if (for_picking)
+    if (for_picking || thumbnail_params.material_ids)
         shader = wxGetApp().get_shader("flat");
     else
         shader = wxGetApp().get_shader("thumbnail");
@@ -7653,13 +7653,20 @@ void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const 
     }
     const Transform3d &projection_matrix = camera.get_projection_matrix();
 
-    if (for_picking) {
+    if (for_picking || thumbnail_params.material_ids) {
         //if (OpenGLManager::can_multisample())
               // This flag is often ignored by NVIDIA drivers if rendering into a screen buffer.
         //    glsafe(::glDisable(GL_MULTISAMPLE));
         shader->start_using();
 
         glsafe(::glDisable(GL_BLEND));
+        const GLboolean dither      = glIsEnabled(GL_DITHER);
+        const bool      multisample = thumbnail_params.material_ids && OpenGLManager::can_multisample() && glIsEnabled(GL_MULTISAMPLE);
+        if (thumbnail_params.material_ids) {
+            glsafe(::glDisable(GL_DITHER));
+            if (multisample)
+                glsafe(::glDisable(GL_MULTISAMPLE));
+        }
 
         static const GLfloat INV_255 = 1.0f / 255.0f;
 
@@ -7677,7 +7684,8 @@ void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const 
             unsigned int g = (id & (0x000000FF << 8)) >> 8;
             unsigned int b = (id & (0x000000FF << 16)) >> 16;
             unsigned int a = 0xFF;
-            vol->model.set_color({(GLfloat)r * INV_255, (GLfloat)g * INV_255, (GLfloat)b * INV_255, (GLfloat)a * INV_255});
+            if (!thumbnail_params.material_ids)
+                vol->model.set_color({(GLfloat) r * INV_255, (GLfloat) g * INV_255, (GLfloat) b * INV_255, (GLfloat) a * INV_255});
             /*curr_color[0] = (GLfloat)r * INV_255;
             curr_color[1] = (GLfloat)g * INV_255;
             curr_color[2] = (GLfloat)b * INV_255;
@@ -7689,22 +7697,30 @@ void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const 
             const Transform3d model_matrix = vol->world_matrix();
             shader->set_uniform("view_model_matrix", view_matrix * model_matrix);
             shader->set_uniform("projection_matrix", projection_matrix);
-            vol->simple_render(shader, model_objects, extruder_colors);
+            vol->simple_render(shader, model_objects, extruder_colors, false, nullptr, thumbnail_params.material_ids);
             vol->is_active = is_active;
         }
 
         //glsafe(::glDisableClientState(GL_NORMAL_ARRAY));
         //glsafe(::glDisableClientState(GL_VERTEX_ARRAY));
 
+        if (thumbnail_params.material_ids) {
+            if (dither)
+                glsafe(::glEnable(GL_DITHER));
+            if (multisample)
+                glsafe(::glEnable(GL_MULTISAMPLE));
+            shader->stop_using();
+        }
         glsafe(::glEnable(GL_CULL_FACE));
 
         //if (OpenGLManager::can_multisample())
         //    glsafe(::glEnable(GL_MULTISAMPLE));
-    }
-    else {
+    } else {
         shader->start_using();
         shader->set_uniform("emission_factor", 0.1f);
         shader->set_uniform("ban_light", ban_light);
+        shader->set_uniform("z_range", std::array<float, 2>{0.f, std::numeric_limits<float>::max()});
+        const auto domains = ban_light ? GLVolumeCollection::InstanceGradientDomains{} : volumes.collect_gradient_domains(model_objects);
         for (GLVolume* vol : visible_volumes) {
             //BBS set render color for thumbnails
             curr_color = vol->color;
@@ -7731,7 +7747,9 @@ void GLCanvas3D::render_thumbnail_internal(ThumbnailData& thumbnail_data, const 
             shader->set_uniform("projection_matrix", projection_matrix);
             const Matrix3d view_normal_matrix = view_matrix.matrix().block(0, 0, 3, 3) * model_matrix.matrix().block(0, 0, 3, 3).inverse().transpose();
             shader->set_uniform("view_normal_matrix", view_normal_matrix);
-            vol->simple_render(shader,  model_objects, extruder_colors, ban_light);
+            const auto it = domains.find({vol->object_idx(), vol->instance_idx()});
+            vol->simple_render(shader, model_objects, extruder_colors, ban_light, nullptr, false,
+                               it == domains.end() ? nullptr : &it->second);
             vol->is_active = is_active;
         }
         shader->stop_using();
@@ -7757,7 +7775,7 @@ void GLCanvas3D::render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, uns
         return;
 
     bool multisample = OpenGLManager::can_multisample();
-    if (for_picking)
+    if (for_picking || thumbnail_params.material_ids)
         multisample = false;
     //if (!multisample)
     //    glsafe(::glEnable(GL_MULTISAMPLE));
@@ -7842,6 +7860,8 @@ void GLCanvas3D::render_thumbnail_framebuffer(ThumbnailData& thumbnail_data, uns
     }
     else {
         BOOST_LOG_TRIVIAL(info) << boost::format("render_thumbnail prepare: GL_FRAMEBUFFER not complete");
+        if (thumbnail_params.material_ids)
+            thumbnail_data.reset();
     }
 
     glsafe(::glBindFramebuffer(GL_FRAMEBUFFER, 0));
@@ -7866,7 +7886,7 @@ void GLCanvas3D::render_thumbnail_framebuffer_ext(ThumbnailData& thumbnail_data,
         return;
 
     bool multisample = OpenGLManager::can_multisample();
-    if (for_picking)
+    if (for_picking || thumbnail_params.material_ids)
         multisample = false;
     //if (!multisample)
     //    glsafe(::glEnable(GL_MULTISAMPLE));
@@ -7947,6 +7967,8 @@ void GLCanvas3D::render_thumbnail_framebuffer_ext(ThumbnailData& thumbnail_data,
 #if ENABLE_THUMBNAIL_GENERATOR_DEBUG_OUTPUT
         debug_output_thumbnail(thumbnail_data);
 #endif // ENABLE_THUMBNAIL_GENERATOR_DEBUG_OUTPUT
+    } else if (thumbnail_params.material_ids) {
+        thumbnail_data.reset();
     }
 
     glsafe(::glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0));

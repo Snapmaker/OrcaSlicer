@@ -29,15 +29,17 @@ as for predictable geometry.
 
 ## Vendored Clipper2
 
-`deps_src/clipper2` builds the static target `Clipper2`. It carries four
+`deps_src/clipper2` builds the static target `Clipper2`. It carries six
 changes to the upstream sources that must be carried over when Clipper2 is
-updated. The namespace switch sits at the top of every header and source, the
-other three are marked with `Orca:` comments.
+updated. The namespace switch sits at the top of every header and source, and
+the other patches are marked with `Orca:` comments.
 
 | Change | Files | Why |
 | --- | --- | --- |
-| Z build in its own namespace | all headers and sources, `clipper2_z.cpp`, `clipper2_z.hpp` | The library is compiled a second time with `USINGZ` in namespace `Clipper2Lib_Z`, so the 2D and the Z variants link into one binary. |
+| Z build in its own namespace and order-independent header | all headers and sources, `clipper2_z.cpp`, `clipper2_z.hpp` | The library is compiled a second time with `USINGZ` in namespace `Clipper2Lib_Z`, so the 2D and the Z variants link into one binary. `clipper2_z.hpp` saves and restores all Clipper2 sub-header include guards so `clipper.h` and `clipper2_z.hpp` can be included in either order in the same translation unit. |
 | Engine nodes from tbbmalloc | `clipper.engine.h`, `clipper.engine.cpp` | Vertices, active edges, output points and records, local minima and `PolyTree` nodes are allocated one by one. `CLIPPER2_NODE_ALLOCATOR` routes them through `scalable_malloc`, because the default heap does not scale when all slicing threads clip at once. |
+| Cyclic split-owner recursion guard | `clipper.engine.cpp` | `CheckSplitOwner()` marks `split->recursive_split = outrec` before recursing into emptied split `OutRec` lists so cyclic references cannot overflow the stack. |
+| Restore `end_type_` after 2-point `Joined` fallback | `clipper.offset.cpp` | `DoGroupOffset()` restores `end_type_ = group.end_type` after each path so a degenerate 2-point `Joined` path does not turn subsequent closed paths in the same group into open paths. |
 | Concave joins at the edge crossing | `clipper.offset.cpp` | For closed paths, a concave corner is joined at the crossing of the two offset edges when that point lies within half of both adjacent edges. The upstream 3-point loop makes inward offsets of dense curves very slow to union. |
 | Rounded arc steps | `clipper.offset.cpp` | Round joins use the rounded number of steps, not the ceiling, which keeps the vertex count of round offsets that the rest of the code is tuned for. |
 
@@ -52,14 +54,20 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   rule applies to both subject and clip; Clipper2 has no per-operand rule.
 - Collinear vertices are removed from the result. Clipper2 keeps them by
   default, so every boolean sets `PreserveCollinear(false)`.
-- Outer contours are CCW and holes are CW. No output contour touches
-  itself: where one would pass twice through a vertex, it is split there into
-  two contours.
-- `ExPolygons` results are built from one `PolyTree64` pass. An island inside
-  a hole becomes an `ExPolygon` of its own.
+- Outer contours are CCW and holes are CW. Standard Clipper2 booleans may emit
+  vertex-self-touching contours; `simplify_polygons()`, `simplify_polygons_ex()`,
+  and `polygons_simplify(..., strictly_simple = true)` split contours at
+  repeated vertices into strictly simple loops and locally re-nest holes.
+- `ExPolygons`, `top_level_expolygons()`, `top_level_islands()`, and
+  `union_pt_chained_outside_in()` consume `PolyTree64` directly on the fast
+  path when node orientations match depth parity, and rebuild exact containment
+  via an AABB tree if Clipper2 emits misnested nodes. An island inside a hole
+  becomes an `ExPolygon` of its own.
 - `ApplySafetyOffset::Yes` grows the clip polygons by `ClipperSafetyOffset`
   before an intersection or a difference, so that edges shared by subject and
-  clip do not leave slivers.
+  clip do not leave slivers. For `ExPolygon`, `ExPolygons`, `Surfaces`, and
+  `SurfacesPtr` clips this goes through `c2_offset_expolygons()` to normalize
+  contour/hole orientations first.
 - Open polylines are clipped with the non-zero rule and keep their direction.
 
 ### Offsets
@@ -67,21 +75,28 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
 - Before offsetting, input vertices closer than
   `ClipperOffsetShortestEdgeFactor` × |delta| to the previously kept vertex
   are dropped. This bounds the work on dense contours, and the error it
-  introduces is far below the offset distance.
+  introduces is far below the offset distance. Polyline `offset()` overloads
+  accept an optional `shortest_edge_factor` parameter (set to `0.` by
+  `Format/svg.cpp` for both open and closed strokes so short strokes are not
+  collapsed).
 - The miter limit is at least 2. For `jtRound`, a positive `miterLimit`
-  argument is the arc tolerance, capped at |delta| / 4, and 0.25 is used
-  otherwise. Other joins use the smaller of 0.25 and |delta| / 4 for round end
-  caps.
+  argument is the arc tolerance, and `0.25` is used otherwise; in both cases
+  it is capped at |delta| / 4. Other joins use the smaller of `0.25` and
+  |delta| / 4 for round end caps.
 - A single `Polygon` keeps its orientation: a CCW polygon grows with a
   positive delta, a CW polygon is a hole and shrinks.
-- `Polygons` follow the same rule per path. When every CW path lies strictly
-  inside the bounding box of a CCW path, which is the usual case of contours
-  with their holes, all paths are offset in one Clipper2 group. Otherwise
-  each path is offset on its own and the results are united, with the
-  non-zero rule when growing and the positive rule when shrinking.
-- `ExPolygons` and `Surfaces` are offset as one group after the contours are
+- `Polygons` follow the same rule per path. When there are no zero-area paths
+  mixed with CW paths and every CW path is strictly enclosed with positive
+  winding inside non-touching CCW contours (verified via AABB tree,
+  bbox-filtered edge intersection, and 128-bit point-in-polygon), all paths are
+  offset in one Clipper2 group. Otherwise each path is offset on its own and
+  the results are united, with the non-zero rule when growing and the positive
+  rule when shrinking.
+- `ExPolygons` and `Surfaces` (including `opening()`, `offset()`, `offset2()`,
+  and safety-offset clips) are offset as one group after the contours are
   oriented CCW and the holes CW, whatever their input orientation.
-- Zero-area paths vanish under a negative offset instead of growing.
+- Zero-area paths are filtered out one by one under a negative offset instead
+  of growing.
 - Polyline offsets use the requested end type. Clipper2 already unites the
   result, so no further union is done.
 
@@ -97,9 +112,13 @@ which reaches ±2.3e18.
 ## ClipperZUtils
 
 `ZPoint` is a `Vec3crd`, and a `ZPath` is a vector of them.
-`clip_zpaths()` runs one boolean with the non-zero rule on the Clipper2 Z
-build. The subject may be open, the clip is closed, and the result lists the
-closed paths before the open ones.
+`clip_zpaths()` runs one boolean (defaulting to `pftNonZero`, with an optional
+`PolyFillType` parameter) on the Clipper2 Z build. The subject may be open, the
+clip is closed, and the result lists the closed paths before the open ones.
+`clip_zpaths_polytree()` executes a boolean into a `PolyTree64`, repairs any
+misnested nodes if orientation disagrees with depth parity, and invokes a
+callback for each closed contour with its true nesting depth (depth 0 for
+top-level outer contours, odd depths for holes, even depths > 0 for islands).
 
 The Z of each output vertex follows these rules:
 
@@ -117,15 +136,19 @@ The users are:
 
 | User | Z carries |
 | --- | --- |
+| `Brim.cpp` (`get_top_level_objects_with_brim`) | island index + 1 via `clip_zpaths_polytree(..., pftEvenOdd)` so only top-level outer contours get an outer brim |
 | `Algorithm::wave_seeds()` (region expansion) | source and boundary index; intersections get a negative index into the visitor's list of crossing pairs |
 | `Algorithm::split_line()` | index of the source vertex; an intersection gets the negated index of its source edge, so the pieces can be put back in path order |
-| `PerimeterGenerator` overhang and top-surface clipping of Arachne walls | extrusion width, interpolated along the edge at intersections |
+| `PerimeterGenerator` overhang and top-surface clipping of Arachne walls | extrusion width, interpolated along the edge at intersections (and recovered on 2-point paths clipped at clip vertices) |
 | Tree support anchors in `SupportCommon` | index of the source contour, -1 at intersections |
 | `extrusion_paths_append()` | extrusion width, turned into extrusion paths |
 
 ## Testing
 
-`tests/libslic3r/test_clipper_utils.cpp` and `test_clipper_offset.cpp` cover
-the wrapper's booleans, orientation and offset rules. The perimeter, support
-and region expansion users are exercised by the slicing tests in
-`tests/fff_print`.
+`tests/libslic3r/test_clipper_utils.cpp`, `test_clipper_offset.cpp`,
+`test_polygon.cpp`, `test_region_expansion.cpp`, and `test_svg.cpp` cover the
+wrapper's booleans, `PolyTree64` nesting repair, orientation and offset rules,
+strictly simple splitting, 128-bit point-in-polygon, wave-seed recovery, and
+SVG short-stroke preservation. The perimeter, support, brim, and wipe-tower
+users are exercised by the slicing tests in `tests/fff_print` and
+`tests/sla_print`.

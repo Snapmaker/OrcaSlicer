@@ -373,11 +373,6 @@ inline Slic3r::Polygons   union_safety_offset   (const Slic3r::ExPolygons &expol
 inline Slic3r::ExPolygons union_safety_offset_ex(const Slic3r::Polygons   &polygons)   { return offset_ex(polygons,   ClipperSafetyOffset); }
 inline Slic3r::ExPolygons union_safety_offset_ex(const Slic3r::ExPolygons &expolygons) { return offset_ex(expolygons, ClipperSafetyOffset); }
 
-Slic3r::Polygons   union_safety_offset(const Slic3r::Polygons &expolygons);
-Slic3r::Polygons   union_safety_offset(const Slic3r::ExPolygons &expolygons);
-Slic3r::ExPolygons union_safety_offset_ex(const Slic3r::Polygons &polygons);
-Slic3r::ExPolygons union_safety_offset_ex(const Slic3r::ExPolygons &expolygons);
-
 // Aliases for the various offset(...) functions, conveying the purpose of the offset.
 inline Slic3r::Polygons   expand(const Slic3r::Polygon &polygon, const float delta, JoinType joinType = DefaultJoinType, double miterLimit = DefaultMiterLimit) 
     { assert(delta > 0); return offset(polygon, delta, joinType, miterLimit); }

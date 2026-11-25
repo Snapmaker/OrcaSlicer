@@ -21818,6 +21818,46 @@ void Plater::reslice_SLA_until_step(SLAPrintObjectStep step, const ModelObject &
     // and let the background processing start.
     this->p->restart_background_process(state | priv::UPDATE_BACKGROUND_PROCESS_FORCE_RESTART);
 }
+
+// Returns false when the job must stay unsent. Compares the flow type each used nozzle was sliced for
+// with what the connected machine reports; nothing is asked without a connected machine or a mismatch.
+bool Plater::confirm_nozzle_flow_types_before_send()
+{
+    PartPlate* plate = get_partplate_list().get_curr_plate();
+    if (plate == nullptr || !GUI::FlowType::printer_supports_high_flow())
+        return true;
+
+    // 1-based filament ids of the slice result; filament N is assumed to print on nozzle N, as before
+    // any remapping done later in the pre-print page.
+    std::vector<int> used_nozzles = plate->get_used_extruders();
+    for (int& nozzle : used_nozzles)
+        --nozzle;
+    const auto mismatches = Gateway::GatewayDevice::nozzle_flow_mismatches(wxGetApp().preset_bundle->m_connect_machine_info_list,
+                                                                           GUI::FlowType::nozzle_volume_types(), used_nozzles);
+    if (mismatches.empty())
+        return true;
+
+    auto flow_name = [](const std::string& type) { return type == FLOW_MODE_HIGH_FLOW ? _L("High Flow") : _L("Standard"); };
+    wxString msg;
+    for (const auto& mismatch : mismatches)
+        msg += wxString::Format(_L("Nozzle %d: %s installed, the G-code was sliced for %s."), mismatch.nozzle + 1,
+                                flow_name(mismatch.installed), flow_name(mismatch.sliced)) + "\n";
+    msg += "\n" + _L("Review the filament assignment and slice again, or send the G-code as it is?");
+
+    MessageDialog dlg(this, msg, _L("Nozzle flow type mismatch"), wxICON_WARNING | wxYES | wxNO | wxCANCEL);
+    dlg.SetButtonLabel(wxID_YES, _L("Review assignment"), true);
+    dlg.SetButtonLabel(wxID_NO, _L("Send anyway"));
+    const int answer = dlg.ShowModal();
+    if (answer == wxID_YES) {
+        // Same action as the pre-print page's regroup event (SSWCP on_finish_filament_mapping_custom_flow_regroup).
+        GUI::FilamentGroupDialog group_dlg(wxGetApp().mainframe);
+        if (group_dlg.ShowModal() == wxID_OK && wxGetApp().mainframe)
+            wxGetApp().mainframe->start_slice();
+    }
+    // Cancel and closing the dialog leave the job unsent, like Review.
+    return answer == wxID_NO;
+}
+
 void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool use_3mf)
 {
     // if physical_printer is selected, send gcode for this printer
@@ -21885,6 +21925,10 @@ void Plater::send_gcode_legacy(int plate_idx, Export3mfProgressFn proFn, bool us
     }
 
     if (wxGetApp().physical_printer_connected() || is_snapmaker_u1) {
+        // The pre-print page only shows a nozzle flow type mismatch inline (#1103), so ask before anything is sent.
+        if (!confirm_nozzle_flow_types_before_send())
+            return;
+
         // firstly upload and open upload download dialog,
         // get default name       
         // Obtain default output path

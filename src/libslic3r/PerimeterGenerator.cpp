@@ -299,9 +299,7 @@ static ClipperZUtils::ZPaths clip_extrusion(const ClipperZUtils::ZPath& subject,
         for (ClipperZUtils::ZPoint& c_pt : path)
             if (c_pt.z() == 0) {
                 // Now we must find the corresponding line on with this point is located and compute line width (Z coordinate).
-                // A two-point subject is handled here as well: the Z callback is not called when the intersection lands on a vertex
-                // of the clip, so such a point keeps the clip's Z of zero.
-                if (subject.size() < 2)
+                if (subject.size() <= 2)
                     continue;
 
                 const Point pt(c_pt.x(), c_pt.y());
@@ -325,15 +323,9 @@ static ClipperZUtils::ZPaths clip_extrusion(const ClipperZUtils::ZPath& subject,
 
                 const Point  pt_a(it_min->x(), it_min->y());
                 const Point  pt_b(std::next(it_min)->x(), std::next(it_min)->y());
-                const Vec2d  seg = (pt_b - pt_a).cast<double>();
-                const double seg_len_sqr = seg.squaredNorm();
-                // Interpolate along the segment by the parameter of the projection, kept inside [0, 1].
-                double       t = 0.;
-                if (seg_len_sqr > 0.) {
-                    t = (projected_pt_min - pt_a).cast<double>().dot(seg) / seg_len_sqr;
-                    t = t < 0. ? 0. : (t > 1. ? 1. : t);
-                }
-                c_pt.z() = coord_t(double(it_min->z()) + t * double(std::next(it_min)->z() - it_min->z()));
+                const double line_len = (pt_b - pt_a).cast<double>().norm();
+                const double dist = (projected_pt_min - pt_a).cast<double>().norm();
+                c_pt.z() = coord_t(double(it_min->z()) + (dist / line_len) * double(std::next(it_min)->z() - it_min->z()));
             }
 
     assert([&clipped_paths = std::as_const(clipped_paths)]() -> bool {

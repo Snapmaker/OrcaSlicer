@@ -592,15 +592,30 @@ bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &are
     bounds.reserve(paths.size());
     for (const C2::Path64 &path : paths)
         bounds.emplace_back(C2::GetBounds(path));
+    // One tree over the bounding boxes of all the paths: a clockwise path looks at those around it only, not at every
+    // path of the batch. The boxes of the tree are inflated for the traversal, they only have to be coarse.
+    using Tree = AABBTreeIndirect::Tree<2, coord_t>;
+    std::vector<AABBTreeIndirect::BoundingBoxWrapper> bboxes;
+    bboxes.reserve(paths.size());
+    for (size_t i = 0; i < paths.size(); ++ i) {
+        const C2::Rect64 &box = bounds[i];
+        bboxes.emplace_back(i, BoundingBox(Point(coord_t(box.left), coord_t(box.top)), Point(coord_t(box.right), coord_t(box.bottom))));
+    }
+    Tree tree;
+    tree.build_modify_input(bboxes);
     std::vector<size_t> candidates;
     for (size_t i = 0; i < paths.size(); ++ i) {
         if (areas[i] >= 0.)
             continue;
-        // The paths this one touches or lies in: those with a bounding box around its bounding box.
+        // The paths this one touches or lies in: those whose bounding box meets its own, its own excluded.
+        const C2::Rect64 &box = bounds[i];
         candidates.clear();
-        for (size_t j = 0; j < paths.size(); ++ j)
-            if (j != i && bounds[j].Intersects(bounds[i]))
-                candidates.emplace_back(j);
+        const Tree::BoundingBox query(Point(coord_t(box.left), coord_t(box.top)), Point(coord_t(box.right), coord_t(box.bottom)));
+        AABBTreeIndirect::traverse(tree,
+            [&query](const Tree::Node &node) { return node.bbox.intersects(query); },
+            [&candidates](const Tree::Node &node) { candidates.emplace_back(node.idx); return true; });
+        candidates.erase(std::remove_if(candidates.begin(), candidates.end(),
+            [&bounds, &box, i](size_t j) { return j == i || ! bounds[j].Intersects(box); }), candidates.end());
         for (size_t j : candidates)
             if (c2_paths_touch(paths[i], paths[j]))
                 return false;

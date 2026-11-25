@@ -467,3 +467,171 @@ SCENARIO("empty input produces empty output", "[ClipperUtils]") {
         }
     }
 }
+
+TEST_CASE("Clipper2 CheckSplitOwner cyclic split does not stack overflow", "[ClipperUtils]") {
+    const Polygons subject{ Polygon({
+        {3, 0}, {3, 5}, {0, 3}, {5, 3}, {0, 5}, {5, 3}, {0, 3},
+        {0, 0}, {0, 3}, {5, 3}, {0, 0}, {3, 3}, {2, 3}
+    }) };
+    const ExPolygons ex   = union_ex(subject, pftEvenOdd);
+    const Polygons   flat = union_(subject, pftEvenOdd);
+    double ex_area = 0., flat_area = 0.;
+    for (const ExPolygon &e : ex)
+        ex_area += e.area();
+    for (const Polygon &p : flat)
+        flat_area += p.area();
+    REQUIRE(ex_area == Catch::Approx(flat_area));
+    REQUIRE(ex_area > 0.);
+}
+
+TEST_CASE("contour_to_polygons does not leak 2-point Joined end_type", "[ClipperUtils]") {
+    const Polygon two_pt({ {0, 0}, {100, 0} });
+    const Polygon square({ {500, 0}, {700, 0}, {700, 200}, {500, 200} });
+    const Polygons fwd = contour_to_polygons(Polygons{ two_pt, square }, 20.f);
+    const Polygons rev = contour_to_polygons(Polygons{ square, two_pt }, 20.f);
+    auto total_area = [](const Polygons &ps) {
+        double a = 0.;
+        for (const Polygon &p : ps)
+            a += p.area();
+        return a;
+    };
+    REQUIRE(fwd.size() == rev.size());
+    REQUIRE(total_area(fwd) == Catch::Approx(total_area(rev)));
+}
+
+TEST_CASE("PolyTree64 misnesting is repaired across all five consumers", "[ClipperUtils]") {
+    const Polygons subjA{
+        Polygon({ {23000000, 31000000}, {7500000, 25900000}, {200000, 26450004}, {0, 26450004},
+                  {0, 26550004}, {-100000, 26550004}, {-300000, 26600000}, {13000000, 0} }),
+        Polygon({ {10200000, 24250000}, {10500000, 24250000}, {9800000, 24000000} }),
+        Polygon({ {4500000, 22500000}, {5000000, 22000000}, {4000000, 22000000} }),
+    };
+    const Polygons clipA{
+        Polygon({ {0, 26550004}, {-200000, 26550004}, {-200000, 26000000} }),
+        Polygon({ {0, 26450004}, {100000, 26450004}, {0, 26000000} }),
+        Polygon({ {10000000, 24000000}, {10199999, 24250000}, {10500000, 24250000}, {8000000, 26500000} }),
+    };
+    const Polygons subjB{
+        Polygon({ {5200000, 700000}, {0, 5000000}, {0, 0} }),
+        Polygon({ {3100000, 825000}, {3250000, 900001}, {3250000, 1000000}, {4000000, 1500000}, {3000000, 500000} }),
+    };
+    const Polygons clipB{
+        Polygon({ {4500000, 1200000}, {4000000, 1000000}, {5000000, 800000} }),
+        Polygon({ {3250000, 900001}, {3250000, 1000000}, {3000000, 1000000}, {3500000, 1100000}, {3100000, 1000000}, {3183343, 866672} }),
+        Polygon({ {4000000, 1000000}, {4000000, 1000000}, {4000000, 1000000} }),
+    };
+
+    auto make_all_ccw = [](const Polygons &a, const Polygons &b) {
+        Polygons out;
+        for (Polygon p : a) {
+            if (p.area() < 0.)
+                p.reverse();
+            out.emplace_back(std::move(p));
+        }
+        for (Polygon p : b) {
+            if (p.area() < 0.)
+                p.reverse();
+            out.emplace_back(std::move(p));
+        }
+        return out;
+    };
+    auto check_expolygons_oriented = [](const ExPolygons &exs) {
+        for (const ExPolygon &e : exs) {
+            REQUIRE(e.contour.area() > 0.);
+            for (const Polygon &h : e.holes)
+                REQUIRE(h.area() < 0.);
+        }
+    };
+
+    SECTION("diff_ex repairs root CW holes and direct-child CCW islands") {
+        const ExPolygons dA = diff_ex(subjA, clipA);
+        check_expolygons_oriented(dA);
+        size_t holesA = 0;
+        for (const ExPolygon &e : dA)
+            holesA += e.holes.size();
+        REQUIRE(holesA >= 1);
+
+        const ExPolygons dB = diff_ex(subjB, clipB);
+        check_expolygons_oriented(dB);
+        REQUIRE(dB.size() >= 2);
+    }
+
+    SECTION("top_level_expolygons separates top-level contours and nested islands cleanly") {
+        const Polygons allA = make_all_ccw(subjA, clipA);
+        ExPolygons inA;
+        for (const Polygon &p : allA)
+            inA.emplace_back(p);
+        ExPolygons nestedA;
+        const ExPolygons topA = top_level_expolygons(inA, &nestedA);
+        check_expolygons_oriented(topA);
+        check_expolygons_oriented(nestedA);
+
+        const Polygons allB = make_all_ccw(subjB, clipB);
+        ExPolygons inB;
+        for (const Polygon &p : allB)
+            inB.emplace_back(p);
+        ExPolygons nestedB;
+        const ExPolygons topB = top_level_expolygons(inB, &nestedB);
+        check_expolygons_oriented(topB);
+        check_expolygons_oriented(nestedB);
+        REQUIRE(nestedB.size() == 2);
+    }
+
+    SECTION("top_level_islands excludes misplaced CW holes") {
+        const Polygons allA = make_all_ccw(subjA, clipA);
+        const Polygons tli  = top_level_islands(allA);
+        REQUIRE(! tli.empty());
+        for (const Polygon &p : tli)
+            REQUIRE(p.area() > 0.);
+    }
+
+    SECTION("union_pt_chained_outside_in orients all loops CCW and respects 3-level nesting") {
+        Polygons framed = make_all_ccw(subjA, clipA);
+        framed.emplace_back(Polygon({ {-5000000, -5000000}, {30000000, -5000000}, {30000000, 35000000}, {-5000000, 35000000} }));
+        framed.emplace_back(Polygon({ {-3000000, -3000000}, {28000000, -3000000}, {28000000, 33000000}, {-3000000, 33000000} }));
+        const Polygons chained = union_pt_chained_outside_in(framed);
+        REQUIRE(chained.size() >= 8);
+        for (const Polygon &p : chained)
+            REQUIRE(p.area() > 0.);
+        for (size_t i = 0; i < chained.size(); ++i) {
+            for (size_t j = i + 1; j < chained.size(); ++j) {
+                if (chained[j].area() > chained[i].area()) {
+                    bool all_in = true;
+                    for (const Point &pt : chained[i].points)
+                        if (! contains(chained[j], pt, true)) {
+                            all_in = false;
+                            break;
+                        }
+                    REQUIRE_FALSE(all_in);
+                }
+            }
+        }
+    }
+
+    SECTION("clip_zpaths_polytree does not attribute nested object at depth 0") {
+        const Polygons allA = make_all_ccw(subjA, clipA);
+        ClipperZUtils::ZPaths zpaths;
+        for (size_t i = 0; i < allA.size(); ++i) {
+            ClipperZUtils::ZPath zp;
+            for (const Point &pt : allA[i].points)
+                zp.emplace_back(pt.x(), pt.y(), coord_t(i + 1));
+            zpaths.emplace_back(std::move(zp));
+        }
+        auto max_zfill = [](const ClipperZUtils::ZPoint &e1b, const ClipperZUtils::ZPoint &e1t,
+                            const ClipperZUtils::ZPoint &e2b, const ClipperZUtils::ZPoint &e2t, ClipperZUtils::ZPoint &pt) {
+            pt.z() = std::max(std::max(e1b.z(), e1t.z()), std::max(e2b.z(), e2t.z()));
+        };
+        std::set<coord_t> depth0_objs;
+        ClipperZUtils::clip_zpaths_polytree(ctUnion, zpaths, false, {}, max_zfill,
+            [&depth0_objs](const ClipperZUtils::ZPath &path, unsigned depth) {
+                if (depth == 0) {
+                    REQUIRE(ClipperZUtils::area(path) > 0.);
+                    for (const ClipperZUtils::ZPoint &p : path)
+                        if (p.z() > 0)
+                            depth0_objs.insert(p.z());
+                }
+            }, false, pftEvenOdd);
+        REQUIRE(depth0_objs.count(1) == 1);
+        REQUIRE(depth0_objs.count(3) == 0);
+    }
+}

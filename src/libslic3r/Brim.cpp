@@ -133,7 +133,7 @@ static ConstPrintObjectPtrs get_top_level_objects_with_brim(const Print &print, 
     ConstPrintObjectPtrs       top_level_objects_with_brim;
     auto collect_objects_at_top_level = [&island_to_object, &processed_objects_idx, &top_level_objects_with_brim]
             (const ClipperZUtils::ZPath &path, unsigned depth) {
-        if (depth == 0)
+        if (depth == 0 && ClipperZUtils::area(path) > 0.)
             for (const ClipperZUtils::ZPoint &point : path)
                 if (point.z() != 0 && processed_objects_idx.find(island_to_object[point.z() - 1]->id().id) == processed_objects_idx.end()) {
                     top_level_objects_with_brim.emplace_back(island_to_object[point.z() - 1]);

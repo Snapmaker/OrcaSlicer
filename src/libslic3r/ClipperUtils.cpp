@@ -632,7 +632,7 @@ void c2_offset_setup(C2::ClipperOffset &co, float delta, JoinType joinType, doub
 {
     const double max_arc_tolerance = std::abs(delta) * 0.25;
     if (joinType == jtRound)
-        co.ArcTolerance(miterLimit > 0. ? std::min(miterLimit, max_arc_tolerance) : 0.25);
+        co.ArcTolerance(std::min(miterLimit > 0. ? miterLimit : 0.25, max_arc_tolerance));
     else {
         co.MiterLimit(std::max(miterLimit, 2.));
         co.ArcTolerance(std::min(0.25, max_arc_tolerance));

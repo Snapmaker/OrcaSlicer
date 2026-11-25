@@ -535,9 +535,6 @@ Slic3r::Polylines  intersection_pl(const Slic3r::Polyline &subject, const Slic3r
 Slic3r::Polylines  intersection_pl(const Slic3r::Polylines &subject, const Slic3r::Polygons &clip);
 Slic3r::Polylines  intersection_pl(const Slic3r::Polylines &subject, const Slic3r::ExPolygons &clip);
 Slic3r::Polylines  intersection_pl(const Slic3r::Polygons &subject, const Slic3r::Polygons &clip);
-// Orca: Sort and orient open polyline fragments produced by clipping `source` with
-// intersection_pl(), so that they run in the same order and direction as the source polyline.
-void restore_source_path_order(const Slic3r::Polyline &source, Slic3r::Polylines &fragments);
 
 inline Slic3r::Lines intersection_ln(const Slic3r::Lines &subject, const Slic3r::Polygons &clip)
 {

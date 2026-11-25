@@ -423,7 +423,9 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
         std::max(subdiv_min_width,
                  ImGui::GetContentRegionAvail().x - close_button_width - clear_button_width - 2.f * ImGui::GetStyle().ItemSpacing.x);
 
-    m_imgui->disabled_begin(m_selected_facet_count == 0 || m_subdiv_level == 0);
+    // Also disabled when every painted face was filtered (empty preview list):
+    // apply would silently return, so the button mirrors that no-op.
+    m_imgui->disabled_begin(m_selected_facet_count == 0 || m_subdiv_level == 0 || m_previews.empty());
     m_imgui->push_confirm_button_style();
     if (m_imgui->button(m_desc["subdivide"], subdiv_button_width, 0.f))
         apply_subdivision();
@@ -617,18 +619,42 @@ void GLGizmoLocalSubdivision::update_preview()
     for (const Preview& p : m_previews)
         lowest_achieved = std::min(lowest_achieved, int(p.meshes.size()) - 1);
     if (m_subdiv_level > 0 && ! m_previews.empty() && lowest_achieved < m_subdiv_level) {
-        if (m_last_failed_levels != std::make_pair(m_subdiv_level, lowest_achieved)) {
+        int reason_key = 0;
+        const wxString text = subdivision_failure_text(lowest_achieved, false, &reason_key);
+        // Re-notify when the level pair OR the aggregated cause changed: the pair
+        // alone misses a newly appearing cause at the same levels (e.g. painting
+        // in a degenerate volume while another already fails), and the pair
+        // resets on every level change, so a stale-cause text would otherwise be
+        // re-shown with the old reason.
+        if (m_last_failed_levels != std::make_pair(m_subdiv_level, lowest_achieved) || m_last_failed_reason != reason_key) {
             m_last_failed_levels = {m_subdiv_level, lowest_achieved};
+            m_last_failed_reason  = reason_key;
             wxGetApp().plater()->get_notification_manager()->push_notification(
                 NotificationManager::NotificationLevel::WarningNotificationLevel, 5,
                 // into_u8 (explicit UTF-8), NOT ToStdString(): the latter converts
                 // through the system locale, so on machines whose ANSI code page
                 // cannot represent the Chinese text the notification renders as
                 // "????" (seen on a non-Chinese-locale machine).
-                into_u8(subdivision_failure_text(lowest_achieved, false)));
+                into_u8(text));
         }
     } else {
         m_last_failed_levels = {0, 0};
+        m_last_failed_reason  = 0;
+    }
+
+    // A selection whose every painted face was filtered (zero-area) leaves no
+    // preview to apply: the Subdivide button is disabled for it, so say why once
+    // per selection instead of leaving a grey button with no feedback. The mesh,
+    // the painting and the undo history are untouched - apply never runs.
+    if (m_selected_facet_count > 0 && m_previews.empty()) {
+        if (! m_notified_no_subdiv_faces) {
+            m_notified_no_subdiv_faces = true;
+            wxGetApp().plater()->get_notification_manager()->push_notification(
+                NotificationManager::NotificationLevel::WarningNotificationLevel, 5,
+                into_u8(_L("The selected region has no faces that can be subdivided.")));
+        }
+    } else {
+        m_notified_no_subdiv_faces = false;
     }
 
     if (m_subdiv_level > 0 && ! m_previews.empty()) {
@@ -792,17 +818,25 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
     glsafe(::glPopAttrib());
 }
 
-wxString GLGizmoLocalSubdivision::subdivision_failure_text(int lowest_achieved, bool apply) const
+wxString GLGizmoLocalSubdivision::subdivision_failure_text(int lowest_achieved, bool apply, int* reason_key_out) const
 {
     bool any_non_manifold = false, any_degenerate = false;
+    // Only previews that are actually below the CURRENT requested level
+    // contribute: a reason recorded while a higher level was requested is stale
+    // here (the preview may well satisfy the current request, and its old
+    // failure must not drag the wording back into the mixed cause).
     for (const Preview& p : m_previews) {
         if (p.failed_level < 0)
             continue;
+        if (int(p.meshes.size()) - 1 >= m_subdiv_level)
+            continue;
         if (p.failure_reason == TriangleMeshDeal::SubdivisionFailure::DegenerateGeometry)
             any_degenerate = true;
-        else
+        else if (p.failure_reason == TriangleMeshDeal::SubdivisionFailure::NonManifold)
             any_non_manifold = true;
     }
+    if (reason_key_out != nullptr)
+        *reason_key_out = (any_degenerate && any_non_manifold) ? 3 : (any_non_manifold ? 1 : (any_degenerate ? 2 : 0));
 
     // Name the specific cause when all failed previews share one; mixed causes get
     // the combined wording.

@@ -101,7 +101,7 @@ private:
     // Failure notification text (the only reachable cause is the non-manifold
     // guard). apply selects the "Subdivision failed" family, otherwise the
     // "stopped at level" family.
-    wxString    subdivision_failure_text(int lowest_achieved, bool apply) const;
+    wxString    subdivision_failure_text(int lowest_achieved, bool apply, int* reason_key_out = nullptr) const;
 
     wchar_t m_current_tool = 0;
     bool m_detect_geometry_edge = true;
@@ -115,6 +115,8 @@ private:
     // (Requested, achieved) level pair of the last "subdivision stopped early"
     // notification; repaints that fail the same way do not re-notify.
     std::pair<int, int> m_last_failed_levels = {0, 0};
+    int                 m_last_failed_reason  = 0; // 0 none, 1 non-manifold, 2 degenerate, 3 mixed - the last notified cause
+    bool                m_notified_no_subdiv_faces = false; // "no subdividable faces" told once per selection
     // Tallest parameter layout drawn so far this session; shorter layouts are
     // padded up to it so switching tools never changes the panel height. Reset
     // when the gizmo opens.

@@ -339,8 +339,8 @@ Slic3r::Polygons offset(const Slic3r::Polygon &polygon, const float delta, JoinT
 // offset Polylines
 // Wherever applicable, please use the expand() / shrink() variants instead, they convey their purpose better.
 // Input polygons for negative offset shall be "normalized": There must be no overlap / intersections between the input polygons.
-Slic3r::Polygons   offset(const Slic3r::Polyline &polyline, const float delta, JoinType joinType = DefaultLineJoinType, double miterLimit = DefaultLineMiterLimit, EndType end_type = DefaultEndType);
-Slic3r::Polygons   offset(const Slic3r::Polylines &polylines, const float delta, JoinType joinType = DefaultLineJoinType, double miterLimit = DefaultLineMiterLimit, EndType end_type = DefaultEndType);
+Slic3r::Polygons   offset(const Slic3r::Polyline &polyline, const float delta, JoinType joinType = DefaultLineJoinType, double miterLimit = DefaultLineMiterLimit, EndType end_type = DefaultEndType, double shortest_edge_factor = ClipperOffsetShortestEdgeFactor);
+Slic3r::Polygons   offset(const Slic3r::Polylines &polylines, const float delta, JoinType joinType = DefaultLineJoinType, double miterLimit = DefaultLineMiterLimit, EndType end_type = DefaultEndType, double shortest_edge_factor = ClipperOffsetShortestEdgeFactor);
 Slic3r::Polygons   offset(const Slic3r::Polygons &polygons, const float delta, JoinType joinType = DefaultJoinType, double miterLimit = DefaultMiterLimit);
 Slic3r::Polygons   offset(const Slic3r::ExPolygon &expolygon, const float delta, JoinType joinType = DefaultJoinType, double miterLimit = DefaultMiterLimit);
 Slic3r::Polygons   offset(const Slic3r::ExPolygons &expolygons, const float delta, JoinType joinType = DefaultJoinType, double miterLimit = DefaultMiterLimit);

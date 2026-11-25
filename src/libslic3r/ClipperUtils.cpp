@@ -807,9 +807,10 @@ void c2_offset_closed_paths(C2::Paths64 &&paths, float delta, JoinType joinType,
 }
 
 template<class PathsT, class TOut>
-void c2_offset_closed(PathsT &&src, float delta, JoinType joinType, double miterLimit, TOut &out)
+void c2_offset_closed(PathsT &&src, float delta, JoinType joinType, double miterLimit, TOut &out,
+                      double shortest_edge_factor = ClipperOffsetShortestEdgeFactor)
 {
-    const double shortest = std::abs(delta * ClipperOffsetShortestEdgeFactor);
+    const double shortest = std::abs(delta * shortest_edge_factor);
     C2::Paths64  paths;
     paths.reserve(src.size());
     for (const auto &path : src)
@@ -878,15 +879,16 @@ ExPolygons c2_expolygons_offset_ex(const ExPolygonRange &src, float delta, JoinT
 }
 
 template<class PathsProvider>
-Polygons c2_offset_lines(PathsProvider &&src, float delta, JoinType joinType, double miterLimit, EndType endType)
+Polygons c2_offset_lines(PathsProvider &&src, float delta, JoinType joinType, double miterLimit, EndType endType,
+                         double shortest_edge_factor = ClipperOffsetShortestEdgeFactor)
 {
     C2::Paths64 out;
     if (endType == etClosedPolygon) {
-        c2_offset_closed(std::forward<PathsProvider>(src), delta, joinType, miterLimit, out);
+        c2_offset_closed(std::forward<PathsProvider>(src), delta, joinType, miterLimit, out, shortest_edge_factor);
         return c2_to_polygons(out);
     }
     const C2::EndType end      = to_c2(endType);
-    const double      shortest = std::abs(delta * ClipperOffsetShortestEdgeFactor);
+    const double      shortest = std::abs(delta * shortest_edge_factor);
     C2::Paths64       paths;
     paths.reserve(src.size());
     for (const Points &path : src)
@@ -940,11 +942,11 @@ Slic3r::ExPolygons offset_ex(const Slic3r::Polygons &polygons, const float delta
     return c2_to_expolygons(out);
 }
 
-Slic3r::Polygons offset(const Slic3r::Polyline &polyline, const float delta, JoinType joinType, double miterLimit, EndType end_type)
-    { assert(delta > 0); return c2_offset_lines(ClipperUtils::SinglePathProvider(polyline.points), delta, joinType, miterLimit, end_type); }
+Slic3r::Polygons offset(const Slic3r::Polyline &polyline, const float delta, JoinType joinType, double miterLimit, EndType end_type, double shortest_edge_factor)
+    { assert(delta > 0); return c2_offset_lines(ClipperUtils::SinglePathProvider(polyline.points), delta, joinType, miterLimit, end_type, shortest_edge_factor); }
 
-Slic3r::Polygons offset(const Slic3r::Polylines &polylines, const float delta, JoinType joinType, double miterLimit, EndType end_type)
-    { assert(delta > 0); return c2_offset_lines(ClipperUtils::PolylinesProvider(polylines), delta, joinType, miterLimit, end_type); }
+Slic3r::Polygons offset(const Slic3r::Polylines &polylines, const float delta, JoinType joinType, double miterLimit, EndType end_type, double shortest_edge_factor)
+    { assert(delta > 0); return c2_offset_lines(ClipperUtils::PolylinesProvider(polylines), delta, joinType, miterLimit, end_type, shortest_edge_factor); }
 
 Polygons contour_to_polygons(const Polygon &polygon, const float line_width, JoinType join_type, double miter_limit)
     { assert(line_width > 1.f); return c2_offset_lines(ClipperUtils::SinglePathProvider(polygon.points), line_width / 2, join_type, miter_limit, etClosedLine); }

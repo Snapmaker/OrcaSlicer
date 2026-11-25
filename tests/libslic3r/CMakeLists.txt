@@ -46,6 +46,7 @@ add_executable(${_TEST_NAME}_tests
 	test_calib.cpp
 	test_variable_width.cpp
 	test_arachne.cpp
+	test_svg.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

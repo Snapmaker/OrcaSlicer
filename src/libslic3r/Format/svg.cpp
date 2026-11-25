@@ -219,7 +219,7 @@ bool get_svg_profile(const char *path, std::vector<Element_Info> &element_infos,
 
                 close_polygon = pt_path.points.front() == pt_path.points.back();
                 if (stroke_width > 0)
-                    append(polygons, offset(pt_path, stroke_width / 2, jtMiter, 2., close_polygon ? etClosedLine : etOpenSquare));
+                    append(polygons, offset(pt_path, stroke_width / 2, jtMiter, 2., close_polygon ? etClosedLine : etOpenSquare, 0.));
             }
 
             if (!close_polygon)

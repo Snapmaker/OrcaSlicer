@@ -561,6 +561,9 @@ void ClipperOffset::DoGroupOffset(Group& group)
 		if (end_type_ == EndType::Polygon) OffsetPolygon(group, *path_in_it);
 		else if (end_type_ == EndType::Joined) OffsetOpenJoined(group, *path_in_it);
 		else OffsetOpenPath(group, *path_in_it);
+
+		// Orca: restore end_type_ so a 2-point Joined fallback does not leak to subsequent paths in the group.
+		end_type_ = group.end_type;
 	}
 }
 

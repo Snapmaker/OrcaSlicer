@@ -851,6 +851,10 @@ static void register_win32_device_notification_event()
 // Windows 11 build number threshold: build >= 22000 = Windows 11
 constexpr int kWindows11BuildNumber = 22000;
 
+// app_config keys for reconnecting the last Snapmaker Connect device at startup (issue #1129).
+static const char* const GATEWAY_AUTO_CONNECT_KEY   = "auto_connect_last_device";
+static const char* const GATEWAY_LAST_DEVICE_SN_KEY = "gateway_last_device_sn";
+
 static std::string read_cli_version_from_resources()
 {
     // The gateway CLI is shipped with the Flutter web bundle. Its manifest is
@@ -5915,6 +5919,7 @@ void GUI_App::query_gateway_current_device()
                                    }
                                    if (!current_device->connected || current_device->serial_number.empty()) {
                                        clear_gateway_device();
+                                       auto_connect_last_gateway_device();
                                        return;
                                    }
 
@@ -5925,6 +5930,10 @@ void GUI_App::query_gateway_current_device()
                                    }
                                    m_gateway_device.serial_number = current_device->serial_number;
                                    m_gateway_device.connected     = true;
+                                   // Any connection (manual or automatic) counts; auto-connect only serves the next launch.
+                                   m_gateway_auto_connect_attempted = true;
+                                   if (app_config != nullptr && app_config->get(GATEWAY_LAST_DEVICE_SN_KEY) != m_gateway_device.serial_number)
+                                       app_config->set(GATEWAY_LAST_DEVICE_SN_KEY, m_gateway_device.serial_number);
                                    BOOST_LOG_TRIVIAL(info)
                                        << "[gateway][device-status] current device applied, sn=" << m_gateway_device.serial_number;
 
@@ -5949,6 +5958,49 @@ void GUI_App::query_gateway_current_device()
                                                                                << serial_number << ", result=" << watch_result.dump();
                                                                    });
                                });
+}
+
+void GUI_App::auto_connect_last_gateway_device()
+{
+    if (!m_gateway_service || m_is_closing || m_gateway_auto_connect_attempted)
+        return;
+    if (app_config == nullptr || !app_config->get_bool(GATEWAY_AUTO_CONNECT_KEY))
+        return;
+    m_gateway_auto_connect_attempted = true;
+
+    m_gateway_service->request("query.device.list", nlohmann::json::object(), [this](Gateway::GatewayError error, const nlohmann::json& result) {
+        if (m_is_closing || !m_gateway_service || gateway_device_connected())
+            return;
+        if (error) {
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][auto-connect] failed to query device list: " << error.message;
+            m_gateway_auto_connect_attempted = false; // transient: retry on the next device-status refresh
+            return;
+        }
+        const auto list = Gateway::parse_device_list(result);
+        if (!list.has_value()) {
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][auto-connect] device list response is invalid";
+            m_gateway_auto_connect_attempted = false;
+            return;
+        }
+        const std::string remembered = app_config != nullptr ? app_config->get(GATEWAY_LAST_DEVICE_SN_KEY) : std::string{};
+        const auto        device     = Gateway::select_auto_connect_device(*list, remembered);
+        if (!device.has_value()) {
+            BOOST_LOG_TRIVIAL(info) << "[gateway][auto-connect] no saved LAN device to reconnect";
+            return;
+        }
+
+        const std::string serial_number = device->serial_number;
+        BOOST_LOG_TRIVIAL(info) << "[gateway][auto-connect] connecting to last device sn=" << serial_number << " ip=" << device->ip;
+        // On success the CLI broadcasts notify.device.connected, which runs query_gateway_current_device().
+        m_gateway_service->request("action.device.connect", Gateway::build_device_connect_params(*device),
+                                   [serial_number](Gateway::GatewayError connect_error, const nlohmann::json&) {
+                                       if (connect_error)
+                                           BOOST_LOG_TRIVIAL(warning) << "[gateway][auto-connect] failed to connect sn=" << serial_number
+                                                                      << ": " << connect_error.message;
+                                       else
+                                           BOOST_LOG_TRIVIAL(info) << "[gateway][auto-connect] connected sn=" << serial_number;
+                                   });
+    });
 }
 
 void GUI_App::query_gateway_device_objects()

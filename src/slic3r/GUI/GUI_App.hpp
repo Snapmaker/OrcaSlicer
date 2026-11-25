@@ -403,6 +403,8 @@ private:
         std::string   watched_serial_number;
     };
     GatewayDeviceState m_gateway_device;
+    // Startup auto-connect runs at most once per app session, so a later manual disconnect sticks.
+    bool               m_gateway_auto_connect_attempted{false};
     std::string m_gateway_loaded_base_url;
 
   public:
@@ -652,6 +654,7 @@ private:
     void            sync_gateway_region_after_wizard(const std::string& locale_before_wizard);
     void            register_gateway_notifications();
     void            query_gateway_current_device();
+    void            auto_connect_last_gateway_device();
     void            query_gateway_device_objects();
     void            clear_gateway_device();
     void            apply_gateway_machine_slots(std::vector<ConnectMachineInfo> slots);

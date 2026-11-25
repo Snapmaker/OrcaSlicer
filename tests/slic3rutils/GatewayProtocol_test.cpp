@@ -173,3 +173,92 @@ TEST_CASE("ReconnectPolicy backs off and resets after a stable connection", "[ga
     REQUIRE(policy.next_delay() == std::chrono::milliseconds{250});
     REQUIRE(policy.attempts() == 1);
 }
+
+TEST_CASE("parse_device_list reads devices and the current device object", "[gateway][protocol]")
+{
+    const json result = json::parse(R"({
+        "devices": [
+            {"sn": "U1-001", "name": "U1", "ip": "172.16.0.161", "type": "lan", "connected": false, "online": true},
+            {"sn": "U1-002", "ip": "", "type": "WAN", "connected": true},
+            {"name": "no serial"},
+            "not an object"
+        ],
+        "currentDevice": {"sn": "U1-001", "connected": false},
+        "discovering": false
+    })");
+
+    const auto list = parse_device_list(result);
+    REQUIRE(list.has_value());
+    REQUIRE(list->devices.size() == 2);
+    REQUIRE(list->devices[0].serial_number == "U1-001");
+    REQUIRE(list->devices[0].ip == "172.16.0.161");
+    REQUIRE(list->devices[0].is_lan);
+    REQUIRE_FALSE(list->devices[0].connected);
+    REQUIRE_FALSE(list->devices[1].is_lan);
+    REQUIRE(list->devices[1].connected);
+    REQUIRE(list->current_serial_number == "U1-001");
+}
+
+TEST_CASE("parse_device_list accepts the current device as a serial string", "[gateway][protocol]")
+{
+    REQUIRE(parse_device_list(json{{"devices", json::array()}, {"currentDevice", "U1-001"}})->current_serial_number == "U1-001");
+    REQUIRE(parse_device_list(json{{"currentDeviceSn", "U1-002"}})->current_serial_number == "U1-002");
+    REQUIRE(parse_device_list(json::object())->devices.empty());
+}
+
+TEST_CASE("parse_device_list rejects malformed results", "[gateway][protocol]")
+{
+    REQUIRE_FALSE(parse_device_list(json::array()).has_value());
+    REQUIRE_FALSE(parse_device_list(json{{"devices", "U1-001"}}).has_value());
+}
+
+TEST_CASE("select_auto_connect_device prefers the CLI current device", "[gateway][protocol]")
+{
+    DeviceList list;
+    list.devices               = {{"U1-001", "172.16.0.161", true, false}, {"U1-002", "172.16.0.162", true, false}};
+    list.current_serial_number = "U1-002";
+
+    const auto device = select_auto_connect_device(list, "U1-001");
+    REQUIRE(device.has_value());
+    REQUIRE(device->serial_number == "U1-002");
+}
+
+TEST_CASE("select_auto_connect_device falls back to the remembered device", "[gateway][protocol]")
+{
+    DeviceList list;
+    list.devices               = {{"U1-001", "172.16.0.161", true, false}};
+    list.current_serial_number = "GONE";
+
+    const auto device = select_auto_connect_device(list, "U1-001");
+    REQUIRE(device.has_value());
+    REQUIRE(device->serial_number == "U1-001");
+}
+
+TEST_CASE("select_auto_connect_device skips unusable candidates", "[gateway][protocol]")
+{
+    DeviceList list;
+    list.devices = {{"WAN-1", "10.0.0.2", false, false}, {"NO-IP", "", true, false}};
+
+    REQUIRE_FALSE(select_auto_connect_device(list, "WAN-1").has_value());
+    REQUIRE_FALSE(select_auto_connect_device(list, "NO-IP").has_value());
+    REQUIRE_FALSE(select_auto_connect_device(list, "").has_value());
+    REQUIRE_FALSE(select_auto_connect_device(list, "UNKNOWN").has_value());
+}
+
+TEST_CASE("select_auto_connect_device does nothing while a device is connected", "[gateway][protocol]")
+{
+    DeviceList list;
+    list.devices               = {{"U1-001", "172.16.0.161", true, false}, {"U1-002", "172.16.0.162", true, true}};
+    list.current_serial_number = "U1-001";
+
+    REQUIRE_FALSE(select_auto_connect_device(list, "U1-001").has_value());
+}
+
+TEST_CASE("build_device_connect_params matches the Device page LAN request", "[gateway][protocol]")
+{
+    const json params = build_device_connect_params({"U1-001", "172.16.0.161", true, false});
+    REQUIRE(params == json{{"type", "LAN"}, {"sn", "U1-001"}, {"ip", "172.16.0.161"}});
+
+    const json without_ip = build_device_connect_params({"U1-002", "", true, false});
+    REQUIRE(without_ip == json{{"type", "LAN"}, {"sn", "U1-002"}});
+}

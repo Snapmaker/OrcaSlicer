@@ -1,6 +1,7 @@
 #include "GatewayProtocol.hpp"
 
 #include <algorithm>
+#include <cctype>
 
 namespace Slic3r { namespace Gateway {
 namespace {
@@ -146,6 +147,91 @@ std::optional<nlohmann::json> parse_device_object_query_result(const nlohmann::j
     if (result.contains("print_task_config"))
         return std::optional<nlohmann::json>{std::in_place, result};
     return std::nullopt;
+}
+
+namespace {
+
+std::string string_field(const nlohmann::json& object, const char* key)
+{
+    std::string value;
+    get_string(object, key, value);
+    return value;
+}
+
+std::optional<KnownDevice> parse_known_device(const nlohmann::json& item)
+{
+    if (!item.is_object())
+        return std::nullopt;
+
+    KnownDevice device;
+    device.serial_number = string_field(item, "sn");
+    if (device.serial_number.empty())
+        return std::nullopt;
+    device.ip = string_field(item, "ip");
+
+    std::string type = string_field(item, "type");
+    std::transform(type.begin(), type.end(), type.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    device.is_lan = type != "wan" && type != "cloud";
+
+    const auto connected = item.find("connected");
+    device.connected     = connected != item.end() && connected->is_boolean() && connected->get<bool>();
+    return device;
+}
+
+} // namespace
+
+std::optional<DeviceList> parse_device_list(const nlohmann::json& result)
+{
+    if (!result.is_object())
+        return std::nullopt;
+
+    DeviceList list;
+    if (const auto devices = result.find("devices"); devices != result.end()) {
+        if (!devices->is_array())
+            return std::nullopt;
+        for (const auto& item : *devices)
+            if (auto device = parse_known_device(item))
+                list.devices.emplace_back(std::move(*device));
+    }
+
+    for (const char* key : {"currentDevice", "currentDeviceSn"}) {
+        const auto current = result.find(key);
+        if (current == result.end())
+            continue;
+        if (current->is_string())
+            list.current_serial_number = current->get<std::string>();
+        else if (current->is_object())
+            list.current_serial_number = string_field(*current, "sn");
+        if (!list.current_serial_number.empty())
+            break;
+    }
+    return list;
+}
+
+std::optional<KnownDevice> select_auto_connect_device(const DeviceList& list, const std::string& remembered_serial_number)
+{
+    const bool any_connected =
+        std::any_of(list.devices.begin(), list.devices.end(), [](const KnownDevice& device) { return device.connected; });
+    if (any_connected)
+        return std::nullopt;
+
+    for (const std::string* serial_number : {&list.current_serial_number, &remembered_serial_number}) {
+        if (serial_number->empty())
+            continue;
+        const auto device = std::find_if(list.devices.begin(), list.devices.end(),
+                                         [&](const KnownDevice& candidate) { return candidate.serial_number == *serial_number; });
+        if (device != list.devices.end() && device->is_lan && !device->ip.empty())
+            return *device;
+    }
+    return std::nullopt;
+}
+
+nlohmann::json build_device_connect_params(const KnownDevice& device)
+{
+    nlohmann::json params{{"type", device.is_lan ? "LAN" : "WAN"}, {"sn", device.serial_number}};
+    if (!device.ip.empty())
+        params["ip"] = device.ip;
+    return params;
 }
 
 RpcFrame classify_jsonrpc_message(const nlohmann::json& message)

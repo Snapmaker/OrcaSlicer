@@ -407,6 +407,10 @@ void AppConfig::set_defaults()
         set_bool("enable_model_station", true);
     }
 
+    if (get("auto_connect_last_device").empty()) {
+        set_bool("auto_connect_last_device", true);
+    }
+
     if (get("sync_system_preset").empty()) {
         set_bool("sync_system_preset", true);
     }

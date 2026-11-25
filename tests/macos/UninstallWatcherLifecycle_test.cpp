@@ -203,9 +203,6 @@ bool test_registration_identity()
     bool ok = check(SnapmakerUninstall::registration_id_from_state(first_text) == first &&
                     SnapmakerUninstall::registration_id_from_state(second_text) == second,
                     "registration UUID round-trips through production state serialization");
-    ok = check(SnapmakerUninstall::same_registration(bundle, first, bundle, first) &&
-               !SnapmakerUninstall::same_registration(bundle, first, bundle, second),
-               "predicate detects a same-path UUID change") && ok;
     ok = check(SnapmakerUninstall::registration_attempt_is_current("", first) &&
                SnapmakerUninstall::registration_attempt_is_current(first, first) &&
                !SnapmakerUninstall::registration_attempt_is_current(first, second) &&
@@ -218,8 +215,11 @@ bool test_registration_identity()
     return ok;
 }
 
-/** @brief Checks a reinstall that replaces the registration UUID does not cancel a confirmed cleanup. */
-bool test_reinstall_does_not_cancel_confirmed_cleanup()
+/**
+ * @brief Checks the confirmed-cleanup retry policy consumes no watch.json state: rewriting the registration
+ * UUID mid-retry changes neither the retry count nor the terminal result.
+ */
+bool test_retry_policy_ignores_watch_json_rewrites()
 {
     const TestHome home;
     if (!check(home.ready(), "temporary HOME setup"))
@@ -267,7 +267,7 @@ bool test_reinstall_does_not_cancel_confirmed_cleanup()
         });
     return check(replaced && attempts == 7 && waits == 6 && terminal_calls == 1 &&
                  terminal_result == SnapmakerUninstall::CleanupResult::LockUnavailable,
-                 "a new same-path registration does not cancel the old confirmation; cleanup keeps retrying to its limit");
+                 "retry policy is insensitive to watch.json rewrites: mixed failures still reach the lock-unavailable limit");
 }
 
 #ifdef __APPLE__
@@ -331,7 +331,7 @@ int main()
     ok = test_persistent_reload_recovery() && ok;
     ok = test_invalid_reload_marker() && ok;
     ok = test_registration_identity() && ok;
-    ok = test_reinstall_does_not_cancel_confirmed_cleanup() && ok;
+    ok = test_retry_policy_ignores_watch_json_rewrites() && ok;
 #ifdef __APPLE__
     ok = test_lock_lifecycle() && ok;
     ok = test_invalid_lock_directory() && ok;

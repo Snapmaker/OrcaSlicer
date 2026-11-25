@@ -431,7 +431,11 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
     m_imgui->disabled_end();
 
     ImGui::SameLine();
-    if (m_imgui->bbl_button(m_desc["close"]))
+    // Same plain button style as the neighbouring "Erase all selection": BBLButton
+    // draws its own grey hover frame (plus CheckMark-colored text), which reads as
+    // an odd one out in this row - it is meant for panels whose buttons are ALL
+    // BBL-styled (e.g. Simplify's Apply/Cancel pair).
+    if (m_imgui->button(m_desc["close"]))
         close();
 
     ImGui::SameLine();
@@ -541,16 +545,20 @@ void GLGizmoLocalSubdivision::update_preview()
             const int next_level = int(p.meshes.size());
             if (p.failed_level == next_level)
                 break; // cached failure for the current inputs: do not recompute
-            const indexed_triangle_set& src        = p.meshes.back();
-            const size_t                unselected = src.indices.size() - p.next_facets.size();
-            bool                        ok         = false;
+            const indexed_triangle_set& src   = p.meshes.back();
+            size_t                      region = 0; // written by the call: where this level's region truly ends
+            bool                        ok    = false;
             TriangleMeshDeal::SubdivisionFailure failure = TriangleMeshDeal::SubdivisionFailure::None;
-            indexed_triangle_set        next       = TriangleMeshDeal::smooth_triangle_mesh_local_its(src, p.next_facets, ok, &failure);
+            indexed_triangle_set        next  = TriangleMeshDeal::smooth_triangle_mesh_local_its(src, p.next_facets, ok, &failure, &region);
             if (! ok) {
                 p.failed_level = next_level;
                 break;
             }
-            const size_t region = next.indices.size() - unselected;
+            // The region boundary comes from the algorithm, not subtraction: the
+            // zero-area filter moves painted faces into the untouched tail, so the
+            // old "output size minus unselected" arithmetic undercounted the tail
+            // and swallowed the following untouched faces into the next level's
+            // selection (subdividing faces that were never painted).
             p.next_facets.clear();
             p.next_facets.resize(region);
             for (size_t i = 0; i < region; ++i)
@@ -574,7 +582,11 @@ void GLGizmoLocalSubdivision::update_preview()
             m_last_failed_levels = {m_subdiv_level, lowest_achieved};
             wxGetApp().plater()->get_notification_manager()->push_notification(
                 NotificationManager::NotificationLevel::WarningNotificationLevel, 5,
-                subdivision_failure_text(lowest_achieved, false).ToStdString());
+                // into_u8 (explicit UTF-8), NOT ToStdString(): the latter converts
+                // through the system locale, so on machines whose ANSI code page
+                // cannot represent the Chinese text the notification renders as
+                // "????" (seen on a non-Chinese-locale machine).
+                into_u8(subdivision_failure_text(lowest_achieved, false)));
         }
     } else {
         m_last_failed_levels = {0, 0};
@@ -770,7 +782,8 @@ void GLGizmoLocalSubdivision::apply_subdivision()
     if (lowest_achieved < m_subdiv_level) {
         wxGetApp().plater()->get_notification_manager()->push_notification(
             NotificationManager::NotificationLevel::WarningNotificationLevel, 10,
-            subdivision_failure_text(lowest_achieved, true).ToStdString());
+            // into_u8 (explicit UTF-8), NOT ToStdString(): see the preview-path note.
+            into_u8(subdivision_failure_text(lowest_achieved, true)));
         return;
     }
 

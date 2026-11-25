@@ -404,7 +404,8 @@ static bool validate_region_children(const std::vector<stl_vertex>& parent_verti
 static std::vector<stl_triangle_vertex_indices> s_round1_failing;
 static std::vector<stl_triangle_vertex_indices> s_final_downgraded;
 
-indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok, SubdivisionFailure* failure) {
+indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok, SubdivisionFailure* failure,
+                                                                     size_t* region_face_count) {
     s_local_its_call_count.fetch_add(1, std::memory_order_relaxed);
     if (failure != nullptr)
         *failure = SubdivisionFailure::None;
@@ -474,6 +475,8 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
                     ok = false;
                     if (failure != nullptr)
                         *failure = SubdivisionFailure::NonManifold;
+                    if (region_face_count != nullptr)
+                        *region_face_count = 0;
                     return indexed_triangle_set();
                 }
             }
@@ -753,6 +756,11 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
     }
 
     ok = true;
+    // Where the subdivided region ends in the output face list (split + stitched
+    // children precede the untouched tail). Identical across attempts: forced
+    // midpoints change neither the pairing nor the stitching branch of a face.
+    if (region_face_count != nullptr)
+        *region_face_count = child_parent.size();
 
     // Diagnostic hook: the faces the downgrade finally landed on (any of their
     // three edges carries a forced midpoint). Empty when the initial result

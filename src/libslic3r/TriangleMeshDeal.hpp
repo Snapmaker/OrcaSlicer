@@ -25,8 +25,13 @@ public:
     // set without building TriangleMesh stats (neighbour graph, volume, bounding box,
     // patch count). Use it for previewing, where the stats would be recomputed and
     // thrown away on every step; construct the TriangleMesh only when applying.
+    // region_face_count (optional) receives how many faces at the FRONT of the
+    // output are the subdivided region - the selection for the next level. The
+    // caller cannot infer this by subtraction: the zero-area filter moves painted
+    // faces into the untouched tail, so the tail size is not "input faces minus
+    // painted faces". 0 on failure.
     static indexed_triangle_set smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok,
-                                                               SubdivisionFailure* failure = nullptr);
+                                                               SubdivisionFailure* failure = nullptr, size_t* region_face_count = nullptr);
 
     // Verification hook: how many times smooth_triangle_mesh_local_its ran since the
     // last reset (or process start). Lets the UI layer check that an unchanged

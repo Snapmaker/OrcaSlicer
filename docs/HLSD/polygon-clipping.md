@@ -55,14 +55,11 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   rule applies to both subject and clip; Clipper2 has no per-operand rule.
 - Collinear vertices are removed from the result. Clipper2 keeps them by
   default, so every boolean sets `PreserveCollinear(false)`.
-- Outer contours are CCW and holes are CW. `simplify_polygons()` and
-  `simplify_polygons_ex()` split a contour that would pass twice through a
-  vertex there into two contours, as Clipper1 did. The other results keep such
-  a contour in one piece.
+- Outer contours are CCW and holes are CW. No output contour touches
+  itself: where one would pass twice through a vertex, it is split there into
+  two contours.
 - `ExPolygons` results are built from one `PolyTree64` pass. An island inside
-  a hole becomes an `ExPolygon` of its own. A hole Clipper2 places beside the
-  contour around it goes to the innermost contour around it (OrcaSlicer
-  651eed392c).
+  a hole becomes an `ExPolygon` of its own.
 - `ApplySafetyOffset::Yes` grows the clip polygons by `ClipperSafetyOffset`
   before an intersection or a difference, so that edges shared by subject and
   clip do not leave slivers.
@@ -81,12 +78,10 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
 - A single `Polygon` keeps its orientation: a CCW polygon grows with a
   positive delta, a CW polygon is a hole and shrinks.
 - `Polygons` follow the same rule per path. When every CW path lies strictly
-  inside the bounding box of a CCW path and has a vertex in the solid of the
-  other paths, which is the usual case of contours with their holes, all
-  paths are offset in one Clipper2 group. Otherwise each path is offset on
-  its own and the results are united, with the non-zero rule when growing and
-  the positive rule when shrinking. The second test keeps a clockwise contour
-  lying in a notch of another contour, which shrinks away as a hole.
+  inside the bounding box of a CCW path, which is the usual case of contours
+  with their holes, all paths are offset in one Clipper2 group. Otherwise
+  each path is offset on its own and the results are united, with the
+  non-zero rule when growing and the positive rule when shrinking.
 - `ExPolygons` and `Surfaces` are offset as one group after the contours are
   oriented CCW and the holes CW, whatever their input orientation.
 - Zero-area paths vanish under a negative offset instead of growing.

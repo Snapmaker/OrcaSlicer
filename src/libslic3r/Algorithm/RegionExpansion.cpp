@@ -72,19 +72,24 @@ RegionExpansionParameters RegionExpansionParameters::build(
     return out;
 }
 
-// Like expolygons_to_zpaths(), but each contour is expanded before converted to zpath.
-// The expanded contours are then opened (the first point is repeated at the end) and all get the same Z.
-static ClipperZUtils::ZPaths expolygon_to_zpaths_expanded_opened(const ExPolygon &expoly, const float expansion, const coord_t z)
+// similar to expolygons_to_zpaths(), but each contour is expanded before converted to zpath.
+// The expanded contours are then opened (the first point is repeated at the end).
+static ClipperZUtils::ZPaths expolygons_to_zpaths_expanded_opened(
+    const ExPolygons &src, const float expansion, coord_t &base_idx)
 {
     ClipperZUtils::ZPaths out;
-    out.reserve(expoly.num_contours());
-    for (size_t icontour = 0; icontour < expoly.num_contours(); ++ icontour) {
-        // Orient CCW, then grow the contour and shrink the holes. The output contours are CCW.
-        Polygon contour = expoly.contour_or_hole(icontour);
-        if (! contour.is_counter_clockwise())
-            contour.reverse();
-        for (const Polygon &expanded : offset(contour, icontour == 0 ? expansion : -expansion, jtSquare))
-            out.emplace_back(ClipperZUtils::to_zpath<true>(expanded.points, z));
+    out.reserve(2 * std::accumulate(src.begin(), src.end(), size_t(0),
+        [](const size_t acc, const ExPolygon &expoly) { return acc + expoly.num_contours(); }));
+    for (const ExPolygon &expoly : src) {
+        for (size_t icontour = 0; icontour < expoly.num_contours(); ++ icontour) {
+            // Orient CCW, then grow the contour and shrink the holes. The output contours are CCW.
+            Polygon contour = expoly.contour_or_hole(icontour);
+            if (! contour.is_counter_clockwise())
+                contour.reverse();
+            for (const Polygon &expanded : offset(contour, icontour == 0 ? expansion : -expansion, jtSquare))
+                out.emplace_back(ClipperZUtils::to_zpath<true>(expanded.points, base_idx));
+        }
+        ++ base_idx;
     }
     return out;
 }
@@ -183,24 +188,20 @@ static int sample_in_expolygons(
     return out;
 }
 
-// Up to this many boundaries are looked through one by one, with more a tree over their bounding boxes pays off.
-static constexpr size_t boundaries_per_tree = 16;
-
-// The boundaries the expanded contours of a source within this bounding box can reach: those among a bounding box
-// of theirs that meets it.
-static void boundary_candidates(const ExPolygons &boundary, const AABBTreeBBoxes &aabb_tree, const BoundingBox &bbox, std::vector<size_t> &candidates)
+// Index of the source region whose expanded outline contains pt, or -1 if there is none.
+// Used for seed segments made of boundary vertices only, which carry no source index in their Z.
+static int src_index_of_point_in_zpaths(const ClipperZUtils::ZPaths &zpaths, const Point &pt, const coord_t idx_src_base)
 {
-    candidates.clear();
-    if (! aabb_tree.empty()) {
-        const AABBTreeBBoxes::BoundingBox query(bbox.min, bbox.max);
-        AABBTreeIndirect::traverse(aabb_tree,
-            [&query](const AABBTreeBBoxes::Node &node) { return node.bbox.intersects(query); },
-            [&candidates](const AABBTreeBBoxes::Node &node) { candidates.emplace_back(node.idx); return true; });
-        std::sort(candidates.begin(), candidates.end());
-    } else
-        for (size_t i = 0; i < boundary.size(); ++ i)
-            if (get_extents(boundary[i].contour).overlap(bbox))
-                candidates.emplace_back(i);
+    // A point is inside a source if it is inside an odd number of its contours: the outline expanded
+    // by tiny_expansion and the holes shrunk by it. All the contours of one source share their Z coordinate.
+    std::vector<coord_t> inside;
+    for (const ClipperZUtils::ZPath &path : zpaths)
+        if (Polygon(ClipperZUtils::from_zpath(path)).contains(pt))
+            inside.emplace_back(path.front().z());
+    for (const coord_t z : inside)
+        if (std::count(inside.begin(), inside.end(), z) % 2 == 1)
+            return int(z - idx_src_base);
+    return -1;
 }
 
 std::vector<WaveSeed> wave_seeds(
@@ -208,7 +209,7 @@ std::vector<WaveSeed> wave_seeds(
     const ExPolygons      &src,
     // Boundaries of source regions touching the "boundary" regions will be expanded into the "boundary" region.
     const ExPolygons      &boundary,
-    // Initial expansion of src to make the source regions intersect with boundary regions just a little.
+    // Initial expansion of src to make the source regions intersect with boundary regions just a bit.
     float                  tiny_expansion,
     // Sort output by boundary ID and source ID.
     bool                   sorted)
@@ -221,185 +222,156 @@ std::vector<WaveSeed> wave_seeds(
     using Intersection  = ClipperZUtils::ClipperZIntersectionVisitor::Intersection;
     using Intersections = ClipperZUtils::ClipperZIntersectionVisitor::Intersections;
 
-    // Every vertex carries an index: a vertex of a boundary contour that of its expolygon plus one, a vertex of an
-    // expanded source contour that of its expolygon plus the number of boundaries, an intersection the negated index
-    // into intersections minus one.
+    ClipperZUtils::ZPaths segments;
     Intersections         intersections;
+    ClipperZUtils::ZPaths zsrc;
 
-    coord_t               idx_boundary_end = 1;
-    // as closed contours
-    ClipperZUtils::ZPaths zboundary = ClipperZUtils::expolygons_to_zpaths(boundary, idx_boundary_end);
-    const coord_t         idx_src_end = idx_boundary_end + coord_t(src.size());
+    coord_t               idx_boundary_begin = 1;
+    coord_t               idx_boundary_end   = idx_boundary_begin;
+    coord_t               idx_src_end;
 
-    // Over the boundaries right away when there are many, otherwise when a closed seed contour calls for it.
-    AABBTreeBBoxes aabb_tree = boundary.size() < boundaries_per_tree ? AABBTreeBBoxes() : build_aabb_tree_over_expolygons(boundary);
-    // Index of the boundary expolygon around the point, or -1 if there is none.
-    auto sample_in_boundaries = [&boundary, &aabb_tree](const Point &sample) {
-        if (boundary.size() == 1)
-            return boundary.front().contains(sample) ? 0 : -1;
-        if (aabb_tree.empty())
-            aabb_tree = build_aabb_tree_over_expolygons(boundary);
-        return sample_in_expolygons(aabb_tree, boundary, sample);
-    };
-
-    // The expanded contours of every source, as open contours, and a bounding box around each.
-    std::vector<ClipperZUtils::ZPaths> zsrc(src.size());
-    std::vector<BoundingBox>           bbox(src.size());
-    for (size_t src_id = 0; src_id < src.size(); ++ src_id) {
-        zsrc[src_id] = expolygon_to_zpaths_expanded_opened(src[src_id], tiny_expansion, idx_boundary_end + coord_t(src_id));
-        for (const ClipperZUtils::ZPath &path : zsrc[src_id])
-            for (const ClipperZUtils::ZPoint &pt : path)
-                bbox[src_id].merge(Point(pt.x(), pt.y()));
-        // A point of a piece may be rounded, and is looked up in the box of its source below.
-        if (! zsrc[src_id].empty())
-            bbox[src_id] = bbox[src_id].inflated(SCALED_EPSILON);
-    }
-
-    // The sources are clipped in batches, the bounding boxes of the sources of one batch away from each other. So the
-    // source of a piece is known to be one of the sources of its batch: a vertex of it names the source, and a piece
-    // without a vertex of its source lies in the bounding box of that source. Clipped all together, a piece whose ends
-    // are both vertices of the boundary carried no source index, and a point of it could lie on the outline of any
-    // source around, or on the outline of one of its holes, expanded by the same tiny_expansion.
-    std::vector<std::vector<size_t>> batches;
     {
-        // From left to right, so that a source finds the batch of the sources reaching as far right as it does.
-        std::vector<size_t> order(src.size());
-        std::iota(order.begin(), order.end(), size_t(0));
-        std::sort(order.begin(), order.end(), [&bbox](size_t l, size_t r) { return bbox[l].min.x() < bbox[r].min.x(); });
-        for (size_t src_id : order) {
-            if (zsrc[src_id].empty())
-                continue;
-            auto meets = [&bbox, &b = bbox[src_id]](size_t other) { return bbox[other].overlap(b); };
-            auto batch = std::find_if(batches.begin(), batches.end(), [&meets](const std::vector<size_t> &batch) {
-                return std::none_of(batch.begin(), batch.end(), meets);
-            });
-            if (batch == batches.end())
-                batch = batches.emplace(batch);
-            batch->emplace_back(src_id);
+        ClipperZUtils::ClipperZIntersectionVisitor visitor(intersections);
+        // as closed contours
+        ClipperZUtils::ZPaths zboundary = ClipperZUtils::expolygons_to_zpaths(boundary, idx_boundary_end);
+        // as open contours
+        std::vector<std::pair<ClipperZUtils::ZPoint, int>> zsrc_splits;
+        idx_src_end = idx_boundary_end;
+        zsrc = expolygons_to_zpaths_expanded_opened(src, tiny_expansion, idx_src_end);
+        zsrc_splits.reserve(zsrc.size());
+        for (const ClipperZUtils::ZPath &path : zsrc) {
+            assert(path.size() >= 2);
+            assert(path.front() == path.back());
+            zsrc_splits.emplace_back(path.front(), -1);
         }
+        std::sort(zsrc_splits.begin(), zsrc_splits.end(), [](const auto &l, const auto &r){ return ClipperZUtils::zpoint_lower(l.first, r.first); });
+        segments = ClipperZUtils::clip_zpaths(ctIntersection, zsrc, true, zboundary, visitor.clipper_callback());
+        merge_splits(segments, zsrc_splits);
     }
+
+    // AABBTree over bounding boxes of boundaries.
+    // Only built if necessary, that is if any of the seed contours is closed, thus there is no intersection point
+    // with the boundary and all Z coordinates of the closed contour point to the source contour.
+    AABBTreeBBoxes aabb_tree;
 
     // Sort paths into their respective islands.
     // Each src x boundary will be processed (wave expanded) independently.
     // Multiple pieces of a single src may intersect the same boundary.
     WaveSeeds out;
-    ClipperZUtils::ClipperZIntersectionVisitor visitor(intersections);
-    std::vector<size_t>                        candidates;
-    for (const std::vector<size_t> &batch : batches) {
-        BoundingBox bbox_batch;
-        for (size_t src_id : batch)
-            bbox_batch.merge(bbox[src_id]);
-        boundary_candidates(boundary, aabb_tree, bbox_batch, candidates);
-        if (candidates.empty())
-            continue;
-        // as open contours, and where each of them opens.
-        ClipperZUtils::ZPaths                             zsrc_batch;
-        std::vector<std::pair<ClipperZUtils::ZPoint, int>> zsrc_splits;
-        for (size_t src_id : batch) {
-            for (const ClipperZUtils::ZPath &path : zsrc[src_id])
-                zsrc_splits.emplace_back(path.front(), -1);
-            append(zsrc_batch, std::move(zsrc[src_id]));
-        }
-        // as closed contours
-        const ClipperZUtils::ZPaths *pzclip = &zboundary;
-        ClipperZUtils::ZPaths         zclip;
-        if (candidates.size() != boundary.size()) {
-            // Only the boundaries reached, each contour with the index of its expolygon.
-            for (size_t idx : candidates) {
-                zclip.emplace_back(ClipperZUtils::to_zpath(boundary[idx].contour.points, coord_t(idx) + 1));
-                for (const Polygon &hole : boundary[idx].holes)
-                    zclip.emplace_back(ClipperZUtils::to_zpath(hole.points, coord_t(idx) + 1));
-            }
-            pzclip = &zclip;
-        }
-        std::sort(zsrc_splits.begin(), zsrc_splits.end(), [](const auto &l, const auto &r){ return ClipperZUtils::zpoint_lower(l.first, r.first); });
-        ClipperZUtils::ZPaths segments = ClipperZUtils::clip_zpaths(ctIntersection, zsrc_batch, true, *pzclip, visitor.clipper_callback());
-        merge_splits(segments, zsrc_splits);
-
-        for (const ClipperZUtils::ZPath &path : segments) {
-            assert(path.size() >= 2);
-            ClipperZUtils::ZPoint front = path.front();
-            ClipperZUtils::ZPoint back  = path.back();
-            // Index of the boundary a vertex of the path is a vertex of a contour of, if there is such a vertex.
-            coord_t boundary_z = -1;
-            // Index of the source, by a vertex of the expanded contours of it, if the path has such a vertex.
-            coord_t src_z      = -1;
+    out.reserve(segments.size());
+    int iseed = 0;
+    for (const ClipperZUtils::ZPath &path : segments) {
+        assert(path.size() >= 2);
+        ClipperZUtils::ZPoint front = path.front();
+        ClipperZUtils::ZPoint back  = path.back();
+        if (front != back && front.z() >= 0 && back.z() >= 0) {
+            // Both endpoints coincide with existing polygon vertices, so the
+            // ZFillFunction callback was never called.  With complex geometry
+            // this is common because source and boundary contours share many
+            // vertices.  Determine src_id / boundary_id from Z coordinates
+            // (and fall back to an AABB-tree point-in-polygon test when a
+            // boundary ID is not directly available).
+            coord_t src_z = -1, boundary_z = -1;
+            // Scan all path points for the information we need.
             for (const ClipperZUtils::ZPoint &point : path) {
                 if (point.z() >= idx_boundary_end && point.z() < idx_src_end && src_z < 0)
                     src_z = point.z();
-                else if (point.z() >= 1 && point.z() < idx_boundary_end && boundary_z < 0)
+                else if (point.z() >= idx_boundary_begin && point.z() < idx_boundary_end && boundary_z < 0)
                     boundary_z = point.z();
                 if (src_z >= 0 && boundary_z >= 0)
                     break;
             }
-            int src_id = src_z >= 0 ? int(src_z - idx_boundary_end) : -1;
-            if (src_id < 0) {
-                // No vertex of the source: the piece runs within the box of the one source of the batch around it.
-                for (size_t candidate : batch)
-                    if (bbox[candidate].contains(Point(front.x(), front.y()))) {
-                        src_id = int(candidate);
-                        break;
-                    }
-                if (src_id < 0)
-                    continue;
-            }
-
-            // Both ends of a seed segment are supposed to be inside a single boundary expolygon.
-            // Thus as long as the seed contour is not closed, it should be open at a boundary point.
-            if (front == back && front.z() < idx_boundary_end) {
-                // This should be a very rare exception.
-                // See https://github.com/prusa3d/PrusaSlicer/issues/12469.
-                // Segement is open, yet its first point seems to be part of boundary polygon.
-                // Take the first point with src polygon index.
-                for (const ClipperZUtils::ZPoint &point : path) {
-                    if (point.z() >= idx_boundary_end) {
-                        front = point;
-                        back = point;
-                    }
+            if (src_z >= 0) {
+                uint32_t src_id = uint32_t(src_z - idx_boundary_end);
+                if (boundary_z >= 0) {
+                    out.push_back({ src_id, uint32_t(boundary_z - 1), ClipperZUtils::from_zpath(path) });
+                } else {
+                    // Source ID known but boundary unknown – use AABB tree.
+                    if (aabb_tree.empty())
+                        aabb_tree = build_aabb_tree_over_expolygons(boundary);
+                    int boundary_id = sample_in_expolygons(aabb_tree, boundary, Point(front.x(), front.y()));
+                    if (boundary_id >= 0)
+                        out.push_back({ src_id, uint32_t(boundary_id), ClipperZUtils::from_zpath(path) });
                 }
+                ++ iseed;
+                continue;
             }
-
-            const Intersection *intersection = nullptr;
-            auto intersection_point_valid = [idx_boundary_end, idx_src_end](const Intersection &is) {
-                return is.first >= 1 && is.first < idx_boundary_end &&
-                       is.second >= idx_boundary_end && is.second < idx_src_end;
-            };
-            if (front.z() < 0) {
-                const Intersection &is = intersections[- front.z() - 1];
-                assert(intersection_point_valid(is));
-                if (intersection_point_valid(is))
-                    intersection = &is;
-            }
-            if (! intersection && back.z() < 0) {
-                const Intersection &is = intersections[- back.z() - 1];
-                assert(intersection_point_valid(is));
-                if (intersection_point_valid(is))
-                    intersection = &is;
-            }
-            // The source is known, so only the boundary around the piece is left to find.
-            int boundary_id = -1;
-            if (intersection) {
-                // The path intersects the boundary contour at least at one side.
-                boundary_id = int(intersection->first - 1);
-            } else if (front != back) {
-                // Both ends are vertices of the input. One of a boundary contour tells the boundary, else it is the one
-                // around the first point.
-                boundary_id = boundary_z >= 0 ? int(boundary_z - 1) : sample_in_boundaries(Point(front.x(), front.y()));
-            } else {
-                // This should be a closed contour.
-                // Find a source boundary expolygon of one sample of this closed path.
-                boundary_id = sample_in_boundaries(Point(front.x(), front.y()));
-                // Boundary that contains the sample point was found.
-                assert(boundary_id >= 0);
+            // No point of the path carries a source index: the piece joins boundary vertices that lie on or
+            // inside the expanded source, so both ends keep the boundary's Z. Find the source that contains it.
+            const int src_id = src_index_of_point_in_zpaths(zsrc, Point(front.x(), front.y()), idx_boundary_end);
+            if (src_id < 0)
+                // Unable to determine source ID - drop the segment.
+                continue;
+            int boundary_id = boundary_z >= 0 ? int(boundary_z - 1) : -1;
+            if (boundary_id < 0) {
+                if (aabb_tree.empty())
+                    aabb_tree = build_aabb_tree_over_expolygons(boundary);
+                boundary_id = sample_in_expolygons(aabb_tree, boundary, Point(front.x(), front.y()));
             }
             if (boundary_id >= 0)
                 out.push_back({ uint32_t(src_id), uint32_t(boundary_id), ClipperZUtils::from_zpath(path) });
+            ++ iseed;
+            continue;
         }
+
+        // Both ends of a seed segment are supposed to be inside a single boundary expolygon.
+        // Thus as long as the seed contour is not closed, it should be open at a boundary point.
+        assert((front == back && front.z() >= idx_boundary_end && front.z() < idx_src_end) || 
+            //(front.z() < 0 && back.z() < 0));
+            // Hope that at least one end of an open polyline is clipped by the boundary, thus an intersection point is created.
+            (front.z() < 0 || back.z() < 0));
+
+        if (front == back && (front.z() < idx_boundary_end)) {
+            // This should be a very rare exception.
+            // See https://github.com/prusa3d/PrusaSlicer/issues/12469.
+            // Segement is open, yet its first point seems to be part of boundary polygon.
+            // Take the first point with src polygon index.
+            for (const ClipperZUtils::ZPoint &point : path) {
+                if (point.z() >= idx_boundary_end) {
+                    front = point;
+                    back = point;
+                }
+            }
+        }
+
+        const Intersection *intersection = nullptr;
+        auto intersection_point_valid = [idx_boundary_end, idx_src_end](const Intersection &is) {
+            return is.first >= 1 && is.first < idx_boundary_end &&
+                   is.second >= idx_boundary_end && is.second < idx_src_end;
+        };
+        if (front.z() < 0) {
+            const Intersection &is = intersections[- front.z() - 1];
+            assert(intersection_point_valid(is));
+            if (intersection_point_valid(is))
+                intersection = &is;
+        }
+        if (! intersection && back.z() < 0) {
+            const Intersection &is = intersections[- back.z() - 1];
+            assert(intersection_point_valid(is));
+            if (intersection_point_valid(is))
+                intersection = &is;
+        }
+        if (intersection) {
+            // The path intersects the boundary contour at least at one side. 
+            out.push_back({ uint32_t(intersection->second - idx_boundary_end), uint32_t(intersection->first - 1), ClipperZUtils::from_zpath(path) });
+        } else {
+            // This should be a closed contour.
+            assert(front == back && front.z() >= idx_boundary_end && front.z() < idx_src_end);
+            // Find a source boundary expolygon of one sample of this closed path.
+            if (aabb_tree.empty())
+                aabb_tree = build_aabb_tree_over_expolygons(boundary);
+            int boundary_id = sample_in_expolygons(aabb_tree, boundary, Point(front.x(), front.y()));
+            // Boundary that contains the sample point was found.
+            assert(boundary_id >= 0);
+            if (boundary_id >= 0)
+                out.push_back({ uint32_t(front.z() - idx_boundary_end), uint32_t(boundary_id), ClipperZUtils::from_zpath(path) });
+        }
+        ++ iseed;
     }
 
     if (sorted)
         // Sort the seeds by their intersection boundary and source contour.
-        std::stable_sort(out.begin(), out.end(), lower_by_boundary_and_src);
+        std::sort(out.begin(), out.end(), lower_by_boundary_and_src);
     return out;
 }
 

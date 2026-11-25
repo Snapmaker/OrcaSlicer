@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <optional>
+#include <utility>
 
 namespace Slic3r {
 
@@ -239,37 +240,53 @@ class Print;
 
         //BBS: add mutex for protection of gcode result
         mutable std::mutex result_mutex;
-        GCodeProcessorResult& operator=(const GCodeProcessorResult &other)
+        GCodeProcessorResult& operator=(const GCodeProcessorResult& other)
         {
-            filename = other.filename;
+            assign(other);
+            return *this;
+        }
+
+        GCodeProcessorResult& operator=(GCodeProcessorResult&& other)
+        {
+            if (this != &other)
+                assign(std::move(other));
+            return *this;
+        }
+
+    private:
+        // Keep copy and move assignment in sync, leaving each result's mutex in place.
+        template<class Other> void assign(Other&& other)
+        {
+            filename = std::forward<Other>(other).filename;
             id = other.id;
-            moves = other.moves;
-            lines_ends = other.lines_ends;
-            printable_area = other.printable_area;
-            bed_exclude_area = other.bed_exclude_area;
+            moves = std::forward<Other>(other).moves;
+            lines_ends = std::forward<Other>(other).lines_ends;
+            printable_area = std::forward<Other>(other).printable_area;
+            bed_exclude_area = std::forward<Other>(other).bed_exclude_area;
             toolpath_outside = other.toolpath_outside;
             label_object_enabled = other.label_object_enabled;
             long_retraction_when_cut = other.long_retraction_when_cut;
             timelapse_warning_code = other.timelapse_warning_code;
             printable_height = other.printable_height;
-            settings_ids = other.settings_ids;
+            settings_ids = std::forward<Other>(other).settings_ids;
             extruders_count = other.extruders_count;
-            extruder_colors = other.extruder_colors;
-            filament_diameters = other.filament_diameters;
-            filament_densities = other.filament_densities;
-            filament_costs = other.filament_costs;
-            print_statistics = other.print_statistics;
-            custom_gcode_per_print_z = other.custom_gcode_per_print_z;
-            spiral_vase_layers = other.spiral_vase_layers;
-            layer_endpoints = other.layer_endpoints;
-            warnings = other.warnings;
+            extruder_colors = std::forward<Other>(other).extruder_colors;
+            filament_diameters = std::forward<Other>(other).filament_diameters;
+            filament_densities = std::forward<Other>(other).filament_densities;
+            filament_costs = std::forward<Other>(other).filament_costs;
+            print_statistics = std::forward<Other>(other).print_statistics;
+            custom_gcode_per_print_z = std::forward<Other>(other).custom_gcode_per_print_z;
+            spiral_vase_layers = std::forward<Other>(other).spiral_vase_layers;
+            layer_endpoints = std::forward<Other>(other).layer_endpoints;
+            warnings = std::forward<Other>(other).warnings;
             bed_type = other.bed_type;
-            bed_match_result = other.bed_match_result;
+            bed_match_result = std::forward<Other>(other).bed_match_result;
 #if ENABLE_GCODE_VIEWER_STATISTICS
             time = other.time;
 #endif
-            return *this;
         }
+
+    public:
         void  lock() const { result_mutex.lock(); }
         void  unlock() const { result_mutex.unlock(); }
     };

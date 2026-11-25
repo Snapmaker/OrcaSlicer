@@ -562,7 +562,8 @@ void GCodeProcessorResult::reset() {
     //BBS: add mutex for protection of gcode result
     lock();
 
-    moves = std::vector<GCodeProcessorResult::MoveVertex>();
+    clear_and_shrink(moves);
+    clear_and_shrink(lines_ends);
     printable_area = Pointfs();
     //BBS: add bed exclude area
     bed_exclude_area = Pointfs();
@@ -590,8 +591,8 @@ void GCodeProcessorResult::reset() {
     //BBS: add mutex for protection of gcode result
     lock();
 
-    moves.clear();
-    lines_ends.clear();
+    clear_and_shrink(moves);
+    clear_and_shrink(lines_ends);
     printable_area = Pointfs();
     //BBS: add bed exclude area
     bed_exclude_area = Pointfs();

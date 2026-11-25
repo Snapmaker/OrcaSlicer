@@ -8219,10 +8219,10 @@ void Sidebar::cleanup_unused_filaments_after_batch_match(const BatchMatchResult 
     obj_list()->refresh_layer_range_filament_items();
 }
 
-void Sidebar::add_custom_filament(wxColour new_col, const std::string& preset_name) {
-    if (p->combos_filament.size() >= MAXIMUM_PHYSICAL_FILAMENT_NUMBER) return;
+bool Sidebar::add_custom_filament(wxColour new_col, const std::string& preset_name) {
+    if (p->combos_filament.size() >= MAXIMUM_PHYSICAL_FILAMENT_NUMBER) return false;
     PresetBundle* pb = wxGetApp().preset_bundle;
-    if (!pb || pb->mixed_filaments.total_filaments(p->combos_filament.size()) >= MAXIMUM_FILAMENT_NUMBER) return;
+    if (!pb || pb->mixed_filaments.total_filaments(p->combos_filament.size()) >= MAXIMUM_FILAMENT_NUMBER) return false;
 
     int         filament_count = p->combos_filament.size() + 1;
     wxGetApp().plater()->confirm_auto_generated_gradients(filament_count);
@@ -8234,6 +8234,7 @@ void Sidebar::add_custom_filament(wxColour new_col, const std::string& preset_na
     wxGetApp().get_tab(Preset::TYPE_PRINT)->update();
     pb->export_selections(*wxGetApp().app_config);
     auto_calc_flushing_volumes(filament_count - 1);
+    return true;
 }
 
 void Sidebar::on_bed_type_change(BedType bed_type)
@@ -10920,17 +10921,20 @@ bool Plater::priv::run_textured_mesh_import_dialog(Slic3r::Model& loaded_model, 
         }
 
         // Project mixed filaments follow the physical slots as virtual ids
-        // (num_physical + row + 1). The fork dialog lists them so a matching
-        // mixed filament can be reused at confirm time instead of creating a
-        // duplicate recipe.
+        // (num_physical + row + 1). Only active rows are listed: deleted or
+        // disabled rows are skipped by the manager when numbering, so listing
+        // them would shift every following id. The row's stable id is carried
+        // into the dialog and resolved to the final id at confirm time via
+        // filament_id_from_stable_id(), after the physical slots change.
         size_t mixed_row_index = 0;
         for (const Slic3r::MixedFilament& mf : preset_bundle.mixed_filaments.mixed_filament_legacy_rows()) {
-            if (mf.deleted)
+            if (mf.deleted || !mf.enabled)
                 continue;
             TextureFilamentEntry entry;
             entry.kind = TextureFilamentKind::ExistingMixed;
             entry.dialog_index = (int)filament_entries.size();
-            entry.project_config_index = total + mixed_row_index; // 0-based virtual slot
+            entry.project_config_index = total + mixed_row_index; // display-order slot
+            entry.stable_id = mf.stable_id;
             entry.color_hex = mf.display_color;
 
             if (!mf.gradient_component_ids.empty()) {
@@ -11041,55 +11045,57 @@ void Plater::priv::apply_textured_mesh_import_result(Slic3r::Model& loaded_model
 
     const auto& entries = result.filament_entries;
     std::vector<int> filament_index_remap(entries.size(), -1);
-    size_t existing_physical_count = 0;
-    size_t new_physical_count = 0;
-    for (const auto& entry : entries) {
-        if (entry.kind == TextureFilamentKind::ExistingPhysical)
-            ++existing_physical_count;
-        else if (entry.kind == TextureFilamentKind::NewPhysical)
-            ++new_physical_count;
-    }
 
+    // Project physical filaments map straight to their slots.
     for (const auto& entry : entries) {
         if (entry.dialog_index < 0 || entry.dialog_index >= (int)filament_index_remap.size())
             continue;
-        if (entry.kind == TextureFilamentKind::ExistingPhysical) {
+        if (entry.kind == TextureFilamentKind::ExistingPhysical)
             filament_index_remap[entry.dialog_index] = (int)entry.project_config_index;
-        } else if (entry.kind == TextureFilamentKind::ExistingMixed) {
-            filament_index_remap[entry.dialog_index] = (int)(entry.project_config_index + new_physical_count);
-        }
     }
 
-    size_t new_physical_order = 0;
+    // Create the new physical filaments. The final slot index is read from
+    // the bundle AFTER each successful add: when the sidebar refuses an add
+    // (physical or total filament cap), the entry keeps -1 and its mixes are
+    // skipped below instead of silently registering wrong slot numbers.
+    PresetBundle* texture_pb = wxGetApp().preset_bundle;
     for (const auto& entry : entries) {
         if (entry.kind != TextureFilamentKind::NewPhysical)
             continue;
         wxColour new_col(entry.color_hex);
-        const size_t final_idx = existing_physical_count + new_physical_order;
         // Pass entry.preset_name so new filaments keep their chosen preset
         // (e.g. the CMYW base colours keep Snapmaker PLA Full Spectrum)
         // instead of the fork default of copying the last project preset.
-        sidebar->add_custom_filament(new_col, entry.preset_name);
-        if (entry.dialog_index >= 0 && entry.dialog_index < (int)filament_index_remap.size())
-            filament_index_remap[entry.dialog_index] = (int)final_idx;
-        BOOST_LOG_TRIVIAL(info) << "handle_textured_mesh_import: created pending physical filament dialog="
-                                << entry.dialog_index << " final=" << final_idx
-                                << " color=" << entry.color_hex;
-        ++new_physical_order;
+        if (texture_pb) {
+            const size_t before = texture_pb->filament_presets.size();
+            sidebar->add_custom_filament(new_col, entry.preset_name);
+            const size_t after = texture_pb->filament_presets.size();
+            if (after > before && entry.dialog_index >= 0 && entry.dialog_index < (int)filament_index_remap.size()) {
+                filament_index_remap[entry.dialog_index] = (int)(after - 1);
+                BOOST_LOG_TRIVIAL(info) << "handle_textured_mesh_import: created pending physical filament dialog="
+                                        << entry.dialog_index << " final=" << (after - 1)
+                                        << " color=" << entry.color_hex;
+                continue;
+            }
+        }
+        BOOST_LOG_TRIVIAL(warning) << "handle_textured_mesh_import: physical filament creation refused for dialog="
+                                   << entry.dialog_index << " color=" << entry.color_hex;
     }
 
     // Create the pending *mixed* filaments (CMYW Color Mixing Match). Each
     // NewMixed entry becomes a custom mixed filament whose components are the
     // final 1-based physical ids; the row matches then reference it like any
-    // other filament. The fork dialog produces these via the Color Mixing
-    // Match button (TextureImportDialog::add_decomposed_mixed_filament).
-    PresetBundle* texture_pb = wxGetApp().preset_bundle;
+    // other filament. Components reference only slots that were actually
+    // created above; a mix whose component slot is missing keeps the original
+    // mapping and is reported to the user.
     size_t new_mixed_count = 0;
+    bool mixed_creation_failed = false;
     if (texture_pb && !result.new_mixed_filaments.empty()) {
         auto& mgr = texture_pb->mixed_filaments;
 
-        // dialog index -> 1-based final physical id (ExistingPhysical slots and
-        // the NewPhysical entries registered just above).
+        // dialog index -> 1-based final physical id (ExistingPhysical slots
+        // and the NewPhysical entries registered just above; -1 means the
+        // slot was refused and does not exist).
         std::vector<int> physical_id_1based(entries.size(), -1);
         for (size_t i = 0; i < entries.size(); ++i)
             if (filament_index_remap[i] >= 0)
@@ -11100,16 +11106,28 @@ void Plater::priv::apply_textured_mesh_import_result(Slic3r::Model& loaded_model
         for (const auto& mixed : result.new_mixed_filaments) {
             std::vector<unsigned int> comp_ids;
             std::vector<int> weights;
+            bool component_missing = false;
             for (size_t k = 0; k < mixed.component_dialog_indices.size(); ++k) {
                 const int di = mixed.component_dialog_indices[k];
                 const int w = k < mixed.ratios.size() ? mixed.ratios[k] : 0;
-                if (w <= 0 || di < 0 || di >= (int)physical_id_1based.size() || physical_id_1based[di] < 1)
+                if (w <= 0)
                     continue;
+                if (di < 0 || di >= (int)physical_id_1based.size() || physical_id_1based[di] < 1) {
+                    component_missing = true;
+                    break;
+                }
                 comp_ids.push_back(static_cast<unsigned int>(physical_id_1based[di]));
                 weights.push_back(w);
             }
-            if (comp_ids.size() < 2)
+            if (component_missing || comp_ids.size() < 2) {
+                // A required base slot could not be created: keep the row's
+                // original mapping instead of registering a wrong recipe.
+                mixed_creation_failed = true;
+                BOOST_LOG_TRIVIAL(warning)
+                    << "handle_textured_mesh_import: skipping mixed filament dialog=" << mixed.dialog_index
+                    << " because a component slot could not be created";
                 continue;
+            }
 
             MixedFilamentBatchEntry batch_entry;
             batch_entry.component_a = comp_ids[0];
@@ -11142,10 +11160,28 @@ void Plater::priv::apply_textured_mesh_import_result(Slic3r::Model& loaded_model
         }
         for (size_t i = 0; i < assigned_ids.size() && i < batch_dialog_indices.size(); ++i) {
             const int di = batch_dialog_indices[i];
+            if (assigned_ids[i] == 0)
+                mixed_creation_failed = true;
             if (di >= 0 && di < (int)filament_index_remap.size())
                 filament_index_remap[di] = assigned_ids[i] > 0 ? static_cast<int>(assigned_ids[i]) - 1 : -1;
         }
         new_mixed_count = assigned_ids.size();
+    }
+
+    // Resolve project mixed filaments to their final ids AFTER the physical
+    // slots changed: a mixed row's virtual id shifts when new physicals are
+    // inserted, so use the manager's stable-id lookup with the final count.
+    if (texture_pb) {
+        auto& mgr = texture_pb->mixed_filaments;
+        const size_t final_physical = texture_pb->filament_presets.size();
+        for (const auto& entry : entries) {
+            if (entry.kind != TextureFilamentKind::ExistingMixed || entry.stable_id == 0)
+                continue;
+            if (entry.dialog_index < 0 || entry.dialog_index >= (int)filament_index_remap.size())
+                continue;
+            const auto final_id = mgr.filament_id_from_stable_id(entry.stable_id, final_physical);
+            filament_index_remap[entry.dialog_index] = final_id.has_value() ? (int)*final_id - 1 : -1;
+        }
     }
 
     if (new_mixed_count > 0 && q) {
@@ -11155,6 +11191,13 @@ void Plater::priv::apply_textured_mesh_import_result(Slic3r::Model& loaded_model
         // value here (the new physicals already updated it via add_custom_filament).
         q->on_filaments_change(sidebar->combos_filament().size(), true);
         sidebar->update_color_mix_panel();
+    }
+
+    if (mixed_creation_failed) {
+        MessageDialog dlg(q,
+            _L("Some mixed filaments could not be created (physical filament or mix quota reached). The affected rows keep their original mapping."),
+            _L("Texture Import Warning"), wxOK | wxICON_WARNING);
+        dlg.ShowModal();
     }
 
     std::vector<Slic3r::FilamentMatch> remapped_matches = final_matches;

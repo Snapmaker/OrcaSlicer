@@ -69,6 +69,9 @@ struct TextureFilamentEntry {
     TextureFilamentKind kind{TextureFilamentKind::ExistingPhysical};
     int                 dialog_index{-1};
     size_t              project_config_index{size_t(-1)};
+    // Stable id of an ExistingMixed row; resolved to the final filament id
+    // via MixedFilamentManager::filament_id_from_stable_id at confirm time.
+    uint64_t            stable_id{0};
     std::string         color_hex;
     std::string         name;
     std::string         type;

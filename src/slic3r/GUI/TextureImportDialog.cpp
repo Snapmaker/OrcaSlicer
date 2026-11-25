@@ -5580,6 +5580,7 @@ void TextureImportDialog::set_mix_mode_ui(int index)
 
 // Mode list popup: always opens DOWNWARD below the trigger (2026-11 design;
 // the shared ComboBox cannot be forced to drop down).
+static bool texture_import_nozzle_08();
 void TextureImportDialog::show_mix_mode_popup()
 {
     if (!m_mix_mode_trigger || m_mix_mode_popup)
@@ -5611,21 +5612,26 @@ void TextureImportDialog::show_mix_mode_popup()
     const int item_h = FromDIP(36);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     const wxString labels[2] = { _L("Direct Filament Mapping"), _L("CMYW Auto Mix") };
+    const bool nozzle_08 = texture_import_nozzle_08();
     for (int i = 0; i < 2; ++i) {
+        const bool disabled = (i == 1 && nozzle_08);
         auto* row = new wxPanel(panel, wxID_ANY, wxDefaultPosition, wxSize(item_w, item_h));
         row->SetBackgroundColour(pop_bg);
         row->SetBackgroundStyle(wxBG_STYLE_PAINT);
-        row->SetCursor(wxCursor(wxCURSOR_HAND));
-        row->Bind(wxEVT_PAINT, [this, i, labels, pop_bg](wxPaintEvent& e) {
+        row->SetCursor(wxCursor(disabled ? wxCURSOR_ARROW : wxCURSOR_HAND));
+        if (disabled)
+            row->SetToolTip(_L("Mixing is not supported for the 0.8 mm nozzle."));
+        row->Bind(wxEVT_PAINT, [this, i, labels, pop_bg, disabled](wxPaintEvent& e) {
             auto* p = static_cast<wxPanel*>(e.GetEventObject());
             wxAutoBufferedPaintDC dc(p);
             const wxSize sz = p->GetClientSize();
             dc.SetBackground(wxBrush(pop_bg));
             dc.Clear();
             // Hover fill #BEE1DB (2026-11 spec, 24px-high band); selected row
-            // carries the check on the LEFT, text stays #18181B.
+            // carries the check on the LEFT, text stays #18181B. The disabled
+            // CMYW option (0.8 mm nozzle) draws grey with no hover fill.
             const wxPoint mouse = p->ScreenToClient(wxGetMousePosition());
-            const bool hovered = p->GetClientRect().Contains(mouse);
+            const bool hovered = !disabled && p->GetClientRect().Contains(mouse);
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.SetBrush(wxBrush(StateColor::darkModeColorFor(hovered ? wxColour("#BEE1DB") : wxColour("#FFFFFF"))));
             dc.DrawRectangle(0, 0, sz.x, sz.y);
@@ -5658,11 +5664,13 @@ void TextureImportDialog::show_mix_mode_popup()
             f.SetPointSize(10); // 14px at default MSW DPI
             f.SetWeight(wxFONTWEIGHT_MEDIUM);
             dc.SetFont(f);
-            dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#18181B")));
+            dc.SetTextForeground(StateColor::darkModeColorFor(disabled ? wxColour("#949494") : wxColour("#18181B")));
             const wxSize tsz = dc.GetTextExtent(labels[i]);
             dc.DrawText(labels[i], text_x, (sz.y - tsz.y) / 2);
         });
-        row->Bind(wxEVT_LEFT_DOWN, [this, i, popup](wxMouseEvent&) {
+        row->Bind(wxEVT_LEFT_DOWN, [this, i, popup, disabled](wxMouseEvent&) {
+            if (disabled)
+                return;
             popup->Dismiss();
             select_mix_mode(i);
         });
@@ -5705,6 +5713,23 @@ struct CymwBaseColor
 };
 static std::vector<CymwBaseColor> cymw_base_colors();
 
+// True when any nozzle of the current printer is 0.8 mm; CMYW mixing is
+// unsupported for that diameter (shared by the dropdown disabled state and
+// the runtime gate).
+static bool texture_import_nozzle_08()
+{
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    if (pb == nullptr)
+        return false;
+    const auto* opt = pb->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (opt == nullptr)
+        return false;
+    for (double nozzle_mm : opt->values)
+        if (nozzle_mm - 0.8 == 0.0)
+            return true;
+    return false;
+}
+
 void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
 {
     if (mode != TextureAutoMixMode::CMYW)
@@ -5714,27 +5739,13 @@ void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
 
     // 0.8 mm nozzles cannot mix: warn and fall back to direct mapping even if
     // a Full Spectrum preset for the nozzle were shipped later.
-    {
-        bool nozzle_08 = false;
-        if (PresetBundle* pb = wxGetApp().preset_bundle) {
-            if (const auto* opt = pb->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
-                opt != nullptr) {
-                for (double nozzle_mm : opt->values) {
-                    if (nozzle_mm - 0.8 == 0.0) {
-                        nozzle_08 = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if (nozzle_08) {
-            MessageDialog dlg(this,
-                _L("Mixing is not supported for the 0.8 mm nozzle. Direct Filament Mapping will be used instead."),
-                _L("Texture Import Warning"), wxOK | wxICON_INFORMATION);
-            dlg.ShowModal();
-            set_mix_mode_ui(0);
-            return;
-        }
+    if (texture_import_nozzle_08()) {
+        MessageDialog dlg(this,
+            _L("Mixing is not supported for the 0.8 mm nozzle. Direct Filament Mapping will be used instead."),
+            _L("Texture Import Warning"), wxOK | wxICON_INFORMATION);
+        dlg.ShowModal();
+        set_mix_mode_ui(0);
+        return;
     }
 
     // Doc section 3.3.5 note 1: mixing needs a nozzle with a Full Spectrum (CMYW)
@@ -5832,14 +5843,27 @@ void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
             }
         }
 
-        // 2) Reuse any physical entry already carrying the base colour.
+        // 2) Reuse a physical entry carrying the base colour AND the Full
+        // Spectrum preset: colour alone is not enough — a same-colour filament
+        // of an incompatible material would pass the import but fail the
+        // slice-time compatibility check.
         if (idx < 0) {
             for (size_t i = 0; i < m_filament_entries.size(); ++i) {
-                if (!texture_entry_is_physical(m_filament_entries[i].kind))
+                const TextureFilamentEntry& entry = m_filament_entries[i];
+                if (!texture_entry_is_physical(entry.kind))
                     continue;
                 const std::string entry_hex = texture_normalize_color_hex(
-                    m_filament_entries[i].color_hex.empty() ? m_filament_color_strs[i] : m_filament_entries[i].color_hex);
-                if (entry_hex == norm) {
+                    entry.color_hex.empty() ? m_filament_color_strs[i] : entry.color_hex);
+                if (entry_hex != norm)
+                    continue;
+                std::string entry_preset = entry.preset_name;
+                if (entry_preset.empty() && entry.kind == TextureFilamentKind::ExistingPhysical) {
+                    if (PresetBundle* pb = wxGetApp().preset_bundle) {
+                        if (entry.project_config_index < pb->filament_presets.size())
+                            entry_preset = pb->filament_presets[entry.project_config_index];
+                    }
+                }
+                if (entry_preset == base_preset) {
                     idx = static_cast<int>(i);
                     break;
                 }
@@ -5891,7 +5915,13 @@ void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
     // filament so the 64-filament budget is not wasted on duplicates. Recipes
     // are predicted with the calibrated K/S spectral engine (the base hexes
     // resolve to their measured spectra) instead of the legacy RGB mixer.
-    const MixedFilamentDisplayContext context = build_mixed_filament_display_context(palette_hex);
+    MixedFilamentDisplayContext context = build_mixed_filament_display_context(palette_hex);
+    // Stamp the selected slots' calibrated identity: the context resolves
+    // materials by matching the project's colours, which cannot name the
+    // virtual base filaments, so assign the base material ids explicitly.
+    context.physical_material_ids.assign(palette_hex.size(), "");
+    for (size_t k = 0; k < palette_hex.size() && k < base_colors.size(); ++k)
+        context.physical_material_ids[k] = base_colors[k].material_id;
     std::map<std::string, int> recipe_mixed_idx;
     for (auto& match : m_current_matches) {
         const wxColour target((unsigned char)match.cluster_color[0],
@@ -5930,11 +5960,13 @@ void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
         const std::vector<int> weights = expand_color_match_recipe_weights(recipe, palette_hex.size());
         std::vector<int> components;
         std::vector<int> ratios;
+        std::vector<std::string> component_hexes;
         for (size_t k = 0; k < weights.size(); ++k) {
             if (weights[k] <= 0)
                 continue;
             components.push_back(base_idx[k]);
             ratios.push_back(weights[k]);
+            component_hexes.push_back(palette_hex[k]);
         }
         if (components.size() < 2) {
             // Single-component recipe: point at the base filament directly.
@@ -5949,7 +5981,7 @@ void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
         std::string key;
         for (size_t k = 0; k < components.size(); ++k) {
             if (k > 0) key += '/';
-            key += palette_hex[k] + ':' + std::to_string(ratios[k]);
+            key += component_hexes[k] + ':' + std::to_string(ratios[k]);
         }
 
         int target_idx = -1;
@@ -6296,18 +6328,14 @@ void TextureImportDialog::show_filament_popup(size_t row_index)
             ? display_numbers[idx] : idx + 1;
     };
 
-    auto on_select = [this, row_index, display_number](int idx) {
+    auto on_select = [this, row_index](int idx) {
         if (row_index >= m_mapping_rows.size()) return;
         m_mapping_rows[row_index].target_filament_idx = idx;
         if (row_index < m_current_matches.size())
             m_current_matches[row_index].filament_index = idx;
-        if (m_mapping_rows[row_index].target_panel) {
-            wxString label = (idx >= 0 && idx < (int)m_filament_names.size())
-                ? filament_name_to_wx_string(m_filament_names[idx])
-                : wxString::Format(_L("Filament %d"), display_number(idx));
-            m_mapping_rows[row_index].target_panel->SetToolTip(label);
-            m_mapping_rows[row_index].target_panel->Refresh();
-        }
+        // Rebuild the rows so the out-of-range ratio warning under this row
+        // refreshes together with the new target.
+        rebuild_mapping_rows();
         update_filament_color_map();
     };
 

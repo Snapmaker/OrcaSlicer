@@ -16476,3 +16476,12 @@ msgstr "提示：间隙面积超出范围（0.00-5.00）"
 
 msgid "Tip: smooth level exceeds the range (0-10)"
 msgstr "提示：平滑等级超出范围（0-10）"
+
+msgid "Some mixed filaments could not be created (physical filament or mix quota reached). The affected rows keep their original mapping."
+msgstr "部分混色耗材创建失败（物理耗材数量或混色配额已达上限），受影响的行将保持原有映射。"
+
+msgid "Filament %d mix ratio is too low and may affect the mixing result."
+msgstr "耗材 %d 混色比例过低，可能会影响混色效果。"
+
+msgid "Filament %d mix ratio is too high and may affect the mixing result."
+msgstr "耗材 %d 混色比例过高，可能会影响混色效果。"

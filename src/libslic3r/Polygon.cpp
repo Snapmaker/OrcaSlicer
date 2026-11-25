@@ -774,14 +774,14 @@ static int point_in_polygon(const Point &pt, const Points &path)
                 if (ipNext.x() > pt.x())
                     result = 1 - result;
                 else {
-                    int64_t d = int64_t(ip.x() - pt.x()) * int64_t(ipNext.y() - pt.y()) - int64_t(ipNext.x() - pt.x()) * int64_t(ip.y() - pt.y());
-                    if (! d) return -1;
-                    if ((d > 0) == (ipNext.y() > ip.y())) result = 1 - result;
+                    const int sign = int128::orient(pt, ip, ipNext);
+                    if (! sign) return -1;
+                    if ((sign > 0) == (ipNext.y() > ip.y())) result = 1 - result;
                 }
             } else if (ipNext.x() > pt.x()) {
-                int64_t d = int64_t(ip.x() - pt.x()) * int64_t(ipNext.y() - pt.y()) - int64_t(ipNext.x() - pt.x()) * int64_t(ip.y() - pt.y());
-                if (! d) return -1;
-                if ((d > 0) == (ipNext.y() > ip.y())) result = 1 - result;
+                const int sign = int128::orient(pt, ip, ipNext);
+                if (! sign) return -1;
+                if ((sign > 0) == (ipNext.y() > ip.y())) result = 1 - result;
             }
         }
         ip = ipNext;

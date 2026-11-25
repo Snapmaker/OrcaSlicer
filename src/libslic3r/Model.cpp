@@ -2148,7 +2148,18 @@ std::optional<TriangleSelector::SavedPainting> ModelVolume::save_painting() cons
     return {};
 }
 
-void ModelVolume::restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, const bool keep_existing_paint, const bool transfer_by_projection)
+Transform3d ModelVolume::paint_relink_transform(const Vec3d& source_init_shift, const Vec3d& target_init_shift, double unit_scale)
+{
+    // Stored coordinates are unit_scale * (file - init_shift) on both sides:
+    // mapping the new mesh onto the old one only needs the shift difference.
+    // The source snapshot is never re-shifted (that used to add the NEW mesh's
+    // centering offset to the OLD mesh, which detached the painting when the
+    // file's extent - and with it its init shift - changed).
+    return Geometry::translation_transform(unit_scale * (target_init_shift - source_init_shift));
+}
+
+void ModelVolume::restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, const Transform3d& target_to_source,
+                                   const bool keep_existing_paint, const bool transfer_by_projection)
 {
     if (!keep_existing_paint) {
         reset_extra_facets();
@@ -2167,8 +2178,8 @@ void ModelVolume::restore_painting(const std::optional<TriangleSelector::SavedPa
                 std::optional<std::reference_wrapper<const TriangleSelector::TriangleSplittingData>>{std::ref(target_facets.get_data())} :
                 std::optional<std::reference_wrapper<const TriangleSelector::TriangleSplittingData>>{};
         auto result = transfer_by_projection ?
-            TriangleSelector::remap_painting_by_projection(saved->mesh.its, src_data, mesh().its, Geometry::translation_transform(mesh().get_init_shift()), existing) :
-            TriangleSelector::remap_painting(saved->mesh.its, src_data, mesh().its, Geometry::translation_transform(mesh().get_init_shift()), existing);
+            TriangleSelector::remap_painting_by_projection(saved->mesh.its, src_data, mesh().its, target_to_source, existing) :
+            TriangleSelector::remap_painting(saved->mesh.its, src_data, mesh().its, target_to_source, existing);
         if (!result.bitstream.empty())
             target_facets.set_data(std::move(result));
     };
@@ -2176,6 +2187,104 @@ void ModelVolume::restore_painting(const std::optional<TriangleSelector::SavedPa
     remap_one(saved->seam,      seam_facets);
     remap_one(saved->mmu,       mmu_segmentation_facets);
     remap_one(saved->fuzzy,     fuzzy_skin_facets);
+}
+
+void ModelVolume::restore_painting_smooth(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                          const std::vector<std::pair<int, int>>& target_origins)
+{
+    reset_extra_facets();
+
+    if (!saved) {
+        return;
+    }
+
+    auto remap_one = [&](const TriangleSelector::TriangleSplittingData& src_data,
+                         FacetsAnnotation& target_facets) {
+        if (src_data.bitstream.empty())
+            return;
+        auto result = TriangleSelector::remap_painting_smooth(saved->mesh.its, src_data, mesh().its, target_origins,
+                                                              std::nullopt);
+        if (!result.bitstream.empty())
+            target_facets.set_data(std::move(result));
+    };
+    remap_one(saved->supported, supported_facets);
+    remap_one(saved->seam,      seam_facets);
+    remap_one(saved->mmu,       mmu_segmentation_facets);
+    remap_one(saved->fuzzy,     fuzzy_skin_facets);
+}
+
+ModelObject::RepairCommitResult ModelObject::commit_repaired_meshes_with_painting(std::vector<RepairCommitItem>& items,
+                                                                                  const bool keep_painting,
+                                                                                  const std::function<bool()>& cancel_check,
+                                                                                  std::string* error)
+{
+    struct PreparedVolume
+    {
+        ModelVolume*                                                      volume = nullptr;
+        // Mesh and convex hull wrapped into shared_ptr ownership here, in the
+        // prepare phase: set_mesh(TriangleMesh&&) and calculate_convex_hull()
+        // allocate (shared_ptr control blocks, convex hull computation) and may
+        // throw. The commit phase only moves these pointers.
+        std::shared_ptr<const TriangleMesh>                               mesh;
+        std::shared_ptr<const TriangleMesh>                               convex_hull;
+        std::optional<TriangleSelector::SavedPainting>                   saved;
+        std::array<std::optional<TriangleSelector::TriangleSplittingData>, 4> remapped;
+    };
+
+    // Phase A: prepare everything the commit needs - wrap the repaired mesh,
+    // compute its convex hull and remap every volume's painting - WITHOUT
+    // touching the real volumes. Cancellation is checked between volumes and
+    // between the four annotations, so a long remap stays interruptible. Every
+    // allocation and computation that may throw happens here.
+    std::vector<PreparedVolume> prepared;
+    prepared.reserve(items.size());
+    for (auto& item : items) {
+        if (cancel_check())
+            return RepairCommitResult::Canceled;
+        if (item.volume == nullptr) {
+            if (error)
+                *error = "Repair commit: null volume";
+            return RepairCommitResult::Failed;
+        }
+        if (item.repaired_mesh.empty()) {
+            if (error)
+                *error = "Repair commit: repaired mesh is empty";
+            return RepairCommitResult::Failed;
+        }
+
+        PreparedVolume pv;
+        pv.volume      = item.volume;
+        pv.mesh        = std::make_shared<const TriangleMesh>(std::move(item.repaired_mesh));
+        pv.convex_hull = std::make_shared<const TriangleMesh>(pv.mesh->convex_hull_3d());
+        pv.saved       = keep_painting ? item.volume->save_painting() : std::nullopt;
+        if (pv.saved) {
+            const std::array<const TriangleSelector::TriangleSplittingData*, 4> sources = {
+                &pv.saved->supported, &pv.saved->seam, &pv.saved->mmu, &pv.saved->fuzzy };
+            for (int k = 0; k < 4; ++k) {
+                if (cancel_check())
+                    return RepairCommitResult::Canceled;
+                if (!sources[k]->bitstream.empty())
+                    pv.remapped[k] = TriangleSelector::remap_painting(
+                        pv.saved->mesh.its, *sources[k], pv.mesh->its, Transform3d::Identity(), std::nullopt);
+            }
+        }
+        prepared.push_back(std::move(pv));
+    }
+
+    // Final cancel check: from here on cancellation is no longer accepted, so
+    // the returned status always matches what was written.
+    if (cancel_check())
+        return RepairCommitResult::Canceled;
+
+    // Phase B: commit. ModelVolume::commit_prepared_repair() is noexcept by
+    // contract (only shared_ptr / vector moves and POD writes), so once the
+    // first volume is committed there is no failure path left - no partial
+    // write and no rollback are needed.
+    for (PreparedVolume& pv : prepared)
+        pv.volume->commit_prepared_repair(std::move(pv.mesh), std::move(pv.convex_hull), std::move(pv.remapped));
+    invalidate_bounding_box();
+
+    return RepairCommitResult::Committed;
 }
 
 static void invalidate_translations(ModelObject* object, const ModelInstance* src_instance)
@@ -2342,8 +2451,8 @@ void ModelObject::split(ModelObjectPtrs* new_objects, const bool remap_paint)
                 COPY_FACETS(mmu_segmentation_facets);
                 COPY_FACETS(fuzzy_skin_facets);
             } else if (saved_painting) {
-                // Geometry changed, attempt to remap them to the new mesh
-                new_vol->restore_painting(saved_painting);
+                // The pieces stay in the volume's own stored coordinate space,
+                new_vol->restore_painting(saved_painting, Transform3d::Identity());
             }
 
             // BBS: clear volume's config, as we already set them into object
@@ -2927,6 +3036,27 @@ void ModelVolume::calculate_convex_hull()
     assert(m_convex_hull.get());
 }
 
+void ModelVolume::commit_prepared_repair(std::shared_ptr<const TriangleMesh> mesh,
+                                         std::shared_ptr<const TriangleMesh> convex_hull,
+                                         std::array<std::optional<TriangleSelector::TriangleSplittingData>, 4>&& painting) noexcept
+{
+    // Only moves and POD writes. Everything that allocates or computes - the
+    // mesh wrapping, the convex hull, the painting remap - ran in the prepare
+    // phase of ModelObject::commit_repaired_meshes_with_painting(), so none of
+    // the operations below may throw (std::shared_ptr / std::vector moves with
+    // the default allocator, vector clears, and integer ID assignments).
+    reset_extra_facets();
+    m_mesh        = std::move(mesh);
+    m_convex_hull = std::move(convex_hull);
+    invalidate_convex_hull_2d();
+    set_new_unique_id();
+    const std::array<FacetsAnnotation*, 4> targets = {
+        &supported_facets, &seam_facets, &mmu_segmentation_facets, &fuzzy_skin_facets };
+    for (int k = 0; k < 4; ++k)
+        if (painting[k])
+            targets[k]->set_data(std::move(*painting[k]));
+}
+
 //BBS: convex_hull_2d using convex_hull_3d
 void  ModelVolume::calculate_convex_hull_2d(const Geometry::Transformation &transformation) const
 {
@@ -3104,7 +3234,7 @@ size_t ModelVolume::split(unsigned int max_extruders, bool remap_paint)
         this->object->volumes[ivolume]->config.set("extruder", this->extruder_id());
         //this->object->volumes[ivolume]->config.set("extruder", auto_extruder_id(max_extruders, extruder_counter));
         this->object->volumes[ivolume]->m_is_splittable = 0;
-        this->object->volumes[ivolume]->restore_painting(saved_painting);
+        this->object->volumes[ivolume]->restore_painting(saved_painting, Transform3d::Identity());
 
         ++ idx;
     }

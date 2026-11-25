@@ -89,7 +89,8 @@ private:
     VolumeInfo m_src;
     VolumeInfo m_tool;
 
-    void generate_new_volume(bool delete_input, TriangleMesh& mesh_result, const std::vector<std::optional<TriangleSelector::SavedPainting>>& saved_paintings);
+    void generate_new_volume(bool delete_input, TriangleMesh& mesh_result,
+                             const std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>>& saved_paintings);
 };
 
 } // namespace GUI

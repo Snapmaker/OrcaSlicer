@@ -19,7 +19,7 @@ std::atomic<uint64_t> s_local_its_call_count{0};
 } // namespace
 
 namespace Slic3r {
-TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok)
+TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok, std::vector<std::pair<int, int>>* out_origins)
 {
     if (mesh.its.vertices.empty() || mesh.its.indices.empty())
     {
@@ -38,17 +38,26 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
     // edge pairing inside the subdivision until it runs out of bounds. No menu check
     // stops such input - repeated faces keep open_edges at 0, because the
     // opposite-direction edge pairs still match.
+    // The first occurrence of a duplicated face is kept; kept_to_original maps the
+    // kept face index back to the ORIGINAL input face index (paint remapping needs
+    // that reference - faces are never reordered afterwards, vertex compaction only
+    // renumbers vertices).
+    std::vector<int> kept_to_original;
     {
         std::set<std::array<int, 3>>             seen_faces;
         std::vector<stl_triangle_vertex_indices> unique_faces;
         unique_faces.reserve(input.indices.size());
-        for (const auto& face : input.indices) {
+        kept_to_original.reserve(input.indices.size());
+        for (int face_idx = 0; face_idx < int(input.indices.size()); ++face_idx) {
+            const auto& face = input.indices[face_idx];
             // Sort the three indexes so the key matches a face regardless of rotation
             // and winding: both kinds of repeat make the edges non-manifold for igl::loop().
             std::array<int, 3> key = {face(0), face(1), face(2)};
             std::sort(key.begin(), key.end());
-            if (seen_faces.insert(key).second)
+            if (seen_faces.insert(key).second) {
                 unique_faces.push_back(face);
+                kept_to_original.push_back(face_idx);
+            }
         }
         input.indices = std::move(unique_faces);
     }
@@ -113,6 +122,16 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
     {
         // Same as above for the face indices.
         its.indices.push_back(F.row(i).transpose());
+    }
+
+    // igl::loop() writes the four children of input face c to output rows 4c..4c+3
+    // in a fixed layout (see deps_src/libigl/igl/loop.cpp); map every output face
+    // back to its ORIGINAL input face and child ordinal.
+    if (out_origins) {
+        out_origins->clear();
+        out_origins->reserve(size_t(face_num));
+        for (int i = 0; i < face_num; ++i)
+            out_origins->emplace_back(kept_to_original[i / 4], i % 4);
     }
 
     TriangleMesh result_mesh(its);

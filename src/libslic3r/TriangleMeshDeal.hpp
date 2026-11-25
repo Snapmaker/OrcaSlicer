@@ -5,6 +5,9 @@
 
 #include "TriangleMesh.hpp"
 
+#include <utility>
+#include <vector>
+
 namespace Slic3r {
 class TriangleMeshDeal
 {
@@ -18,7 +21,16 @@ public:
         DegenerateGeometry,
     };
 
-    static TriangleMesh smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok);
+    // Loop-subdivides every face once. When `out_origins` is given, it receives
+    // one entry per output face: (original input face index, child ordinal 0..3
+    // in the igl::loop() output layout). The ordinal identifies the child region
+    // in the parent face's barycentric domain, which paint remapping uses to
+    // transfer per-face painting trees onto the four children. Duplicate input
+    // faces are dropped (keeping the first occurrence) and unreferenced vertices
+    // are compactified; the mapping therefore refers to the ORIGINAL input faces,
+    // not the preprocessed ones. When two duplicated faces carry different
+    // paintings, the first occurrence deterministically wins.
+    static TriangleMesh smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok, std::vector<std::pair<int, int>>* out_origins = nullptr);
 
     static TriangleMesh smooth_triangle_mesh_local(const TriangleMesh& mesh, const std::vector<uint32_t>& facet_indices, bool& ok);
 

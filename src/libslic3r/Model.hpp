@@ -20,6 +20,8 @@
 #include "EmbossShape.hpp"
 #include "TriangleSelector.hpp"
 
+#include <functional>
+
 //BBS: add bbs 3mf
 #include "Format/bbs_3mf.hpp"
 //BBS: add step
@@ -535,6 +537,24 @@ public:
     void split(ModelObjectPtrs*new_objects, bool remap_paint);
     void merge();
 
+    // Two-phase commit of repaired meshes with painting preservation (used by
+    // the Windows repair worker). Phase A remaps every volume's painting onto
+    // its repaired mesh WITHOUT touching the volumes, checking `cancel_check`
+    // between volumes and annotations; phase B applies all meshes and
+    // precomputed paintings back-to-back with no further checks. The final
+    // cancel check runs directly before phase B, so the returned status always
+    // matches what was actually written: canceled/failed leaves every volume
+    // and its painting untouched, committed updates all volumes together.
+    struct RepairCommitItem
+    {
+        ModelVolume* volume         = nullptr;
+        TriangleMesh repaired_mesh;
+    };
+    enum class RepairCommitResult { Committed, Canceled, Failed };
+
+    RepairCommitResult commit_repaired_meshes_with_painting(std::vector<RepairCommitItem>& items, bool keep_painting,
+                                                            const std::function<bool()>& cancel_check, std::string* error = nullptr);
+
     // BBS: Boolean opts - Musang King
     bool make_boolean(ModelObject *cut_object, const std::string &boolean_opts);
 
@@ -903,10 +923,31 @@ public:
     // Only for model parts (not modifiers/connectors).
     std::optional<TriangleSelector::SavedPainting> save_painting() const;
 
-    // Remap painting data from previous saved source to this mesh.
-    // `transfer_by_projection` selects the projection strategy suited for
-    // simplified meshes, whose surface no longer intersects the original one.
-    void restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, bool keep_existing_paint = false, bool transfer_by_projection = false);
+    // Remap painting data from a previous saved source onto this mesh.
+    // `target_to_source` transforms this volume's mesh into the saved source
+    // mesh's coordinate space (the source snapshot keeps its original vertex /
+    // corner order; the caller passes the actual relative transform - see
+    // TriangleSelector::remap_painting). `transfer_by_projection` selects the
+    // projection strategy suited for simplified meshes, whose surface no longer
+    // intersects the original one.
+    void restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, const Transform3d& target_to_source,
+                          bool keep_existing_paint = false, bool transfer_by_projection = false);
+
+    // Restore painting across one global-smooth subdivision (see
+    // TriangleSelector::remap_painting_smooth). `target_origins` maps every face
+    // of this volume's mesh to (source face, child ordinal) as produced by
+    // TriangleMeshDeal::smooth_triangle_mesh(). The painting of the source face
+    // is clipped by the four child regions in the face's barycentric domain,
+    // because the subdivision moves vertices and normals.
+    void restore_painting_smooth(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                 const std::vector<std::pair<int, int>>& target_origins);
+
+    // Relative transform mapping a replacement mesh (with its own init shift
+    // and unit conversion) into the saved source mesh's coordinate space, for
+    // paint relinking after replace / reload from disk: the stored coordinates
+    // equal unit_scale * (file - init_shift) on both sides, so only the shift
+    // difference survives. The source mesh itself is never re-shifted.
+    static Transform3d paint_relink_transform(const Vec3d& source_init_shift, const Vec3d& target_init_shift, double unit_scale);
 
     // BBS: quick access for volume extruders, 1 based
     mutable std::vector<int> mmuseg_extruders;
@@ -974,6 +1015,15 @@ public:
     void                calculate_convex_hull();
     const TriangleMesh& get_convex_hull() const;
     const std::shared_ptr<const TriangleMesh>& get_convex_hull_shared_ptr() const { return m_convex_hull; }
+    // Non-throwing commit of a previously prepared repair (used by
+    // ModelObject::commit_repaired_meshes_with_painting). Every allocation and
+    // computation - wrapping the repaired mesh, computing its convex hull,
+    // remapping the painting - must have happened in the prepare phase; this
+    // method only moves shared_ptrs and precomputed data and writes POD fields,
+    // so it cannot fail part-way and needs no rollback.
+    void commit_prepared_repair(std::shared_ptr<const TriangleMesh> mesh,
+                                std::shared_ptr<const TriangleMesh> convex_hull,
+                                std::array<std::optional<TriangleSelector::TriangleSplittingData>, 4>&& painting) noexcept;
     //BBS: add convex_hell_2d related logic
     const Polygon& get_convex_hull_2d(const Transform3d &trafo_instance) const;
     void invalidate_convex_hull_2d()

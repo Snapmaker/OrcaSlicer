@@ -3224,16 +3224,14 @@ void ObjectList::boolean()
     ModelObject* object = (*m_objects)[obj_idxs.front()];
 
     const bool keep_painting = wxGetApp().app_config->get_bool("keep_painting");
-    std::vector<std::optional<TriangleSelector::SavedPainting>> saved_paintings;
+    std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>> saved_paintings;
     if (keep_painting) {
-        // Save painting of all the positive parts
+        // Save painting of all the positive parts (original vertex/corner order;
+        // the relative transform is applied once per instance below).
         saved_paintings.reserve(object->volumes.size());
         for (const ModelVolume* vol : object->volumes) {
             if (vol && vol->mesh_ptr() && vol->is_model_part() && vol->is_any_painted()) {
-                saved_paintings.emplace_back(vol->save_painting());
-                if (saved_paintings.back()) {
-                    saved_paintings.back()->mesh.transform(vol->get_matrix(), true);
-                }
+                saved_paintings.emplace_back(vol->save_painting(), vol->get_matrix());
             }
         }
     }
@@ -3251,24 +3249,16 @@ void ObjectList::boolean()
 
     // Remap paint
     if (keep_painting) {
-        for (auto& saved_painting : saved_paintings) {
+        for (const auto& [saved_painting, volume_matrix] : saved_paintings) {
             if (saved_painting) {
-                // For each original painted volume, we need to apply to each instance
-                // because we merged all instances into one in `combine_mesh_fff`
-
-                // First we save the non-instance-translated mesh
-                TriangleMesh vols_mesh(std::move(saved_painting->mesh));
-
+                // For each original painted volume, apply it to each instance:
+                // combine_mesh_fff() merged every instance into one mesh, each
+                // at its own placement. The inverse of (instance * volume) maps
+                // that placement back into the volume's own coordinate space.
                 for (const ModelInstance* i : object->instances) {
-                    // Then for each instance, we apply the paint at the given instance place
-                    saved_painting->mesh = vols_mesh;
-                    // Match the instance transform used by combine_mesh_fff(), including mirrored instances.
-                    saved_painting->mesh.transform(i->get_matrix(), true);
-
-                    // Then paint it
-                    new_volume->restore_painting(saved_painting, true);
+                    const Transform3d target_to_source = (i->get_matrix() * volume_matrix).inverse();
+                    new_volume->restore_painting(saved_painting, target_to_source, true);
                 }
-
             }
         }
     }
@@ -5878,6 +5868,9 @@ void GUI::ObjectList::smooth_mesh()
         ModelVolume                       *volume;
         std::shared_ptr<const TriangleMesh> origin;
         std::optional<TriangleMesh>        smoothed;
+        // Per output face: (original input face, Loop child ordinal) - see
+        // TriangleMeshDeal::smooth_triangle_mesh(); used to remap the painting.
+        std::vector<std::pair<int, int>>   origins;
     };
 
     const Model &model = plater->model();
@@ -5955,9 +5948,11 @@ void GUI::ObjectList::smooth_mesh()
 
     m_smooth_mesh_thread = std::thread([this, plater, inputs, results, show_smooth_mesh_error_dlg]() {
         for (const SmoothJob &job : *inputs) {
-            bool        ok = false;
-            TriangleMesh smoothed = TriangleMeshDeal::smooth_triangle_mesh(job.input, ok);
-            results->push_back({job.object_id, job.volume, job.origin, ok ? std::make_optional(std::move(smoothed)) : std::nullopt});
+            bool ok = false;
+            std::vector<std::pair<int, int>> origins;
+            TriangleMesh smoothed = TriangleMeshDeal::smooth_triangle_mesh(job.input, ok, &origins);
+            results->push_back({job.object_id, job.volume, job.origin, ok ? std::make_optional(std::move(smoothed)) : std::nullopt,
+                                ok ? std::move(origins) : std::vector<std::pair<int, int>>{}});
         }
 
         // Back to the UI thread to apply the smoothed meshes and refresh the scene.
@@ -6045,7 +6040,10 @@ void GUI::ObjectList::smooth_mesh()
                         result->volume->save_painting() :
                         std::optional<TriangleSelector::SavedPainting>{};
                     result->volume->set_mesh(std::move(*result->smoothed));
-                    result->volume->restore_painting(saved_painting);
+                    // The subdivision moved vertices and changed normals, so the
+                    // painting is remapped in the parent faces' barycentric domain
+                    // using the per-output-face origins computed by the worker.
+                    result->volume->restore_painting_smooth(saved_painting, result->origins);
                     result->volume->calculate_convex_hull();
                     result->volume->invalidate_convex_hull_2d();
                     result->volume->set_new_unique_id();

@@ -584,8 +584,10 @@ void GLGizmoSimplify::apply_simplify() {
     // Remap paint. Simplification moves the surface away from the original one, so
     // the intersection-based remap would leave fragmented gaps; use the projection
     // state-query transfer instead (the painting is re-established over the
-    // simplified surface as one continuous region assignment).
-    mv->restore_painting(saved_painting, false, /*transfer_by_projection=*/true);
+    // simplified surface as one continuous region assignment). Both meshes share
+    // the volume's stored coordinate space, so the relative transform is the
+    // identity (a pure translation, as before, is equivalent).
+    mv->restore_painting(saved_painting, Transform3d::Identity(), false, /*transfer_by_projection=*/true);
     BOOST_LOG_TRIVIAL(info) << "apply_simplify: snapshot=" << (saved_painting ? "captured" : "none")
                             << ", painting_after_restore=" << (mv->is_any_painted() ? "present" : "LOST");
     m_state.result.reset();

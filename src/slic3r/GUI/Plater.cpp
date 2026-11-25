@@ -14065,11 +14065,18 @@ bool Plater::priv::replace_volume_with_stl(int object_idx, int volume_idx, const
     else if (old_volume->source.is_converted_from_meters)
         new_volume->convert_from_meters();
     if (wxGetApp().app_config->get_bool("keep_painting")) {
-        // Proper paint remapping
+        // Proper paint remapping. The snapshot keeps the old mesh in its own
+        // stored coordinate space; only the relative transform - derived from
+        // the two init shifts and the unit conversion - is passed along. The
+        // old mesh must NOT get the new mesh's centering offset (that used to
+        // detach the painting from geometry that stayed in place).
         auto saved_painting = old_volume->save_painting();
         if (saved_painting) {
-            saved_painting->mesh.transform(Geometry::translation_transform(new_volume->mesh().get_init_shift()));
-            new_volume->restore_painting(saved_painting);
+            const double unit_scale = old_volume->source.is_converted_from_inches ? 25.4 :
+                                      old_volume->source.is_converted_from_meters ? 1000.0 : 1.0;
+            const Transform3d target_to_source = ModelVolume::paint_relink_transform(
+                saved_painting->mesh.get_init_shift(), new_volume->mesh().get_init_shift(), unit_scale);
+            new_volume->restore_painting(saved_painting, target_to_source);
         }
     } else {
         // Won't work well if mesh changed, but kept for old behavior
@@ -14486,8 +14493,11 @@ void Plater::priv::reload_from_disk()
                 if (wxGetApp().app_config->get_bool("keep_painting")) {
                     auto saved_painting = old_volume->save_painting();
                     if (saved_painting) {
-                        saved_painting->mesh.transform(Geometry::translation_transform(new_volume->mesh().get_init_shift()));
-                        new_volume->restore_painting(saved_painting);
+                        const double unit_scale = old_volume->source.is_converted_from_inches ? 25.4 :
+                                                  old_volume->source.is_converted_from_meters ? 1000.0 : 1.0;
+                        const Transform3d target_to_source = ModelVolume::paint_relink_transform(
+                            saved_painting->mesh.get_init_shift(), new_volume->mesh().get_init_shift(), unit_scale);
+                        new_volume->restore_painting(saved_painting, target_to_source);
                     }
                 }
 

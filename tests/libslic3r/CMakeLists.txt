@@ -18,6 +18,7 @@ add_executable(${_TEST_NAME}_tests
 	test_mixed_filament.cpp
 	test_mixed_filament_color_golden.cpp
 	test_triangle_selector.cpp
+	test_paint_remap.cpp
 	test_local_z_order_optimizer.cpp
 	test_placeholder_parser.cpp
 	test_polygon.cpp

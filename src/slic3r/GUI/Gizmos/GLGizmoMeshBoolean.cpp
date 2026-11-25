@@ -191,12 +191,10 @@ CommonGizmosDataID GLGizmoMeshBoolean::on_get_requirements() const
 std::optional<TriangleSelector::SavedPainting> VolumeInfo::save_painting() const
 {
     if (wxGetApp().app_config->get_bool("keep_painting")) {
-        std::optional<TriangleSelector::SavedPainting> saved_painting = mv->save_painting();
-        if (saved_painting) {
-            // Match the handedness correction applied to the boolean input meshes.
-            saved_painting->mesh.transform(trafo, true);
-        }
-        return saved_painting;
+        // Snapshot keeps the original vertex/corner order; the relative
+        // transform (trafo.inverse(), mapping the boolean result back into this
+        // volume's space) is applied once inside remap_painting().
+        return mv->save_painting();
     }
 
     return {};
@@ -360,8 +358,11 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
             std::vector<TriangleMesh> temp_mesh_resuls;
             Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "UNION");
             if (temp_mesh_resuls.size() != 0) {
-                // For union, we want to keep paint from both meshes
-                std::vector<std::optional<TriangleSelector::SavedPainting>> saved_paintings{m_src.save_painting(), m_tool.save_painting()};
+                // For union, we want to keep paint from both meshes. The result
+                // lives in the space of the trafo-transformed inputs, so each
+                // snapshot is paired with its own inverse transform.
+                std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>> saved_paintings{
+                    {m_src.save_painting(), m_src.trafo.inverse()}, {m_tool.save_painting(), m_tool.trafo.inverse()}};
                 generate_new_volume(true, *temp_mesh_resuls.begin(), saved_paintings);
                 wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
             }
@@ -381,7 +382,8 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
             Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "A_NOT_B");
             if (temp_mesh_resuls.size() != 0) {
                 // For diff, we only need paint from src
-                std::vector<std::optional<TriangleSelector::SavedPainting>> saved_paintings{m_src.save_painting()};
+                std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>> saved_paintings{
+                    {m_src.save_painting(), m_src.trafo.inverse()}};
                 generate_new_volume(m_diff_delete_input, *temp_mesh_resuls.begin(), saved_paintings);
                 wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
             }
@@ -401,7 +403,8 @@ void GLGizmoMeshBoolean::on_render_input_window(float x, float y, float bottom_l
             Slic3r::MeshBoolean::mcut::make_boolean(temp_src_mesh, temp_tool_mesh, temp_mesh_resuls, "INTERSECTION");
             if (temp_mesh_resuls.size() != 0) {
                 // For intersection, we want to keep paint from both meshes
-                std::vector<std::optional<TriangleSelector::SavedPainting>> saved_paintings{m_src.save_painting(), m_tool.save_painting()};
+                std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>> saved_paintings{
+                    {m_src.save_painting(), m_src.trafo.inverse()}, {m_tool.save_painting(), m_tool.trafo.inverse()}};
                 generate_new_volume(m_inter_delete_input, *temp_mesh_resuls.begin(), saved_paintings);
                 wxGetApp().notification_manager()->close_plater_warning_notification(warning_text);
             }
@@ -440,7 +443,8 @@ void GLGizmoMeshBoolean::on_save(cereal::BinaryOutputArchive &ar) const
     ar(m_enable, m_operation_mode, m_selecting_state, m_diff_delete_input, m_inter_delete_input, m_src, m_tool);
 }
 
-void GLGizmoMeshBoolean::generate_new_volume(const bool delete_input, TriangleMesh& mesh_result, const std::vector<std::optional<TriangleSelector::SavedPainting>>& saved_paintings) {
+void GLGizmoMeshBoolean::generate_new_volume(const bool delete_input, TriangleMesh& mesh_result,
+                                             const std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>>& saved_paintings) {
 
     wxGetApp().plater()->take_snapshot("Mesh Boolean");
 
@@ -449,9 +453,10 @@ void GLGizmoMeshBoolean::generate_new_volume(const bool delete_input, TriangleMe
     // generate new volume
     ModelVolume* new_volume = curr_model_object->add_volume(std::move(mesh_result));
 
-    // Remap paintings
-    for (const auto& saved_painting : saved_paintings) {
-        new_volume->restore_painting(saved_painting, true);
+    // Remap paintings: each snapshot is restored with the relative transform
+    // that maps the boolean result back into that snapshot's own space.
+    for (const auto& [saved_painting, target_to_source] : saved_paintings) {
+        new_volume->restore_painting(saved_painting, target_to_source, true);
     }
 
     // assign to new_volume from old_volume

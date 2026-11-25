@@ -25,7 +25,8 @@ class Cut {
 
     void post_process(ModelObject* object, ModelObjectPtrs& objects, bool keep, bool place_on_cut, bool flip);
     void post_process(ModelObject* upper_object, ModelObject* lower_object, ModelObjectPtrs& objects);
-    void finalize(const ModelObjectPtrs& objects, const std::vector<std::optional<TriangleSelector::SavedPainting>>& saved_paintings);
+    void finalize(const ModelObjectPtrs& objects, const std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>>& saved_paintings,
+                  const std::vector<std::pair<ModelVolume*, int>>& output_sources = {});
 
 public:
 

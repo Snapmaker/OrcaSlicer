@@ -122,32 +122,33 @@ static wxString PreserveWebViewEngineUserAgent(const wxString &requestedUserAgen
 class WebViewEdge : public wxWebViewEdge
 {
 public:
-    bool AddScriptMessageHandler(const wxString &name) override
+    bool AddScriptMessageHandler(const wxString& name) override
     {
         if (m_bridgeScriptState != BridgeScriptState::Idle) {
             return name == m_scriptMessageHandlerName && m_bridgeScriptState != BridgeScriptState::Failed;
         }
 
-        if (!wxWebViewEdge::AddScriptMessageHandler(name))
-        {
+        m_scriptMessageHandlerName = name;
+        m_bridgeScriptState        = BridgeScriptState::Waiting;
+
+        if (!wxWebViewEdge::AddScriptMessageHandler(name)) {
             // Keep navigation fail-open if wxWidgets cannot register its native
             // message handler. Otherwise LoadURL() below would strand the page.
             MarkBridgeScriptReady(false);
             return false;
         }
 
-        m_scriptMessageHandlerName = name;
-        m_bridgeScriptState       = BridgeScriptState::Waiting;
         ScheduleBridgeScriptInstallation();
         return true;
     }
 
-    void LoadURL(const wxString &url) override
+    void LoadURL(const wxString& url) override
     {
         // wxWidgets registers its Edge bridge with an async document-created
         // script. Keep the first real navigation pending until registration has
         // completed, so page scripts cannot run before window.wx is installed.
-        if (m_bridgeScriptState == BridgeScriptState::Waiting && url != wxString("about:blank")) {
+        if ((m_bridgeScriptState == BridgeScriptState::Idle || m_bridgeScriptState == BridgeScriptState::Waiting) &&
+            url != wxString("about:blank")) {
             m_pendingURL = url;
             return;
         }
@@ -155,7 +156,7 @@ public:
         wxWebViewEdge::LoadURL(url);
     }
 
-    bool SetUserAgent(const wxString &userAgent)
+    bool SetUserAgent(const wxString& userAgent)
     {
         bool dark = userAgent.Contains("dark");
         SetColorScheme(dark ? COREWEBVIEW2_PREFERRED_COLOR_SCHEME_DARK : COREWEBVIEW2_PREFERRED_COLOR_SCHEME_LIGHT);
@@ -381,7 +382,12 @@ public:
 
     void LoadURL(const wxString &url) override
     {
-        if (!m_scriptMessageHandlerInstalled && url != wxString("about:blank")) {
+        if (!m_scriptMessageHandlerInstalled) {
+            // wxWebViewWebKit::Create() calls LoadURL() with an empty URL while
+            // creating the view. Ignore it so it cannot overwrite the pending URL
+            // or create a blank back/forward entry.
+            if (IsBlankUrl(url))
+                return;
             m_pendingUrl = url;
             return;
         }
@@ -578,8 +584,8 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         webView->SetBackgroundColour(StateColor::darkModeColorFor(*wxWHITE));
 #ifdef __WIN32__
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52", SLIC3R_VERSION, 
-            Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
+                                               "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52",
+                                               SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         // We register the wxfs:// protocol for testing purposes
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("bbl")));
@@ -600,8 +606,9 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #endif
 #ifdef __WXMAC__
         // WKWebView starts loading during Create(), before the delayed handler callback runs.
-        // Keep its initial document blank; the subclass flushes the pending URL after installation.
-        webView->Create(parent, wxID_ANY, wxString("about:blank"), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        // Create without a navigation so about:blank does not enter the back/forward
+        // list; the pending URL is flushed after the script handler is installed.
+        webView->Create(parent, wxID_ANY, wxString(), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         static_cast<WebViewWebKit *>(webView)->AttachNavigationGate();
 #else
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);

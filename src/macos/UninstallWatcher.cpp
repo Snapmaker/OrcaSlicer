@@ -567,7 +567,10 @@ SnapmakerUninstall::CleanupResult try_finish(bool delete_user_data)
     _exit(0);
 }
 
-/** @brief Best-effort self-removal without the lifecycle lock; used only on terminal failures. */
+/**
+ * @brief Best-effort self-removal without the lifecycle lock; used as the lockless fallback after a terminal
+ * retry limit and for a watcher whose state stays invalid.
+ */
 void remove_watcher_without_lock()
 {
     const CleanupSignalGuard signals; // bootout delivers SIGTERM; ignore it so removal can finish
@@ -598,7 +601,12 @@ void terminal_self_removal(SnapmakerUninstall::CleanupResult result)
     remove_watcher_without_lock();
 }
 
-/** @brief Retains the confirmation while retrying; a retry limit removes the watcher without user data. */
+/**
+ * @brief Retains the confirmation while retrying; a retry limit removes the watcher without user data.
+ *
+ * This function never returns: a successful attempt exits the helper via _exit(0), and a reached retry
+ * limit ends in self-removal, also via _exit(0).
+ */
 void finish(bool delete_user_data)
 {
     std::optional<SnapmakerUninstall::CleanupResult> reported_failure;
@@ -662,15 +670,11 @@ int main()
         if (choice == Choice::DeleteData || choice == Choice::KeepData)
         {
             finish(choice == Choice::DeleteData);
-            dialog_failed = 0;
-            continue;
         }
         if (++dialog_failed >= kMaxDialogFailures) {
             log_line("dialog failed " + std::to_string(dialog_failed) + " times; removing the watcher");
             syslog(LOG_ERR, "Snapmaker Orca Monitor: dialog failed %u times; removing the watcher", dialog_failed);
             finish(false);
-            dialog_failed = 0;
-            continue;
         }
         // Bound the retry log growth when the dialog keeps failing.
         std::this_thread::sleep_for(std::chrono::seconds(retry_delay));

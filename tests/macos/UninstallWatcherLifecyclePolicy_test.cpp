@@ -220,17 +220,17 @@ bool test_mixed_lu_cf_are_monotonic()
                  "interleaved command failures do not reset the unavailable-lock counter");
 }
 
-/** @brief Checks a custom policy binds each failure kind to its own retry limit. */
-bool test_custom_policy_command_cap()
+/** @brief Checks a custom policy binds each failure kind to its own non-default retry limit. */
+bool test_custom_policy_per_kind_limits()
 {
+    SnapmakerUninstall::CleanupRetryPolicy policy;
+    policy.max_command_failures = 2;
+    policy.max_lock_busy        = 4;
+    policy.max_lock_unavailable = 5;
     unsigned attempts = 0;
     unsigned waits = 0;
     unsigned terminal_calls = 0;
     CleanupResult terminal_result = CleanupResult::LockBusy;
-    SnapmakerUninstall::CleanupRetryPolicy policy;
-    policy.max_command_failures = 2;
-    policy.max_lock_busy        = 15;
-    policy.max_lock_unavailable = 3;
     SnapmakerUninstall::finish_confirmed_cleanup(
         [&attempts]() { ++attempts; return CleanupResult::CommandFailed; },
         [&waits](CleanupResult) { ++waits; },
@@ -240,9 +240,41 @@ bool test_custom_policy_command_cap()
             terminal_result = result;
         },
         policy);
-    return check(attempts == 2 && waits == 1 && terminal_calls == 1 &&
-                 terminal_result == CleanupResult::CommandFailed,
-                 "a custom command-failure limit stops the second attempt instead of the lock-unavailable limit");
+    bool ok = check(attempts == 2 && waits == 1 && terminal_calls == 1 && terminal_result == CleanupResult::CommandFailed,
+                    "a custom command-failure limit stops the second attempt");
+
+    attempts = 0;
+    waits = 0;
+    terminal_calls = 0;
+    terminal_result = CleanupResult::CommandFailed;
+    SnapmakerUninstall::finish_confirmed_cleanup(
+        [&attempts]() { ++attempts; return CleanupResult::LockBusy; },
+        [&waits](CleanupResult) { ++waits; },
+        [&terminal_calls, &terminal_result](CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
+        },
+        policy);
+    ok = check(attempts == 4 && waits == 3 && terminal_calls == 1 && terminal_result == CleanupResult::LockBusy,
+               "a custom lock-busy limit stops the fourth attempt") && ok;
+
+    attempts = 0;
+    waits = 0;
+    terminal_calls = 0;
+    terminal_result = CleanupResult::LockBusy;
+    SnapmakerUninstall::finish_confirmed_cleanup(
+        [&attempts]() { ++attempts; return CleanupResult::LockUnavailable; },
+        [&waits](CleanupResult) { ++waits; },
+        [&terminal_calls, &terminal_result](CleanupResult result)
+        {
+            ++terminal_calls;
+            terminal_result = result;
+        },
+        policy);
+    ok = check(attempts == 5 && waits == 4 && terminal_calls == 1 && terminal_result == CleanupResult::LockUnavailable,
+               "a custom lock-unavailable limit stops the fifth attempt") && ok;
+    return ok;
 }
 
 } // namespace
@@ -262,7 +294,7 @@ int main()
     ok = test_lock_unavailable_cap() && ok;
     ok = test_mixed_failures_are_monotonic() && ok;
     ok = test_mixed_lu_cf_are_monotonic() && ok;
-    ok = test_custom_policy_command_cap() && ok;
+    ok = test_custom_policy_per_kind_limits() && ok;
     if (ok)
     {
         std::cout << "All thirteen uninstall watcher lifecycle policy cases passed.\n";

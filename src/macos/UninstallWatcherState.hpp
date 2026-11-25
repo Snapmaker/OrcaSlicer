@@ -112,13 +112,6 @@ inline std::string watch_state_text(const std::filesystem::path& bundle, const s
            "\",\n  \"seen_bundle\": true\n}\n";
 }
 
-/** @brief Rejects a cleanup confirmation from another registration, including the same bundle path. */
-inline bool same_registration(const std::filesystem::path& expected_bundle, const std::string& expected_id,
-                              const std::filesystem::path& current_bundle, const std::string& current_id)
-{
-    return valid_registration_id(expected_id) && expected_bundle == current_bundle && expected_id == current_id;
-}
-
 /** @brief Stops an older retry from overwriting a registration that has superseded it. */
 inline bool registration_attempt_is_current(const std::string& published_id, const std::string& current_id)
 {

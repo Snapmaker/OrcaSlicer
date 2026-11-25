@@ -488,6 +488,9 @@ private:
     // bottom buttons; never affects the mapping itself.
     bool                               m_filaments_dropped = false;
     TextureAutoMixMode                 m_auto_mix_mode = TextureAutoMixMode::CMYW;
+    // CMYW Auto Mix selected in the dropdown while the mapping rows were not
+    // ready yet (still computing, or no clusters); set_state(Ready) applies it.
+    bool m_auto_mix_pending = false;
 
     Slic3r::PaintedMesh               m_painted;
     std::vector<Slic3r::FilamentMatch> m_current_matches;

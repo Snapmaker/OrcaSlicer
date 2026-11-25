@@ -502,9 +502,12 @@ static std::vector<LocalZWipeTowerToolchange> collect_local_z_wipe_tower_toolcha
 
 // Return the effective wipe tower volume for a given extruder: the greater of
 // the global prime_volume and the per-filament minimal purge. This ensures
-// per-filament overrides are respected even in non-SEMM mode.
+// per-filament overrides are respected even in non-SEMM mode. The user can
+// opt out of the per-filament floor, leaving prime_volume as the only control.
 static float effective_wipe_tower_volume(const PrintConfig& config, size_t extruder_id)
 {
+    if (config.prime_tower_ignore_filament_minimal_purge)
+        return (float)config.prime_volume;
     return std::max<float>(
         (float)config.prime_volume,
         (float)get_value_at(config, config.filament_minimal_purge_on_wipe_tower, ConfigFlowDomain::Filament,
@@ -516,7 +519,7 @@ static float effective_wipe_tower_volume(const PrintConfig& config, size_t extru
 static float effective_max_wipe_tower_volume(const PrintConfig& config)
 {
     const std::vector<double>& minimal_purges = config.filament_minimal_purge_on_wipe_tower.values;
-    if (minimal_purges.empty())
+    if (minimal_purges.empty() || config.prime_tower_ignore_filament_minimal_purge)
         return (float)config.prime_volume;
     return std::max<float>(
         (float)config.prime_volume,
@@ -803,6 +806,7 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
             || opt_key == "wipe_tower_no_sparse_layers"
             || opt_key == "flush_volumes_matrix"
             || opt_key == "prime_volume"
+            || opt_key == "prime_tower_ignore_filament_minimal_purge"
             || opt_key == "prime_tower_brim_chamfer"
             || opt_key == "prime_tower_brim_chamfer_max_width"
             || opt_key == "flush_into_infill"

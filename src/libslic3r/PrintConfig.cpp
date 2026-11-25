@@ -6298,6 +6298,13 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionFloat(45.));
 
+    def = this->add("prime_tower_ignore_filament_minimal_purge", coBool);
+    def->label = L("Ignore filament minimal purge");
+    def->tooltip = L("Use the prime volume alone after each tool change, ignoring each filament's "
+                     "\"Minimal purge on wipe tower\".");
+    def->mode = comAdvanced;
+    def->set_default_value(new ConfigOptionBool(false));
+
     def = this->add("wipe_tower_x", coFloats);
     //def->label = L("Position X");
     //def->tooltip = L("X coordinate of the left front corner of a wipe tower.");

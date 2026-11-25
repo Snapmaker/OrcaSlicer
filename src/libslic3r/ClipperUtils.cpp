@@ -672,24 +672,35 @@ bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &are
 template<class TOut>
 void c2_offset_closed_paths(C2::Paths64 &&paths, float delta, JoinType joinType, double miterLimit, TOut &out)
 {
+    // Clipper2 grows a path of no area even for a negative offset, where such a path vanishes. Drop them one by one, with
+    // the area of every path that stays, so that the batch offsets the same way whether or not it has such paths.
     std::vector<double> areas;
     areas.reserve(paths.size());
-    for (const C2::Path64 &path : paths)
-        areas.emplace_back(C2::Area(path));
+    if (delta < 0.) {
+        C2::Paths64 kept;
+        kept.reserve(paths.size());
+        for (C2::Path64 &path : paths) {
+            const double area = C2::Area(path);
+            if (area == 0.)
+                continue;
+            kept.emplace_back(std::move(path));
+            areas.emplace_back(area);
+        }
+        if (kept.empty())
+            return;
+        paths = std::move(kept);
+    } else
+        for (const C2::Path64 &path : paths)
+            areas.emplace_back(C2::Area(path));
     C2::ClipperOffset co;
     c2_offset_setup(co, delta, joinType, miterLimit);
     if (c2_offset_as_group(paths, areas)) {
-        // Clipper2 would grow degenerate paths even for a negative offset.
-        if (delta < 0. && std::all_of(areas.begin(), areas.end(), [](double a) { return a == 0.; }))
-            return;
         co.AddPaths(paths, to_c2(joinType), C2::EndType::Polygon);
         co.Execute(delta, out);
         return;
     }
     C2::Paths64 offsetted, single;
     for (size_t i = 0; i < paths.size(); ++ i) {
-        if (areas[i] == 0. && delta < 0.)
-            continue;
         co.Clear();
         co.AddPath(paths[i], to_c2(joinType), C2::EndType::Polygon);
         // Clipper2 reverses a lone CW path, so the flipped sign shrinks it as a hole.

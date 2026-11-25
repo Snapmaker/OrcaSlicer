@@ -897,3 +897,36 @@ TEST_CASE("A hole of a simplified polygon keeps its place when a far contour tou
         }
     }
 }
+
+TEST_CASE("A path of no area vanishes in a negative offset of Polygons, like in one of a single Polygon", "[ClipperUtils]") {
+    // A bow tie: its two lobes have opposite orientation, its signed area is zero.
+    const Polygon bow_tie{ { { 2000, 2000 }, { 2400, 2400 }, { 2000, 2400 }, { 2400, 2000 } } };
+    REQUIRE(bow_tie.area() == 0.);
+    const Polygon square{ { { 0, 0 }, { 1000, 0 }, { 1000, 1000 }, { 0, 1000 } } };
+    const Polygon square_shrunk{ { { 10, 10 }, { 990, 10 }, { 990, 990 }, { 10, 990 } } };
+
+    SECTION("Alone it leaves nothing, as one Polygon does")
+    {
+        CHECK(offset(Polygons{ bow_tie }, -10.f, jtMiter).empty());
+        CHECK(offset(bow_tie, -10.f, jtMiter).empty());
+    }
+    SECTION("Whether it comes before or after the square, and the square is offset as it is alone")
+    {
+        for (int first = 0; first < 2; ++ first) {
+            const Polygons polygons = first ? Polygons{ square, bow_tie } : Polygons{ bow_tie, square };
+            const Polygons result   = offset(polygons, -10.f, jtMiter);
+            REQUIRE(result.size() == 1);
+            CHECK(result.front().area() == square_shrunk.area());
+            CHECK(result.front().is_counter_clockwise());
+        }
+    }
+    SECTION("A positive offset still grows it")
+    {
+        const Polygons alone = offset(Polygons{ bow_tie }, 10.f, jtMiter);
+        REQUIRE(alone.size() == 1);
+        CHECK(alone.front().area() == 50176.);
+        const Polygons with_square = offset(Polygons{ bow_tie, square }, 10.f, jtMiter);
+        CHECK(with_square.size() == 2);
+        CHECK(std::abs(area(with_square)) == 50176. + 1040400.);
+    }
+}

@@ -320,11 +320,13 @@ bool path_encloses(const Polygon &outer, const Polygon &inner)
 
 // Gives each stray hole to the innermost of the contours out[first..] around it. Contours of a Clipper2 result don't
 // cross, so those around a hole are nested and the innermost one is the smallest: candidates are tried smallest first,
-// from the first one larger than the hole.
-void c2_attach_stray_holes(ExPolygons &out, size_t first, const std::vector<const C2::Path64*> &stray_holes)
+// from the first one larger than the hole. Returns for every stray hole the expolygon it became a hole of, or
+// size_t(-1) for one that stayed a contour of its own because nothing was around it.
+std::vector<size_t> c2_attach_stray_holes(ExPolygons &out, size_t first, const std::vector<const C2::Path64*> &stray_holes)
 {
+    std::vector<size_t> placed(stray_holes.size(), size_t(-1));
     if (stray_holes.empty())
-        return;
+        return placed;
     using Tree = AABBTreeIndirect::Tree<2, coord_t>;
     std::vector<AABBTreeIndirect::BoundingBoxWrapper> bboxes;
     bboxes.reserve(out.size() - first);
@@ -335,7 +337,8 @@ void c2_attach_stray_holes(ExPolygons &out, size_t first, const std::vector<cons
     // Contour areas, computed when a contour first becomes a candidate.
     std::vector<double> areas(out.size(), 0.);
     std::vector<size_t> candidates;
-    for (const C2::Path64 *path : stray_holes) {
+    for (size_t i = 0; i < stray_holes.size(); ++ i) {
+        const C2::Path64 *path = stray_holes[i];
         Polygon hole;
         hole.points = c2_to_points(*path);
         const double            hole_area = - C2::Area(*path);
@@ -351,12 +354,15 @@ void c2_attach_stray_holes(ExPolygons &out, size_t first, const std::vector<cons
         std::sort(candidates.begin(), candidates.end(), [&areas](size_t a, size_t b) { return areas[a] < areas[b]; });
         auto larger = std::upper_bound(candidates.begin(), candidates.end(), hole_area, [&areas](double area, size_t idx) { return area < areas[idx]; });
         if (auto it = std::find_if(larger, candidates.end(), [&out, &hole](size_t idx) { return path_encloses(out[idx].contour, hole); });
-            it == candidates.end())
+            it == candidates.end()) {
             // Nothing around it: keep the path as Clipper2 returned it.
             out.emplace_back().contour = std::move(hole);
-        else
+        } else {
             out[*it].holes.emplace_back(std::move(hole));
+            placed[i] = *it;
+        }
     }
+    return placed;
 }
 
 ExPolygons c2_to_expolygons(const C2::PolyTree64 &tree)
@@ -1435,7 +1441,16 @@ ExPolygons top_level_expolygons(const ExPolygons &expolygons, ExPolygons *nested
     out.reserve(tree.Count());
     const size_t                   first_nested = nested ? nested->size() : 0;
     std::vector<const C2::Path64*> stray_holes;
+    // The holes Clipper2 put at the top level, beside the contours instead of under one. Taken as contours, they would
+    // come out as solid, and the contour around them would cover them.
+    std::vector<const C2::Path64*>        root_stray_holes;
+    std::vector<const C2::PolyPath64*>    root_stray_nodes;
     for (const auto &outer : tree) {
+        if (C2::Area(outer->Polygon()) < 0.) {
+            root_stray_holes.emplace_back(&outer->Polygon());
+            root_stray_nodes.emplace_back(outer.get());
+            continue;
+        }
         ExPolygon &expoly = out.emplace_back();
         expoly.contour.points = c2_to_points(outer->Polygon());
         for (const auto &hole : *outer) {
@@ -1444,6 +1459,18 @@ ExPolygons top_level_expolygons(const ExPolygons &expolygons, ExPolygons *nested
                 for (const auto &island : *hole)
                     c2_append_expolygons(*island, *nested, stray_holes);
         }
+    }
+    if (! root_stray_holes.empty()) {
+        // Each to the smallest contour around it, as c2_attach_stray_holes() does; a hole nothing was around stays a
+        // contour of its own, as Clipper2 returned it.
+        const std::vector<size_t> placed = c2_attach_stray_holes(out, 0, root_stray_holes);
+        if (nested)
+            for (size_t i = 0; i < root_stray_nodes.size(); ++ i)
+                // The islands of a hole that became a hole of a contour. A hole that stayed a contour of its own covers
+                // them, as it did before.
+                if (placed[i] != size_t(-1))
+                    for (const auto &island : *root_stray_nodes[i])
+                        c2_append_expolygons(*island, *nested, stray_holes);
     }
     if (nested)
         c2_attach_stray_holes(*nested, first_nested, stray_holes);

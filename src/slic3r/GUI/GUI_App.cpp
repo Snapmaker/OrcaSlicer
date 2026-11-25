@@ -2201,6 +2201,27 @@ void GUI_App::init_app_config()
 #endif
         boost::filesystem::path app_data_dir_path = _app_folder / "data_dir";
         if (boost::filesystem::exists(app_data_dir_path)) {
+            // First use of the app-directory folder: migrate the user's
+            // existing config from the per-user data folder when one is
+            // detected, so the saved printer/process selection carries
+            // over instead of starting empty (GH #1184). Best effort
+            // only — the migration no-ops when the app-directory folder
+            // already has its own config, and a failed migration never
+            // breaks startup.
+            try {
+                std::string user_data_dir;
+#ifndef __linux__
+                user_data_dir = wxStandardPaths::Get().GetUserDataDir().ToUTF8().data();
+#else
+                wxString dir;
+                if (! wxGetEnv(wxS("XDG_CONFIG_HOME"), &dir) || dir.empty())
+                    dir = wxFileName::GetHomeDir() + wxS("/.config");
+                user_data_dir = (dir + "/" + GetAppName()).ToUTF8().data();
+#endif
+                Slic3r::PresetBundle::migrate_user_config_to_portable_data_dir(user_data_dir, app_data_dir_path.string());
+            } catch (...) {
+                // Best effort only; the app-directory folder is still usable.
+            }
             set_data_dir(app_data_dir_path.string());
         }
         else{

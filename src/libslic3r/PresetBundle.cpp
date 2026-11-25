@@ -426,6 +426,85 @@ void PresetBundle::copy_files(const std::string& from)
     }
 }
 
+// Recursively copy all files and dirs in from_dir to to_dir, never
+// overwriting an existing file. Returns false (and logs) if any copy
+// fails; a missing from_dir means there is nothing to copy.
+static bool copy_dir_if_missing(const boost::filesystem::path& from_dir, const boost::filesystem::path& to_dir)
+{
+    boost::system::error_code ec;
+    if (!boost::filesystem::is_directory(from_dir, ec))
+        return true;
+    if (!boost::filesystem::is_directory(to_dir, ec) && !boost::filesystem::create_directories(to_dir, ec)) {
+        BOOST_LOG_TRIVIAL(error) << "Unable to create directory " << to_dir.string() << ": " << ec.message();
+        return false;
+    }
+    bool ok = true;
+    boost::filesystem::directory_iterator it(from_dir, ec);
+    if (ec) {
+        BOOST_LOG_TRIVIAL(error) << "Error when reading directory " << from_dir.string() << ": " << ec.message();
+        return false;
+    }
+    const boost::filesystem::directory_iterator end;
+    for (; it != end; it.increment(ec)) {
+        if (ec) {
+            BOOST_LOG_TRIVIAL(error) << "Error when reading directory " << from_dir.string() << ": " << ec.message();
+            return false;
+        }
+        const boost::filesystem::path entry_path = it->path();
+        const boost::filesystem::path dest = to_dir / entry_path.filename();
+        if (boost::filesystem::is_directory(entry_path, ec)) {
+            if (!copy_dir_if_missing(entry_path, dest))
+                ok = false;
+        } else if (!boost::filesystem::exists(dest, ec)) {
+            std::string em;
+            if (copy_file(entry_path.string(), dest.string(), em, false) != SUCCESS) {
+                BOOST_LOG_TRIVIAL(error) << "Error when copying " << entry_path.string() << " to " << dest.string() << ": " << em;
+                ok = false;
+            }
+        }
+    }
+    return ok;
+}
+
+bool PresetBundle::migrate_user_config_to_portable_data_dir(const std::string& user_data_dir, const std::string& portable_data_dir)
+{
+    try {
+        const boost::filesystem::path from_dir(user_data_dir);
+        const boost::filesystem::path to_dir(portable_data_dir);
+        // The app-directory folder already has its own config: nothing to migrate.
+        const boost::filesystem::path to_conf = to_dir / (SLIC3R_APP_KEY ".conf");
+        if (boost::filesystem::exists(to_conf))
+            return true;
+        // No config in the per-user folder: nothing to migrate from.
+        const boost::filesystem::path from_conf = from_dir / (SLIC3R_APP_KEY ".conf");
+        if (!boost::filesystem::exists(from_conf))
+            return true;
+        // Copy the AppConfig file (the saved printer/process/filament
+        // selection) and the user preset folder into the app-directory
+        // folder, never overwriting anything already there. Cache,
+        // snapshots, logs, system/web presets and backups are deliberately
+        // not copied: system presets are recreated from resources, and
+        // the rest is runtime state.
+        bool ok = true;
+        {
+            std::string em;
+            if (copy_file(from_conf.string(), to_conf.string(), em, false) != SUCCESS) {
+                BOOST_LOG_TRIVIAL(error) << "Error when migrating config " << from_conf.string() << " to " << to_conf.string() << ": " << em;
+                ok = false;
+            }
+        }
+        if (!copy_dir_if_missing(from_dir / PRESET_USER_DIR, to_dir / PRESET_USER_DIR))
+            ok = false;
+        if (ok)
+            BOOST_LOG_TRIVIAL(info) << "Migrated user config from " << from_dir.string() << " to " << to_dir.string();
+        return ok;
+    } catch (const std::exception& e) {
+        // Best effort only: a failed migration must never break startup.
+        BOOST_LOG_TRIVIAL(error) << "Failed to migrate user config to the app-directory data folder: " << e.what();
+        return false;
+    }
+}
+
 PresetsConfigSubstitutions PresetBundle::load_presets(AppConfig &config, ForwardCompatibilitySubstitutionRule substitution_rule,
                                                       const PresetPreferences& preferred_selection/* = PresetPreferences()*/)
 {

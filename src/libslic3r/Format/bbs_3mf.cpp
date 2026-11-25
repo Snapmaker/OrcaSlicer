@@ -2617,9 +2617,30 @@ void PlateData::parse_filament_info(GCodeProcessorResult *result)
             std::string json(static_cast<size_t>(stat.m_uncomp_size), '\0');
             if (!mz_zip_reader_extract_to_mem(&archive, *entry, json.data(), json.size(), 0))
                 throw std::runtime_error("Cannot extract mixed-filament JSON");
-            const auto definitions = deserialize_mixed_filaments_json(json, physical_filament_count_from_project_config(config));
+            auto definitions = deserialize_mixed_filaments_json(json, physical_filament_count_from_project_config(config));
             // The existing GUI/config pipeline consumes compact rows. Replace
             // that transport value only after the authoritative JSON validates.
+            for (auto& definition : definitions) {
+                auto& recipe = definition.recipe;
+                if (!recipe.manual_pattern)
+                    continue;
+                // Older projects can use physical slots 1/2 outside A/B after a slot deletion.
+                // Compact rows reserve these tokens for A/B, so retain the saved blend in that case.
+                const auto pair                 = recipe.blend.primary_pair_or();
+                const auto unrepresentable_slot = [&](const MixedFilamentPhysicalRef& ref) {
+                    return ref.id <= 2 && ref.id != pair.component_a.id && ref.id != pair.component_b.id;
+                };
+                const auto& groups = recipe.manual_pattern->groups;
+                if (std::any_of(groups.begin(), groups.end(),
+                                [&](const auto& group) { return std::any_of(group.begin(), group.end(), unrepresentable_slot); })) {
+                    BOOST_LOG_TRIVIAL(warning) << "Mixed filament recipe " << definition.identity.stable_id
+                                               << " refers to physical slot 1 or 2 outside its primary pair (" << pair.component_a.id
+                                               << ", " << pair.component_b.id
+                                               << "). Dropping its manual pattern and using its saved blend percentages.";
+                    recipe.manual_pattern.reset();
+                    recipe.kind = MixedFilamentRecipeKind::WeightedBlend;
+                }
+            }
             config.set_key_value("mixed_filament_definitions", new ConfigOptionString(mixed_filaments_to_legacy(definitions)));
         } catch (const std::exception& e) {
             // Preserve the reason through Model::read_from_archive to the GUI.

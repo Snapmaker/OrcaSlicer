@@ -463,7 +463,7 @@ public:
     void remove_physical_filament(unsigned int deleted_filament_id);
 
     // Add a custom mixed filament.
-    void add_custom_filament(unsigned int                    component_a,
+    bool add_custom_filament(unsigned int                    component_a,
                              unsigned int                    component_b,
                              int                             mix_b_percent,
                              const std::vector<std::string>& filament_colours);

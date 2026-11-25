@@ -17,6 +17,7 @@
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <optional>
 
 #ifndef NDEBUG
@@ -153,6 +154,17 @@ public:
     // Color used to render this volume.
     std::vector<ColorRGBA>              preview_gradient_colors;
     std::vector<std::vector<ColorRGBA>> preview_gradient_colors_by_extruder;
+    using GradientDomains = std::map<int, BoundingBoxf3>;
+    const GradientDomains& gradient_domains(const ModelVolume& volume);
+
+private:
+    GradientDomains       m_gradient_domains;
+    Transform3d           m_gradient_transform       = Transform3d::Identity();
+    const TriangleMesh*   m_gradient_mesh            = nullptr;
+    ObjectBase::Timestamp m_gradient_paint_timestamp = 0;
+    int                   m_gradient_material        = -1;
+
+public:
     ColorRGBA render_color;
 
     // LOD (Level of Detail) rendering
@@ -364,8 +376,10 @@ public:
     void simple_render(GLShaderProgram*            shader,
                        ModelObjectPtrs&            model_objects,
                        std::vector<ColorRGBA>&     extruder_colors,
-                       bool                        ban_light = false,
-                       const std::array<float, 2>* z_range   = nullptr);
+                       bool                        ban_light    = false,
+                       const std::array<float, 2>* z_range      = nullptr,
+                       bool                        material_ids = false,
+                       const GradientDomains*      domains      = nullptr);
 
     /**
      * @brief Renders the painted segment models with the picking color of this volume.
@@ -519,6 +533,8 @@ public:
     GLVolume* new_nontoolpath_volume(const ColorRGBA& rgba);
 
     int get_selection_support_threshold_angle(bool&) const;
+    using InstanceGradientDomains = std::map<std::pair<int, int>, GLVolume::GradientDomains>;
+    InstanceGradientDomains collect_gradient_domains(const ModelObjectPtrs& objects) const;
     // Render the volumes by OpenGL. Returns true when the active LOD state changes.
     bool render(ERenderType                           type,
                 bool                                  disable_cullface,

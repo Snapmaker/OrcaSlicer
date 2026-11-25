@@ -28,7 +28,7 @@ those panels instead of allocating a native child window for every swatch.
 
 - Manage accepts **2–16 physical filaments**. The physical count controls entry,
   independently of how many mixed recipes are already saved.
-- A project may contain **256 mixed recipes**, including disabled recipes but
+- A project can grow to **64 mixed recipes**, including disabled recipes but
   excluding deletion tombstones. Removing recipes in the same confirmation
   frees capacity for additions.
 - Predicted colors use the calibrated KM/K-S predictor when every participating
@@ -74,8 +74,8 @@ be removed in the saved section. They do not contribute to Select All, partial
 selection or pending-addition counts. A pending removal is reflected in both
 sections. Cancel, Escape and the window close button discard all pending edits.
 
-Confirm validates the complete staged result before publishing it. Exceeding
-256 recipes leaves the dialog open with its selections intact. Preparation or
+Confirm validates the complete staged result before publishing it. Adding recipes beyond
+the 64-recipe limit leaves the dialog open with its selections intact. Preparation or
 serialization failure also leaves the dialog open for retry. Successful edits
 remap object, part, layer-range and feature assignments as well as painted facets,
 then refresh the sidebar and dirty state. Deletion of an edited generated pair
@@ -102,11 +102,10 @@ The existing typed manager, canonical `Metadata/mixed_filaments.json` and legacy
 recipe string remain the persistence path. No new archive part or schema version
 is needed for Manage.
 
-Physical tool slots remain capped at 64 elsewhere in the application. The virtual
-filament-ID range is now 320 (64 physical + 256 mixed), and painting's existing
-extension-nibble encoding carries those IDs without byte truncation. OBJ color
-matching IDs were widened too. Manage itself permits only 16 physical slots, so
-its highest assigned ID is 272.
+With 16 physical filaments and 64 mixed recipes, a new project reaches filament ID 80.
+Older 3MFs retain the historical range through ID 320 so object assignments, painted
+facets and OBJ color matches still resolve. Projects already above 64 can be saved
+and reduced in stages. New recipes can be added once the resulting count fits the limit.
 
 Older builds can read the legacy recipe fields, but their own filament limits
 still apply. In particular, old readers with a 255 painted-state ceiling cannot

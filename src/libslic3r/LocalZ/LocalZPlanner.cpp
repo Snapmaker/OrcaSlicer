@@ -1,5 +1,7 @@
 #include "LocalZPlanner.hpp"
 #include "LocalZHeight.hpp"
+#include "LocalZMaskPreparation.hpp"
+#include "LocalZPassOrder.hpp"
 #include "../MixedFilament/Slicing.hpp"
 #include "../MixedFilament/ChannelMap.hpp"
 #include "../Slicing/LayerGeometryBatch.hpp"
@@ -1279,8 +1281,309 @@ static std::vector<LocalZRow> prepare_local_z_rows(const Print& print, const Loc
     return rows;
 }
 
+// What one independent Local-Z row printed on a layer, for the rows that take its place on the next layer.
+struct LocalZIndependentRowFootprint
+{
+    ExPolygons masks;
+    double     top{0.0};
+};
+
+// Independent Local-Z rows each advance their own Z cursor, which may lag below the bottom of the current layer.
+// This is the area such a row covers on the current layer and did not own on the previous one, where it belonged to
+// another colour zone that reaches above the Z the row resumes at: the row's next pass would be printed into that
+// zone. A zone is the mask of another row, or a painted zone that is printed at the nominal layer height (a solid
+// colour, or a mix that is not subdivided).
+struct LocalZTakenOverArea
+{
+    // Without the parts narrower than twice LOCAL_Z_PERIMETER_MASK_EXPAND_MM.
+    ExPolygons masks;
+    // Everything that changes hands, narrow parts included.
+    ExPolygons all;
+    float      growth{0.f};
+
+    bool empty() const { return masks.empty(); }
+
+    // The part of one zone island that is taken over.
+    // ends: the island ends on this layer, nothing is left of it beside the taken-over area. Otherwise the island
+    // continues and gives up a step of its edge.
+    ExPolygons under(const ExPolygon& island, bool& ends) const
+    {
+        const ExPolygons whole{island};
+        ExPolygons       taken = intersection_ex(whole, masks);
+        ends                   = false;
+        if (taken.empty())
+            return taken;
+        // Leftovers narrower than LOCAL_Z_PERIMETER_MASK_EXPAND_MM do not count.
+        ExPolygons rest = diff_ex(whole, all);
+        if (!rest.empty())
+            rest = opening_ex(rest, 0.5f * growth);
+        ends = rest.empty();
+        return taken;
+    }
+};
+
+static LocalZTakenOverArea local_z_area_taken_over_by_resuming_row(const LocalZInterval&                             previous_interval,
+                                                                   size_t                                            row_idx,
+                                                                   const ExPolygons&                                 row_masks,
+                                                                   const std::vector<LocalZIndependentRowFootprint>& previous_rows,
+                                                                   double                                            row_z_cursor,
+                                                                   const LocalZNominalZones&                         nominal_zones)
+{
+    LocalZTakenOverArea taken;
+    if (row_idx >= previous_rows.size() || row_masks.empty())
+        return taken;
+    if (!previous_interval.independent_layer_height || previous_interval.z_hi <= row_z_cursor + EPSILON)
+        return taken;
+
+    // Everything the other rows and the nominal zones printed above the cursor on the previous layer.
+    ExPolygons other_zones;
+    for (size_t other_idx = 0; other_idx < previous_rows.size(); ++other_idx) {
+        const LocalZIndependentRowFootprint& other = previous_rows[other_idx];
+        if (other_idx != row_idx && other.top > row_z_cursor + EPSILON)
+            append(other_zones, other.masks);
+    }
+    for (const LocalZNominalZone& nominal : nominal_zones)
+        append(other_zones, nominal.islands);
+    if (other_zones.empty())
+        return taken;
+
+    // The part of it this row covers now and did not own on the previous layer.
+    const ExPolygons& own_previous_masks = previous_rows[row_idx].masks;
+    taken.all                            = own_previous_masks.empty() ? row_masks : diff_ex(row_masks, own_previous_masks);
+    if (!taken.all.empty())
+        taken.all = intersection_ex(other_zones, taken.all);
+    taken.growth = float(scale_(LOCAL_Z_PERIMETER_MASK_EXPAND_MM));
+    if (!taken.all.empty())
+        taken.masks = opening_ex(taken.all, taken.growth);
+    return taken;
+}
+
+// The strips that one zone, which continues beside them, gives up to a resuming row: steps of the zone's edge.
+struct LocalZZoneSteps
+{
+    // Top of what the zone printed there on the previous layer.
+    double     owner_top{0.};
+    ExPolygons strips;
+};
+
+// The tip of a zone that a row has taken over and has not printed a pass over yet. z: the top of the tip.
+struct LocalZPendingTip
+{
+    ExPolygons masks;
+    double     z{0.};
+};
+
+static std::vector<LocalZZoneSteps> local_z_zone_steps_under_resuming_row(const LocalZTakenOverArea&                        taken,
+                                                                          const size_t                                      row_idx,
+                                                                          const std::vector<LocalZIndependentRowFootprint>& previous_rows,
+                                                                          const double                                      row_z_cursor,
+                                                                          const LocalZNominalZones& previous_nominal_zones,
+                                                                          const double              previous_layer_top)
+{
+    std::vector<LocalZZoneSteps> steps;
+    if (taken.empty())
+        return steps;
+    const auto collect = [&taken, &steps](const double owner_top, const ExPolygons& islands) {
+        LocalZZoneSteps zone_steps;
+        zone_steps.owner_top = owner_top;
+        for (const ExPolygon& island : islands) {
+            bool ends = false;
+            if (taken.under(island, ends).empty() || ends)
+                continue;
+            // All of what changes hands along this island, with the parts narrower than a wall.
+            append(zone_steps.strips, intersection_ex(ExPolygons{island}, taken.all));
+        }
+        if (!zone_steps.strips.empty())
+            steps.emplace_back(std::move(zone_steps));
+    };
+    for (size_t other_idx = 0; other_idx < previous_rows.size(); ++other_idx) {
+        const LocalZIndependentRowFootprint& other = previous_rows[other_idx];
+        if (other_idx != row_idx && other.top > row_z_cursor + EPSILON)
+            collect(other.top, other.masks);
+    }
+    for (const LocalZNominalZone& nominal : previous_nominal_zones)
+        collect(previous_layer_top, nominal.islands);
+    return steps;
+}
+
+// Where a lagging row covers a colour zone that ended on the previous layer, its next pass starts at row_z_cursor,
+// below what that zone has already printed there. The pass above keeps its height and its shape; the last layer of
+// the zone is cut down to row_z_cursor as a whole:
+// - what lies above row_z_cursor is not printed: the pass above occupies that space,
+// - the pass or nominal layer that straddles row_z_cursor is printed there as a shorter one, a nominal layer as a
+//   pass of its own filament. A cut thinner than half that nozzle's minimum height is omitted.
+// A zone that continues and only gives up a step of its edge is left alone: there the row's pass stops short of
+// the step instead, see SubLayerPlan::held_back_masks.
+//
+// plans and intervals hold the layers below the current one and are updated in place.
+static void cut_local_z_zones_under_resuming_row(std::vector<SubLayerPlan>&             plans,
+                                                 std::vector<LocalZInterval>&           intervals,
+                                                 const LocalZTakenOverArea&             taken,
+                                                 size_t                                 row_idx,
+                                                 size_t                                 row_count,
+                                                 double                                 row_z_cursor,
+                                                 const std::vector<double>&             nozzle_min_layer_heights,
+                                                 const std::vector<LocalZNominalZones>& nominal_zones)
+{
+    // Whether an island of a pass or nominal zone ends under the row.
+    const auto island_ends = [&taken](const ExPolygon& island) {
+        bool ends = false;
+        taken.under(island, ends);
+        return ends;
+    };
+
+    const size_t             num_physical = nozzle_min_layer_heights.size();
+    const LocalZNominalZones no_zones;
+    const size_t             own_group = row_idx + 1;
+    // Nominal zones cut down to a pass share the dependency group of the fixed-colour passes.
+    const size_t nominal_group = row_count + 1;
+    for (size_t layer_idx = intervals.size(); layer_idx-- > 0;) {
+        LocalZInterval& interval = intervals[layer_idx];
+        if (!interval.independent_layer_height || interval.z_hi <= row_z_cursor + EPSILON)
+            break;
+
+        const size_t              first_idx = interval.first_sublayer_idx;
+        size_t                    end_idx   = std::min(plans.size(), first_idx + interval.sublayer_count);
+        const size_t              old_count = end_idx - first_idx;
+        std::vector<SubLayerPlan> cut_plans;
+        bool                      layer_changed = false;
+
+        // Passes of the other rows.
+        for (size_t plan_idx = first_idx; plan_idx < end_idx;) {
+            SubLayerPlan& plan     = plans[plan_idx];
+            const auto    masks_it = std::find_if(plan.painted_masks_by_extruder.begin(), plan.painted_masks_by_extruder.end(),
+                                                  [](const ExPolygons& masks) { return !masks.empty(); });
+            if (!plan.split_interval || plan.dependency_group == 0 || plan.dependency_group > row_count ||
+                plan.dependency_group == own_group || plan.print_z <= row_z_cursor + EPSILON ||
+                masks_it == plan.painted_masks_by_extruder.end()) {
+                ++plan_idx;
+                continue;
+            }
+
+            ExPolygons kept_zones;
+            ExPolygons cut_zones;
+            for (const ExPolygon& zone : *masks_it)
+                (island_ends(zone) ? cut_zones : kept_zones).emplace_back(zone);
+            if (cut_zones.empty()) {
+                ++plan_idx;
+                continue;
+            }
+
+            layer_changed             = true;
+            const double plan_z_lo    = plan.print_z - plan.flow_height;
+            const size_t extruder_idx = size_t(masks_it - plan.painted_masks_by_extruder.begin());
+            if (row_z_cursor - plan_z_lo >= 0.5 * nozzle_min_layer_heights[extruder_idx]) {
+                // Same dependency order as the pass it is cut from: passes of one order are chained by print_z.
+                SubLayerPlan cut = plan;
+                cut.z_hi         = row_z_cursor;
+                cut.print_z      = row_z_cursor;
+                cut.flow_height  = row_z_cursor - plan_z_lo;
+                cut.held_back_masks.clear();
+                cut.painted_masks_by_extruder[extruder_idx] = std::move(cut_zones);
+                cut_plans.emplace_back(std::move(cut));
+            }
+            if (kept_zones.empty()) {
+                plans.erase(plans.begin() + plan_idx);
+                --end_idx;
+            } else {
+                *masks_it = std::move(kept_zones);
+                ++plan_idx;
+            }
+        }
+
+        // Zones printed at the nominal layer height. A pass printed in their place takes its area out of the
+        // ordinary layer; what is added to the managed masks without such a pass is left out of this layer.
+        const auto& layer_zones = nominal_zones.empty() ? no_zones : nominal_zones[layer_idx];
+        for (const LocalZNominalZone& nominal : layer_zones) {
+            if (nominal.filament == 0 || nominal.filament > num_physical)
+                continue;
+            ExPolygons cut_zones;
+            for (const ExPolygon& zone : nominal.islands)
+                if (island_ends(zone))
+                    cut_zones.emplace_back(zone);
+            if (cut_zones.empty())
+                continue;
+            // The ordinary layer gives way exactly where the walls of the cut pass begin. Its masks are grown less
+            // than a pass mask, so without this a wall running along the cut would be printed by both.
+            append(interval.managed_masks,
+                   offset_ex(cut_zones, float(scale_(LOCAL_Z_PERIMETER_MASK_EXPAND_MM - LOCAL_Z_BASE_MASK_EXPAND_MM))));
+            if (row_z_cursor - interval.z_lo < 0.5 * nozzle_min_layer_heights[nominal.filament - 1])
+                continue;
+
+            layer_changed = true;
+            SubLayerPlan cut;
+            cut.layer_id         = interval.layer_id;
+            cut.split_interval   = true;
+            cut.z_lo             = interval.z_lo;
+            cut.z_hi             = row_z_cursor;
+            cut.print_z          = row_z_cursor;
+            cut.flow_height      = row_z_cursor - interval.z_lo;
+            cut.dependency_group = nominal_group;
+            cut.dependency_order = nominal.filament - 1;
+            cut.painted_masks_by_extruder.assign(num_physical, ExPolygons());
+            cut.fixed_painted_masks_by_extruder.assign(num_physical, ExPolygons());
+            cut.painted_masks_by_extruder[nominal.filament - 1] = std::move(cut_zones);
+            cut_plans.emplace_back(std::move(cut));
+        }
+        if (!layer_changed)
+            continue;
+
+        for (SubLayerPlan& cut : cut_plans) {
+            interval.sublayer_height = std::min(interval.sublayer_height, cut.flow_height);
+            plans.insert(plans.begin() + end_idx, std::move(cut));
+            ++end_idx;
+        }
+        std::sort(plans.begin() + first_idx, plans.begin() + end_idx, independent_local_z_pass_less);
+        for (size_t plan_idx = first_idx; plan_idx < end_idx; ++plan_idx)
+            plans[plan_idx].pass_index = plan_idx - first_idx;
+
+        const size_t new_count  = end_idx - first_idx;
+        interval.sublayer_count = new_count;
+        for (size_t later_idx = layer_idx + 1; later_idx < intervals.size(); ++later_idx)
+            intervals[later_idx].first_sublayer_idx = intervals[later_idx].first_sublayer_idx + new_count - old_count;
+    }
+}
+
+// Flat model faces between two slice planes can terminate part of a connected recipe
+// (a shelf or a new part above it). A taper or a moving paint boundary has no such face.
+static std::vector<Polygons> local_z_horizontal_interfaces(const PrintObject& object, const std::function<void()>& throw_on_cancel)
+{
+    std::vector<double> planes;
+    for (const Layer* layer : object.layers())
+        planes.push_back(layer->slice_z);
+    std::vector<Polygons> interfaces(planes.size());
+    for (const ModelVolume* volume : object.model_object()->volumes) {
+        if (!volume->is_model_part() && !volume->is_negative_volume() && !volume->is_modifier())
+            continue;
+        const Transform3d transform = object.trafo_centered() * volume->get_matrix();
+        const auto&       mesh      = volume->mesh().its;
+        for (size_t i = 0; i < mesh.indices.size(); ++i) {
+            if (i % 4096 == 0)
+                throw_on_cancel();
+            const auto& indices = mesh.indices[i];
+            const auto  vertex  = [&](int n) -> Vec3d { return transform * mesh.vertices[indices[n]].cast<double>(); };
+            const Vec3d a = vertex(0), b = vertex(1);
+            if (std::abs(a.z() - b.z()) > EPSILON || a.z() < planes.front() - EPSILON || a.z() > planes.back() + EPSILON)
+                continue;
+            const Vec3d c = vertex(2);
+            if (std::abs(a.z() - c.z()) > EPSILON)
+                continue;
+            const auto   upper = std::lower_bound(planes.begin(), planes.end(), a.z() - EPSILON);
+            const size_t layer = size_t(upper - planes.begin());
+            Polygon      face({Point::new_scale(a), Point::new_scale(b), Point::new_scale(c)});
+            face.make_counter_clockwise();
+            if (layer > 0)
+                interfaces[layer - 1].push_back(face);
+            if (upper != planes.end() && std::abs(*upper - a.z()) <= EPSILON)
+                interfaces[layer].push_back(std::move(face));
+        }
+    }
+    return interfaces;
+}
+
 static void build_local_z_plan(PrintObject&                                print_object,
                                const std::vector<std::vector<ExPolygons>>& segmentation,
+                               const std::vector<LocalZNominalZones>&      nominal_zones,
                                bool                                        whole_object_scope_active,
                                const std::function<void()>&                throw_on_cancel,
                                bool&                                       height_limits_violated)
@@ -1353,6 +1656,12 @@ static void build_local_z_plan(PrintObject&                                print
     // Painted-only Local-Z keeps cadence isolated per zone. Whole-object Local-Z
     // instead syncs newly introduced painted rows to the dominant mixed cadence
     // so painted islands do not restart their phase at the boundary.
+
+    // What every independent row printed on the previous layer. Empty after a layer that is not independent.
+    std::vector<LocalZIndependentRowFootprint> previous_row_footprints(rows.size());
+    // The zone tips every independent row has taken over and not printed a pass over yet. Its next pass starts
+    // below their tops, so it stops short of them.
+    std::vector<std::vector<LocalZPendingTip>> row_pending_tips(rows.size());
 
     std::vector<uint8_t> independent_layers(segmentation.size(), uint8_t(0));
     for (size_t scan_layer = 0; scan_layer < segmentation.size(); ++scan_layer) {
@@ -1494,26 +1803,38 @@ static void build_local_z_plan(PrintObject&                                print
                                                         rows[row_idx].state.component_error);
     };
 
-    auto row_is_active_on_layer = [&](size_t row_idx, size_t layer_id) {
-        if (row_idx >= rows.size() || layer_id >= segmentation.size())
-            return false;
-        for (size_t channel_idx = 0; channel_idx < segmentation[layer_id].size(); ++channel_idx) {
-            if (segmentation[layer_id][channel_idx].empty())
-                continue;
-            const unsigned int state_id = segmentation_channel_filament_id(channel_idx);
-            if (!mixed_mgr.is_mixed(state_id, num_physical))
-                continue;
-            const int mixed_idx = mixed_mgr.mixed_index_from_filament_id(state_id, num_physical);
-            if (mixed_idx >= 0 && size_t(mixed_idx) == row_idx)
-                return true;
-        }
-        return false;
-    };
-
     size_t channel_count = 0;
     for (const auto& channels : segmentation)
         channel_count = std::max(channel_count, channels.size());
     const std::vector<int> mixed_rows = mixed_filament_channel_rows(mixed_mgr, num_physical, channel_count);
+
+    // Keep cadence through moving paint boundaries. Only a physical ledge, or an entire
+    // island losing this recipe, needs a terminal pass at the nominal plane.
+    std::optional<std::vector<Polygons>> horizontal_interfaces;
+    auto                                 row_continues_above = [&](size_t row, size_t layer) {
+        throw_on_cancel();
+        const auto& here  = segmentation[layer];
+        const auto& above = segmentation[layer + 1];
+        for (size_t c = 0; c < here.size(); ++c) {
+            if (mixed_rows[c] != int(row) || here[c].empty())
+                continue;
+            if (c >= above.size() || above[c].empty())
+                return false;
+            if (here[c] == above[c])
+                continue;
+
+            if (!horizontal_interfaces)
+                horizontal_interfaces = local_z_horizontal_interfaces(print_object, throw_on_cancel);
+            const Polygons& faces = (*horizontal_interfaces)[layer];
+            if (!faces.empty() && !intersection_ex(diff_ex(here[c], above[c]), faces).empty())
+                return false;
+
+            for (const ExPolygon& island : here[c])
+                if (intersection_ex(above[c], island).empty())
+                    return false;
+        }
+        return true;
+    };
 
     // Only immutable geometry is prepared in parallel. Cadence, gradient state,
     // error accumulation, dependency IDs and plan emission remain ordered below.
@@ -1673,6 +1994,11 @@ static void build_local_z_plan(PrintObject&                                print
 
             std::vector<SubLayerPlan> independent_plans;
             independent_plans.reserve(std::max<size_t>(2, active_mixed_definitions * 2));
+            std::vector<LocalZIndependentRowFootprint> row_footprints(rows.size());
+            // Where every row resumed on this layer, and how far below the layer bottom that is. -1: the row does
+            // not run a stack of its own here.
+            std::vector<double> row_resume_z(rows.size(), 0.);
+            std::vector<double> row_lag(rows.size(), -1.);
             for (size_t row_idx = 0; row_idx < row_active_this_layer.size(); ++row_idx) {
                 if (row_active_this_layer[row_idx] == 0 || row_state_masks[row_idx].empty())
                     continue;
@@ -1681,15 +2007,24 @@ static void build_local_z_plan(PrintObject&                                print
                 const bool                                      gradient_row   = row_idx < rows.size() && rows[row_idx].is_gradient != 0;
                 const std::vector<LocalZIndependentDirectPass>& direct_cadence = rows[row_idx].direct_cadence;
                 if (!state.active || rows[row_idx].state.was_active == 0 || state.z_cursor > interval.z_hi + EPSILON) {
-                    state             = IndependentCadenceState{};
+                    const bool continuing = layer_id > 0 && rows[row_idx].state.was_active && independent_layers[layer_id - 1] &&
+                                            std::abs(state.z_cursor - interval.z_lo) < EPSILON;
+                    if (continuing) {
+                        state.gradient_cadence.clear();
+                        state.gradient_pass_index = 0;
+                    } else
+                        state = IndependentCadenceState{};
                     state.active      = true;
                     state.z_cursor    = interval.z_lo;
                     size_t last_layer = layer_id;
                     while (last_layer + 1 < print_object.layer_count() && independent_layers[last_layer + 1] != 0 &&
-                           row_is_active_on_layer(row_idx, last_layer + 1))
+                           row_continues_above(row_idx, last_layer))
                         ++last_layer;
                     state.z_end = print_object.get_layer(int(last_layer))->print_z;
                 }
+
+                row_resume_z[row_idx] = state.z_cursor;
+                row_lag[row_idx]      = std::max(0., interval.z_lo - state.z_cursor);
 
                 auto append_independent_pass = [&](double z_hi, double flow_height, unsigned int target_extruder) {
                     if (flow_height <= EPSILON || target_extruder == 0 || target_extruder > num_physical)
@@ -1800,7 +2135,71 @@ static void build_local_z_plan(PrintObject&                                print
 
                 if (interval.z_hi >= state.z_end - EPSILON)
                     state.active = false;
+
+                row_footprints[row_idx] = {std::move(row_state_masks[row_idx]), state.z_cursor};
             }
+
+            // A row that resumes below this layer's bottom would be printed into whatever it covers now and did not
+            // own before.
+            //
+            // Where that is the step a zone edge takes on this layer, nothing changes height: the zone keeps its
+            // tip, and the row's next pass stops short of it, at the edge the zone had on the layer below. Its walls
+            // are generated for the row's region without the tip, so they end in a seam there like the walls of the
+            // passes underneath. The pass after it starts above the tip and covers it. That next pass is the first
+            // one the row prints from here on, which may be on a later layer.
+            if (layer_id > 0) {
+                const LocalZInterval&    previous_interval = intervals.back();
+                const LocalZNominalZones no_zones;
+                const auto&              previous_zones = nominal_zones.empty() ? no_zones : nominal_zones[layer_id - 1];
+                for (size_t row_idx = 0; row_idx < row_lag.size(); ++row_idx) {
+                    std::vector<LocalZPendingTip>& pending_tips = row_pending_tips[row_idx];
+                    if (row_lag[row_idx] < 0.) {
+                        pending_tips.clear();
+                        continue;
+                    }
+                    if (row_lag[row_idx] > EPSILON) {
+                        const LocalZTakenOverArea taken = local_z_area_taken_over_by_resuming_row(previous_interval, row_idx,
+                                                                                                  row_footprints[row_idx].masks,
+                                                                                                  previous_row_footprints,
+                                                                                                  row_resume_z[row_idx], previous_zones);
+                        for (LocalZZoneSteps& steps :
+                             local_z_zone_steps_under_resuming_row(taken, row_idx, previous_row_footprints, row_resume_z[row_idx],
+                                                                   previous_zones, previous_interval.z_hi))
+                            pending_tips.push_back({std::move(steps.strips), steps.owner_top});
+                        if (!taken.empty())
+                            cut_local_z_zones_under_resuming_row(plans, intervals, taken, row_idx, rows.size(), row_resume_z[row_idx],
+                                                                 nozzle_min_layer_heights, nominal_zones);
+                    }
+                    if (pending_tips.empty())
+                        continue;
+
+                    // The first pass of the row on this layer, if it has one.
+                    const auto first_pass = std::find_if(independent_plans.begin(), independent_plans.end(),
+                                                         [row_idx](const SubLayerPlan& plan) {
+                                                             return plan.split_interval && plan.dependency_group == row_idx + 1;
+                                                         });
+                    if (first_pass == independent_plans.end())
+                        continue;
+                    const double pass_z_lo = first_pass->print_z - first_pass->flow_height;
+                    ExPolygons   held_back;
+                    for (const LocalZPendingTip& tip : pending_tips)
+                        if (tip.z > pass_z_lo + EPSILON)
+                            append(held_back, intersection_ex(tip.masks, row_footprints[row_idx].masks));
+                    pending_tips.clear();
+                    if (held_back.empty())
+                        continue;
+                    held_back = union_ex(held_back);
+                    for (ExPolygons& masks : first_pass->painted_masks_by_extruder)
+                        if (!masks.empty()) {
+                            masks = diff_ex(masks, held_back);
+                            break;
+                        }
+                    first_pass->held_back_masks = std::move(held_back);
+                }
+            }
+
+            interval.first_sublayer_idx = plans.size();
+            previous_row_footprints     = std::move(row_footprints);
 
             if (settings.local_z_whole_objects && !fixed_state_masks_union.empty()) {
                 const size_t fixed_dependency_group = rows.size() + 1;
@@ -1826,13 +2225,7 @@ static void build_local_z_plan(PrintObject&                                print
                 }
             }
 
-            std::sort(independent_plans.begin(), independent_plans.end(), [](const SubLayerPlan& lhs, const SubLayerPlan& rhs) {
-                if (std::abs(lhs.print_z - rhs.print_z) > EPSILON)
-                    return lhs.print_z < rhs.print_z;
-                if (lhs.dependency_group != rhs.dependency_group)
-                    return lhs.dependency_group < rhs.dependency_group;
-                return lhs.dependency_order < rhs.dependency_order;
-            });
+            std::sort(independent_plans.begin(), independent_plans.end(), independent_local_z_pass_less);
 
             double min_pass_height = interval.base_height;
             double max_pass_height = 0.0;
@@ -1862,6 +2255,10 @@ static void build_local_z_plan(PrintObject&                                print
 
         for (auto& row : rows)
             row.state.independent = IndependentCadenceState{};
+        for (LocalZIndependentRowFootprint& footprint : previous_row_footprints)
+            footprint = LocalZIndependentRowFootprint{};
+        for (std::vector<LocalZPendingTip>& pending_tips : row_pending_tips)
+            pending_tips.clear();
 
         std::vector<std::vector<double>> isolated_row_pass_heights(rows.size());
         bool                             isolated_multi_row_mode = false;
@@ -2129,23 +2526,13 @@ static void build_local_z_plan(PrintObject&                                print
                 }
 
                 if (!isolated_plans.empty()) {
-                    auto sort_local_z_plans = [](std::vector<SubLayerPlan>& plans) {
-                        std::sort(plans.begin(), plans.end(), [](const SubLayerPlan& lhs, const SubLayerPlan& rhs) {
-                            if (std::abs(lhs.print_z - rhs.print_z) > EPSILON)
-                                return lhs.print_z < rhs.print_z;
-                            if (std::abs(lhs.z_lo - rhs.z_lo) > EPSILON)
-                                return lhs.z_lo < rhs.z_lo;
-                            return lhs.pass_index < rhs.pass_index;
-                        });
-                    };
-
-                    sort_local_z_plans(isolated_plans);
+                    std::sort(isolated_plans.begin(), isolated_plans.end(), isolated_local_z_pass_less);
 
                     std::vector<SubLayerPlan> fixed_plans = build_whole_object_fixed_plans(isolated_plans.size());
                     if (!fixed_plans.empty()) {
                         isolated_plans.insert(isolated_plans.end(), std::make_move_iterator(fixed_plans.begin()),
                                               std::make_move_iterator(fixed_plans.end()));
-                        sort_local_z_plans(isolated_plans);
+                        std::sort(isolated_plans.begin(), isolated_plans.end(), isolated_local_z_pass_less);
                     }
 
                     double min_flow_height = isolated_plans.front().flow_height;
@@ -2448,19 +2835,26 @@ bool finalize_local_z_plan(PrintObject& print_object, LocalZPlanningInput input,
     } else {
         // Slicing repair may discard empty layers from the bottom and renumber
         // the remaining Layer IDs. Keep the captured paint channels aligned.
-        if (input.segmentation.size() > print_object.layer_count())
-            input.segmentation.erase(input.segmentation.begin(),
-                                     input.segmentation.begin() + (input.segmentation.size() - print_object.layer_count()));
+        if (input.segmentation.size() > print_object.layer_count()) {
+            const size_t removed = input.segmentation.size() - print_object.layer_count();
+            input.segmentation.erase(input.segmentation.begin(), input.segmentation.begin() + removed);
+            if (!input.nominal_zones.empty())
+                input.nominal_zones.erase(input.nominal_zones.begin(), input.nominal_zones.begin() + removed);
+        }
         for (size_t i = 0; i < input.segmentation.size(); ++i) {
             throw_on_cancel();
             const ExPolygons domain = collect_layer_region_slices(*print_object.get_layer(int(i)));
             for (ExPolygons& masks : input.segmentation[i])
                 if (!masks.empty())
                     masks = intersection_ex(masks, domain);
+            if (!input.nominal_zones.empty())
+                for (LocalZNominalZone& zone : input.nominal_zones[i])
+                    zone.islands = intersection_ex(zone.islands, domain);
         }
     }
     if (!input.segmentation.empty())
-        build_local_z_plan(print_object, input.segmentation, input.whole_object_scope_active, throw_on_cancel, height_limits_violated);
+        build_local_z_plan(print_object, input.segmentation, input.nominal_zones, input.whole_object_scope_active, throw_on_cancel,
+                           height_limits_violated);
     return height_limits_violated;
 }
 

@@ -212,6 +212,60 @@ bool Layer::is_perimeter_compatible(const PrintRegion& a, const PrintRegion& b)
         && config.seam_slope_inner_walls  == other_config.seam_slope_inner_walls;
 }
 
+// The areas that Local-Z passes hold back on a layer: a pass of a row does not cover them, although the row's region
+// does. See SubLayerPlan::held_back_masks.
+static ExPolygons local_z_held_back_masks(const Layer& layer)
+{
+    ExPolygons         masks;
+    const PrintObject* object = layer.object();
+    if (object == nullptr)
+        return masks;
+    const LocalZInterval* interval = object->local_z_interval_for_layer(layer.id());
+    if (interval == nullptr)
+        return masks;
+    const auto&  plans   = object->local_z_sublayer_plan();
+    const size_t end_idx = std::min(plans.size(), interval->first_sublayer_idx + interval->sublayer_count);
+    for (size_t plan_idx = interval->first_sublayer_idx; plan_idx < end_idx; ++plan_idx)
+        append(masks, plans[plan_idx].held_back_masks);
+    if (masks.size() > 1)
+        masks = union_ex(masks);
+    return masks;
+}
+
+// Generate a second set of perimeters for a group of compatible regions, without the areas that Local-Z passes hold
+// back on this layer. A pass that stops short of such an area is printed with these, so that its walls turn inwards
+// and end in a seam there instead of being cut off. owner holds the perimeters of the group.
+static void make_local_z_alt_perimeters(LayerRegion&             owner,
+                                        const SurfaceCollection& group_slices,
+                                        const LayerRegionPtrs&   group,
+                                        const ExPolygons&        held_back)
+{
+    if (held_back.empty() || owner.perimeters.empty())
+        return;
+
+    SurfaceCollection alt_slices;
+    bool              changed = false;
+    for (const Surface& surface : group_slices.surfaces) {
+        ExPolygons rest = diff_ex(ExPolygons{surface.expolygon}, held_back);
+        if (rest.size() != 1 || std::abs(rest.front().area() - surface.expolygon.area()) > 1.)
+            changed = true;
+        if (!rest.empty())
+            alt_slices.append(rest, surface);
+    }
+    if (!changed)
+        return;
+
+    ExtrusionEntityCollection perimeters = std::move(owner.perimeters);
+    ExtrusionEntityCollection thin_fills = std::move(owner.thin_fills);
+    SurfaceCollection         alt_fill_surfaces;
+    ExPolygons                alt_fill_no_overlap;
+    owner.make_perimeters(alt_slices, group, &alt_fill_surfaces, &alt_fill_no_overlap);
+    owner.local_z_alt_perimeters = std::move(owner.perimeters);
+    owner.perimeters             = std::move(perimeters);
+    owner.thin_fills.clear();
+    owner.thin_fills = std::move(thin_fills);
+}
+
 // Here the perimeters are created cummulatively for all layer regions sharing the same parameters influencing the perimeters.
 // The perimeter paths and the thin fills (ExtrusionEntityCollection) are assigned to the first compatible layer region.
 // The resulting fill surface is split back among the originating regions.
@@ -221,7 +275,11 @@ void Layer::make_perimeters()
     
     // keep track of regions whose perimeters we have already generated
     std::vector<unsigned char> done(m_regions.size(), false);
-    
+
+    const ExPolygons local_z_held_back = local_z_held_back_masks(*this);
+    for (LayerRegion* layerm : m_regions)
+        layerm->local_z_alt_perimeters.reset();
+
     for (LayerRegionPtrs::iterator layerm = m_regions.begin(); layerm != m_regions.end(); ++ layerm) 
     	if ((*layerm)->slices.empty()) {
  			(*layerm)->perimeters.clear();
@@ -259,7 +317,8 @@ void Layer::make_perimeters()
 	            (*layerm)->fill_surfaces.surfaces.clear();
                 (*layerm)->make_perimeters((*layerm)->slices, {*layerm}, &(*layerm)->fill_surfaces, &(*layerm)->fill_no_overlap_expolygons);
 	            (*layerm)->fill_expolygons = to_expolygons((*layerm)->fill_surfaces.surfaces);
-	        } else {
+                make_local_z_alt_perimeters(**layerm, (*layerm)->slices, {*layerm}, local_z_held_back);
+            } else {
 	            SurfaceCollection new_slices;
 	            // Use the region with highest infill rate, as the make_perimeters() function below decides on the gap fill based on the infill existence.
 	            LayerRegion *layerm_config = layerms.front();
@@ -282,8 +341,9 @@ void Layer::make_perimeters()
                 //BBS
                 ExPolygons fill_no_overlap;
 	            layerm_config->make_perimeters(new_slices, layerms, &fill_surfaces, &fill_no_overlap);
+                make_local_z_alt_perimeters(*layerm_config, new_slices, layerms, local_z_held_back);
 
-	            // assign fill_surfaces to each layer
+                // assign fill_surfaces to each layer
 	            if (!fill_surfaces.surfaces.empty()) { 
 	                for (LayerRegionPtrs::iterator l = layerms.begin(); l != layerms.end(); ++l) {
 	                    // Separate the fill surfaces.

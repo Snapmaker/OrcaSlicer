@@ -1452,7 +1452,10 @@ static bool apply_mixed_region_surface_offsets(PrintObject& print_object)
 }
 
 template<typename ThrowOnCancel>
-static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<std::vector<ExPolygons>> segmentation, ThrowOnCancel throw_on_cancel)
+static inline void apply_mm_segmentation(PrintObject&                         print_object,
+                                         std::vector<std::vector<ExPolygons>> segmentation,
+                                         std::vector<LocalZNominalZones>&     nominal_zones,
+                                         ThrowOnCancel                        throw_on_cancel)
 {
     assert(segmentation.size() == print_object.layer_count());
     const PrintConfig        &print_cfg = print_object.print()->config();
@@ -1505,20 +1508,9 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
 
     tbb::parallel_for(
         tbb::blocked_range<size_t>(0, segmentation.size(), std::max(segmentation.size() / 128, size_t(1))),
-        [&print_object,
-         &segmentation,
-         &mixed_mgr,
-         &mixed_zone_component_local_layer_index,
-         mixed_zone_phase_slot,
-         num_physical,
-         num_channels,
-         preferred_a,
-         preferred_b,
-         base_height,
-         collapse_mixed_regions_effective,
-         local_z_mode,
-         bias_mode_enabled,
-         throw_on_cancel](const tbb::blocked_range<size_t> &range) {
+        [&print_object, &segmentation, &mixed_mgr, &mixed_zone_component_local_layer_index, &nominal_zones, mixed_zone_phase_slot,
+         num_physical, num_channels, preferred_a, preferred_b, base_height, collapse_mixed_regions_effective, local_z_mode,
+         bias_mode_enabled, throw_on_cancel](const tbb::blocked_range<size_t>& range) {
             const auto  &layer_ranges   = print_object.shared_regions()->layer_ranges;
             double       z              = print_object.get_layer(int(range.begin()))->slice_z;
             auto         it_layer_range = layer_range_first(layer_ranges, z);
@@ -1527,7 +1519,8 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
             // now include enabled mixed / virtual filaments.
             const size_t num_extruders = num_channels > 0 ? num_channels - 1 : 0;
 
-            struct ByExtruder {
+            struct ByExtruder
+            {
                 ExPolygons  expolygons;
                 BoundingBox bbox;
             };
@@ -1556,7 +1549,8 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                 return out;
             };
 
-            struct ByRegion {
+            struct ByRegion
+            {
                 SurfaceCollection surfaces;
                 bool       needs_merge { false };
             };
@@ -1650,6 +1644,21 @@ static inline void apply_mm_segmentation(PrintObject &print_object, std::vector<
                         const size_t effective_idx = effective_filament_id >= 1 && effective_filament_id <= num_extruders ?
                                                          size_t(effective_filament_id - 1) :
                                                          channel_idx - 1;
+                        // Keep the paint's per-island cadence when an ending nominal zone becomes a shortened pass.
+                        // A retained virtual region instead resolves its filament at the ordinary layer index.
+                        if (!nominal_zones.empty() && !masks.empty()) {
+                            unsigned int nominal_tool = effective_filament_id;
+                            if (nominal_tool > num_physical) {
+                                const MixedFilament* row = mixed_mgr.mixed_filament_from_id(channel_id, num_physical);
+                                if (row && !mixed_filament_definition_uses_local_z(*row, local_z_mode))
+                                    nominal_tool = mixed_mgr.effective_painted_region_filament_id(channel_id, num_physical, int(layer_id),
+                                                                                                  float(layer.print_z), float(layer.height),
+                                                                                                  float(preferred_a), float(preferred_b),
+                                                                                                  float(base_height));
+                            }
+                            if (nominal_tool >= 1 && nominal_tool <= num_physical)
+                                nominal_zones[layer_id].push_back({nominal_tool, masks});
+                        }
                         append_to_extruder(effective_idx, std::move(masks));
                     };
                     const bool split_by_zone_phase =
@@ -2604,7 +2613,9 @@ void PrintObject::slice_volumes(LocalZPlanningInput& local_z_input)
                                                                       has_whole_object_local_z_scope);
         local_z_input.segmentation              = std::move(local_z_segmentation);
         local_z_input.whole_object_scope_active = has_whole_object_local_z_scope;
-        apply_mm_segmentation(*this, std::move(mm_segmentation), [print]() { print->throw_if_canceled(); });
+        if (std::any_of(local_z_enabled_rows.begin(), local_z_enabled_rows.end(), [](uint8_t enabled) { return enabled != 0; }))
+            local_z_input.nominal_zones.resize(mm_segmentation.size());
+        apply_mm_segmentation(*this, std::move(mm_segmentation), local_z_input.nominal_zones, [print]() { print->throw_if_canceled(); });
     }
 
     apply_mixed_region_surface_offsets(*this);

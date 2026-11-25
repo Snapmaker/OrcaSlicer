@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 #include "test_utils.hpp"
 #include "libslic3r/ExtrusionEntity.hpp"
@@ -14,6 +15,7 @@
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 
+#include <boost/filesystem.hpp>
 #include <algorithm>
 #include <cmath>
 #include <clocale>
@@ -379,6 +381,46 @@ TEST_CASE("Mixed color match weights enforce the configured minimum", "[MixedFil
             CHECK(clamp_color_match_weights_mirror(once, minimum) == once);
         }
     }
+}
+
+TEST_CASE("Registered filament refresh preserves project calibration until replacement", "[MixedFilament][Remediation]")
+{
+    PresetBundle bundle;
+    auto         preset = bundle.filaments.default_preset().config;
+    bundle.filaments.load_preset("", "Custom A", preset, false);
+    bundle.filaments.load_preset("", "Custom B", preset, false);
+    bundle.filament_presets = {"Custom A", "Missing preset"};
+    auto& cfg               = bundle.project_config;
+    cfg.set_key_value("filament_transmission_distance", new ConfigOptionFloats({7.25, 8.5}));
+    cfg.set_key_value("filament_full_spectrum_material_id", new ConfigOptionStrings({"custom-a", "archived"}));
+    cfg.option<ConfigOptionStrings>("filament_colour")->values = {"#DD0011", "#0000CC"};
+    bundle.update_multi_material_filament_presets();
+    bundle.update_multi_material_filament_presets();
+    CHECK(cfg.option<ConfigOptionFloats>("filament_transmission_distance")->values == std::vector<double>{7.25, 8.5});
+    CHECK(cfg.option<ConfigOptionStrings>("filament_full_spectrum_material_id")->values ==
+          std::vector<std::string>{"custom-a", "archived"});
+
+    const auto path = boost::filesystem::temp_directory_path() / boost::filesystem::unique_path("material-%%%%-%%%%.json");
+    bundle.full_config().save_to_json(path.string(), "Calibration", "project", "1.0.0");
+    DynamicPrintConfig                 reopened;
+    std::map<std::string, std::string> keys;
+    std::string                        reason;
+    reopened.load_from_json(path.string(), ForwardCompatibilitySubstitutionRule::Enable, keys, reason);
+    boost::filesystem::remove(path);
+    REQUIRE(reopened.has("filament_transmission_distance"));
+    CHECK(reopened.option<ConfigOptionFloats>("filament_transmission_distance")->values == std::vector<double>{7.25, 8.5});
+    CHECK(reopened.option<ConfigOptionStrings>("filament_full_spectrum_material_id")->values ==
+          std::vector<std::string>{"custom-a", "archived"});
+
+    bundle.set_filament_preset(0, "Custom B");
+    bundle.update_multi_material_filament_presets();
+    CHECK(cfg.option<ConfigOptionFloats>("filament_transmission_distance")->values == std::vector<double>{0., 8.5});
+    CHECK(cfg.option<ConfigOptionStrings>("filament_full_spectrum_material_id")->values == std::vector<std::string>{"", "archived"});
+    preset.set_key_value("filament_transmission_distance", new ConfigOptionFloats({4.25}));
+    bundle.filaments.load_preset("", "Measured", preset, false);
+    bundle.set_filament_preset(0, "Measured");
+    bundle.update_multi_material_filament_presets();
+    CHECK(cfg.option<ConfigOptionFloats>("filament_transmission_distance")->values.front() == 4.25);
 }
 
 TEST_CASE("Mixed filament remap follows stable row ids when same-pair rows reorder", "[MixedFilament]")
@@ -4656,6 +4698,30 @@ TEST_CASE("add_batch at the filament cap emits per-entry zero ids instead of tru
     CHECK(mgr.total_filaments(4) == kMax);
 }
 
+TEST_CASE("Saved mixes have priority over new automatic pairs at the 64-recipe limit", "[MixedFilament][MixedManage]")
+{
+    MixedAutoGenerateGuard         guard(true);
+    const std::vector<std::string> colors(16, "#808080");
+    // Pair 15/16 is outside the first 64 generated pairs. Its saved index must survive reopening.
+    auto late_pair        = make_row(15, 16);
+    late_pair.custom      = false;
+    late_pair.origin_auto = true;
+    late_pair.stable_id   = 1000;
+    MixedFilamentManager saved;
+    saved.set_mixed_filament_legacy_rows({late_pair}, colors.size(), colors);
+    REQUIRE(saved.add_custom_filament(1, 2, 37, colors));
+
+    MixedFilamentManager reopened;
+    reopened.auto_generate(colors);
+    REQUIRE(reopened.registered_count() == 64);
+    reopened.load_custom_entries(saved.serialize_custom_entries(), colors);
+    CHECK(reopened.registered_count() == 64);
+    CHECK(reopened.filament_id_from_stable_id(1000, colors.size()).value_or(0) == 17);
+    const auto before = reopened.serialize_custom_entries();
+    CHECK_FALSE(reopened.add_custom_filament(2, 3, 40, colors));
+    CHECK(reopened.serialize_custom_entries() == before);
+}
+
 TEST_CASE("add_batch clamps out-of-range components and falls back on a==b instead of dropping", "[MixedFilament][batch_match]")
 {
     MixedAutoGenerateGuard guard(false);
@@ -6614,6 +6680,10 @@ TEST_CASE("Mixed filament config remap sends deleted mixed rows to default", "[M
 TEST_CASE("SML layer count stays consistent between gcode header and layer tags", "[MixedFilament][LocalZ][LayerCount]")
 {
     MixedAutoGenerateGuard guard(false);
+    const bool             bbl          = GENERATE(false, true);
+    const bool             with_preview = GENERATE(false, true);
+    CAPTURE(bbl, with_preview);
+    GCodeTagFlavourGuard flavour(bbl);
 
     constexpr unsigned int mixed_virtual_id = 5;
     constexpr uint64_t     stable_id        = 4242;
@@ -6644,54 +6714,41 @@ TEST_CASE("SML layer count stays consistent between gcode header and layer tags"
     REQUIRE(side_facets > 0);
     REQUIRE(volume->mmu_segmentation_facets.set(selector));
 
-    DynamicPrintConfig config = mixed_region_print_config(single_custom_mixed_definition(1, 2, stable_id));
+    DynamicPrintConfig config;
+    // Create the options from their definitions so enum lists can be serialized during export.
+    config.apply(mixed_region_print_config(single_custom_mixed_definition(1, 2, stable_id)));
     config.set("dithering_local_z_mode", true);
 
     Print print;
     print.set_status_silent();
+    print.is_BBL_printer() = bbl;
     print.apply(model, config);
-    config = print.full_print_config();
-    try {
-        print.process();
-    } catch (const std::exception &e) {
-        printf("[layer-count-diag] process exception=%s\n", e.what());
-        fflush(stdout);
-    }
-    REQUIRE(print.objects().size() == 1);
-    const PrintObject *print_object = print.objects().front();
-    if (! print_object->is_step_done(posSlice)) {
-        SKIP("slicing did not finish in this environment (known local aborts)");
-    }
+    print.process();
 
-    // The painted virtual extruder needs valid per-filament arrays for gcode export.
-    print.set_status_silent();
-    std::string gcode_path = "sml_layer_count_diag.gcode";
-    std::remove(gcode_path.c_str());
-    try {
-        print.export_gcode(gcode_path, nullptr);
-    } catch (const std::exception &e) {
-        printf("[layer-count-diag] export exception=%s\n", e.what());
-        fflush(stdout);
-    }
+    const std::string    gcode_path = boost::filesystem::unique_path("sml-layer-count-%%%%-%%%%.gcode").string();
+    GCodeProcessorResult preview;
+    REQUIRE(print.export_gcode(gcode_path, with_preview ? &preview : nullptr) == gcode_path);
     std::ifstream in(gcode_path, std::ios::binary);
-    if (! in.good()) {
-        std::remove(gcode_path.c_str());
-        SKIP("gcode export did not finish in this environment");
-    }
+    REQUIRE(in.good());
     std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
     std::remove(gcode_path.c_str());
 
+    if (with_preview) {
+        CHECK(preview.filename == gcode_path);
+        CHECK_FALSE(preview.moves.empty());
+        if (bbl)
+            CHECK(preview.label_object_enabled);
+    }
+    const std::string layer_tag     = bbl ? "; CHANGE_LAYER" : ";LAYER_CHANGE";
     size_t layer_changes = 0;
-    for (size_t pos = 0; (pos = content.find(";LAYER_CHANGE", pos)) != std::string::npos; pos += 13)
+    for (size_t pos = 0; (pos = content.find(layer_tag, pos)) != std::string::npos; pos += layer_tag.size())
         ++layer_changes;
-    size_t total_layer_header = 0;
-    const size_t tag_pos = content.find("total_layer_count = ");
-    if (tag_pos != std::string::npos)
-        total_layer_header = size_t(atoi(content.c_str() + tag_pos + 21));
-
-    printf("[layer-count-diag] header=%zu layer_change_tags=%zu\n", total_layer_header, layer_changes);
-    fflush(stdout);
-    CHECK(total_layer_header == layer_changes);
+    const std::string header_key = "; total layer number: ";
+    const size_t      tag_pos    = content.find(header_key);
+    REQUIRE(tag_pos != std::string::npos);
+    REQUIRE(layer_changes > 0);
+    CHECK(std::stoul(content.substr(tag_pos + header_key.size())) == layer_changes);
 }
 
 TEST_CASE("GCodeProcessor layer endpoints table matches layer tags and covers moves", "[MixedFilament][LayerEndpoints]")

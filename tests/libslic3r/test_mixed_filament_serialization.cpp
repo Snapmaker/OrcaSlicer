@@ -5,11 +5,13 @@
 #include "libslic3r/MixedFilament/Serialization.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/Print.hpp"
 #include "libslic3r/TriangleSelector.hpp"
 #include "libslic3r/miniz_extension.hpp"
 
 #include <boost/filesystem.hpp>
 #include <nlohmann/json.hpp>
+#include <set>
 
 using namespace Slic3r;
 using Json = nlohmann::json;
@@ -194,6 +196,95 @@ TEST_CASE("Mixed JSON validates numbers identities and references before publica
     SECTION("Unsupported distribution") { recipe["distribution"] = "unknown"; }
     SECTION("Unsupported state") { recipe["state"] = "unknown"; }
     REQUIRE_THROWS_AS(deserialize_mixed_filaments_json(document.dump(), 12), std::runtime_error);
+}
+
+TEST_CASE("Removing an unused slot keeps a manual pattern printable and saveable", "[MixedFilamentJSON][Remediation]")
+{
+    MixedFilamentDefinition recipe;
+    recipe.identity.stable_id      = 100;
+    recipe.source.kind             = MixedFilamentSourceKind::Custom;
+    recipe.recipe.kind             = MixedFilamentRecipeKind::ManualPattern;
+    recipe.recipe.blend.components = {{{4}, 25}, {{5}, 25}, {{3}, 50}};
+    recipe.recipe.manual_pattern   = MixedFilamentManualPattern{{{{3}, {4}, {5}}}};
+    recipe.behavior.distribution   = MixedFilamentDistributionMode::LayerCycle;
+    MixedFilamentManager manager;
+    manager.set_mixed_filament_definitions({recipe}, std::vector<std::string>(5, "#888888"));
+    manager.remove_physical_filament(1);
+
+    MixedFilamentManager reopened;
+    reopened.load_custom_entries(manager.serialize_custom_entries(), std::vector<std::string>(4, "#888888"));
+    const auto entries = reopened.mixed_filament_definitions(4);
+    REQUIRE(entries.size() == 1);
+    CHECK(entries.front().identity.stable_id == 100);
+    REQUIRE(entries.front().recipe.manual_pattern.has_value());
+    const auto& groups = entries.front().recipe.manual_pattern->groups;
+    REQUIRE(groups.size() == 1);
+    REQUIRE(groups.front().size() == 3);
+    for (size_t i = 0; i < groups.front().size(); ++i)
+        CHECK(groups.front()[i].id == i + 2);
+    for (const auto& component : entries.front().recipe.blend.components)
+        CHECK(component.percent == (component.filament.id == 2 ? 50 : 25));
+}
+
+TEST_CASE("A baseline manual pattern outside the primary pair can open, slice and resave", "[MixedFilamentJSON][Persistence][3mf]")
+{
+    TemporaryDirectory temporary;
+    Model              model;
+    model.set_backup_path((temporary.path / "export").string());
+    auto* object = model.add_object();
+    object->add_volume(make_cube(6., 6., 2.));
+    object->add_instance();
+    object->config.set("extruder", 5);
+    auto config = full_config();
+    config.set_num_extruders(4);
+    config.set_num_filaments(4);
+    config.option<ConfigOptionStrings>("filament_colour")->values  = {"#ff0000", "#00ff00", "#0000ff", "#ffffff"};
+    config.option<ConfigOptionFloats>("filament_diameter")->values = {1.75, 1.76, 1.77, 1.78};
+    config.set("enable_prime_tower", false);
+    config.set("mixed_filament_definitions", "3,4,1,1,25,0,m0,u101;1,2,1,1,50,0,m0,u102,12");
+    const auto archive = (temporary.path / "project.3mf").string();
+    REQUIRE(save_project(archive, model, config));
+    auto       entries  = read_zip(archive);
+    const auto expected = Json::parse(entry(entries, MIXED_FILAMENTS_3MF_PATH));
+    auto       document = expected;
+    // Baseline deletion of slot 1 shifts A/B from 4/5 to 3/4 and pattern 3,4,5 to 2,3,4.
+    SECTION("Slot 2 after deletion") { document["recipes"][0]["pattern"] = {{2, 3, 4}}; }
+    SECTION("Slot 1 outside the pair") { document["recipes"][0]["pattern"] = {{3, 1, 4}}; }
+    SECTION("Slot 1 and slot 2 in separate groups") { document["recipes"][0]["pattern"] = {{3, 1}, {2, 4}}; }
+    entry(entries, MIXED_FILAMENTS_3MF_PATH)           = document.dump();
+    auto settings                                      = Json::parse(entry(entries, "Metadata/project_settings.config"));
+    settings["mixed_filament_definitions"]             = "";
+    entry(entries, "Metadata/project_settings.config") = settings.dump();
+    write_zip(archive, entries);
+
+    LoadedProject loaded;
+    REQUIRE(loaded.load(archive, (temporary.path / "import").string()));
+    const auto typed = deserialize_mixed_filaments_json(document.dump(), 4);
+    CHECK(Json::parse(serialize_mixed_filaments_json(typed, 4)) == document);
+    REQUIRE(loaded.model.objects.size() == 1);
+    CHECK(loaded.model.objects.front()->config.opt_int("extruder") == 5);
+    Print print;
+    print.set_status_silent();
+    print.apply(loaded.model, loaded.config);
+    REQUIRE(print.config().filament_diameter.size() == 4);
+    REQUIRE(print.mixed_filament_manager().filament_id_from_stable_id(101, 4) == 5);
+    print.process();
+    GCodeProcessorResult preview;
+    const auto           gcode = (temporary.path / "sliced.gcode").string();
+    REQUIRE(print.export_gcode(gcode, &preview) == gcode);
+    std::set<unsigned> wall_filaments;
+    for (const auto& move : preview.moves)
+        if (move.type == EMoveType::Extrude && move.extrusion_role == erExternalPerimeter)
+            wall_filaments.insert(move.extruder_id + 1);
+    CHECK(wall_filaments == std::set<unsigned>{3, 4});
+
+    const auto resaved = (temporary.path / "resaved.3mf").string();
+    REQUIRE(save_project(resaved, loaded.model, loaded.config));
+    auto saved = read_zip(resaved);
+    CHECK(Json::parse(entry(saved, MIXED_FILAMENTS_3MF_PATH)) == expected);
+    LoadedProject reopened;
+    REQUIRE(reopened.load(resaved, (temporary.path / "reopen").string()));
+    CHECK(reopened.config.opt_string("mixed_filament_definitions") == loaded.config.opt_string("mixed_filament_definitions"));
 }
 
 TEST_CASE("Mixed JSON owns recipes across production 3MF loads and saves", "[MixedFilamentJSON][Persistence][3mf]")
@@ -399,7 +490,7 @@ TEST_CASE("Existing CubeLines project migrates to JSON without changing recipes 
     }
 }
 
-TEST_CASE("256 mixed recipes retain high object and painted IDs through 3MF", "[MixedManage][MixedFilamentJSON][3mf]")
+TEST_CASE("Legacy projects with 256 mixed recipes retain high object and painted IDs through 3MF", "[MixedManage][MixedFilamentJSON][3mf]")
 {
     TemporaryDirectory temporary;
     Model              model;

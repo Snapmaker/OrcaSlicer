@@ -2,6 +2,8 @@
 
 #include <functional>
 #include <list>
+#include <map>
+#include "libslic3r/GCode/ThumbnailData.hpp"
 #include <vector>
 
 #include <wx/bitmap.h>
@@ -18,8 +20,6 @@ class wxCheckBox;
 
 namespace Slic3r
 {
-
-struct ThumbnailData;
 
 namespace GUI
 {
@@ -60,14 +60,15 @@ private:
     void loadPlateThumbnail(unsigned int plateIndex);
     void loadCoverPreview();
 
-    wxBitmap generateCoverPreview(const ThumbnailData& thumb,
-                                   const ThumbnailData& noLightThumb,
-                                   const std::vector<FilamentData>& filamentMapping,
-                                   const std::vector<MixedFilamentPreviewInfo>& mixedFilamentInfos,
-                                   const std::vector<unsigned int>& filamentIdRemap,
-                                   int  oldPhysicalFilamentCount,
-                                   bool isMappingMode,
-                                   bool shouldDeleteMixedFilaments);
+    wxBitmap generateCoverPreview(const ThumbnailData&                         thumb,
+                                  const ThumbnailData&                         noLightThumb,
+                                  const ThumbnailData*                         materialIds,
+                                  const std::vector<FilamentData>&             filamentMapping,
+                                  const std::vector<MixedFilamentPreviewInfo>& mixedFilamentInfos,
+                                  const std::vector<unsigned int>&             filamentIdRemap,
+                                  int                                          oldPhysicalFilamentCount,
+                                  bool                                         isMappingMode,
+                                  bool                                         shouldDeleteMixedFilaments);
 
     static wxBitmap thumbnailToBitmap(const ThumbnailData& thumb);
 
@@ -101,6 +102,7 @@ private:
     std::vector<FilamentData> m_machineDataList;
     std::vector<unsigned int> m_filamentIdRemap;
     std::vector<MixedFilamentPreviewInfo> m_mixedFilamentInfos;
+    std::map<unsigned int, ThumbnailData> m_material_id_thumbnails;
     bool m_bMappingMode        = true;
     bool m_hasMixedFilaments   = false;
     bool m_shouldDeleteMixedFilaments = false;

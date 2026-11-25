@@ -2,6 +2,7 @@
 #define slic3r_Layer_hpp_
 
 #include "libslic3r.h"
+#include <optional>
 #include "BoundingBox.hpp"
 #include "Flow.hpp"
 #include "SurfaceCollection.hpp"
@@ -67,6 +68,11 @@ public:
     // (this collection contains only ExtrusionEntityCollection objects)
     ExtrusionEntityCollection   perimeters;
 
+    // The perimeters of this region without the areas that Local-Z passes hold back on this layer
+    // (SubLayerPlan::held_back_masks), for the passes that hold them back. Same structure as perimeters.
+    // Disengaged if the region is unchanged. A generated set may legitimately contain no walls.
+    std::optional<ExtrusionEntityCollection> local_z_alt_perimeters;
+
     // ordered collection of extrusion paths to fill surfaces
     // (this collection contains only ExtrusionEntityCollection objects)
     ExtrusionEntityCollection   fills;
@@ -99,7 +105,13 @@ public:
     bool    has_extrusions() const { return ! this->perimeters.entities.empty() || ! this->fills.entities.empty(); }
     //BBS
     void    simplify_infill_extrusion_entity() { simplify_entity_collection(&fills); }
-    void    simplify_wall_extrusion_entity() { simplify_entity_collection(&perimeters); }
+    void    simplify_wall_extrusion_entity()
+    {
+        simplify_entity_collection(&perimeters);
+        if (local_z_alt_perimeters)
+            simplify_entity_collection(&*local_z_alt_perimeters);
+    }
+
 private:
     void    simplify_entity_collection(ExtrusionEntityCollection* entity_collection);
     void    simplify_path(ExtrusionPath* path);

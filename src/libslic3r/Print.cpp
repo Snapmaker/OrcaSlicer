@@ -99,13 +99,15 @@ static bool extrusion_collection_has_local_z_segment(const ExtrusionEntityCollec
     return false;
 }
 
-static bool layer_has_local_z_extrusions(const Layer& layer, const LocalZClipper& pass_masks, bool include_infill)
+static bool layer_has_local_z_extrusions(const Layer& layer, const LocalZClipper& pass_masks, bool include_infill, bool holds_back_zone)
 {
     if (pass_masks.empty())
         return false;
 
     for (const LayerRegion *layer_region : layer.regions()) {
-        for (const ExtrusionEntity *entity : layer_region->perimeters.entities) {
+        const auto& perimeters = holds_back_zone && layer_region->local_z_alt_perimeters ? *layer_region->local_z_alt_perimeters :
+                                                                                           layer_region->perimeters;
+        for (const ExtrusionEntity* entity : perimeters.entities) {
             const auto *extrusions = dynamic_cast<const ExtrusionEntityCollection*>(entity);
             if (extrusions == nullptr)
                 continue;
@@ -178,7 +180,8 @@ static std::vector<LocalZWipeTowerPassRef> collect_local_z_wipe_tower_passes(con
                 const ExPolygons& pass_masks = compensated_masks_by_extruder[extruder_id];
                 if (pass_masks.empty())
                     continue;
-                if (layer_has_local_z_extrusions(*layer_to_print.object_layer, LocalZClipper(pass_masks), local_z_infill_enabled))
+                if (layer_has_local_z_extrusions(*layer_to_print.object_layer, LocalZClipper(pass_masks), local_z_infill_enabled,
+                                                 !plan.held_back_masks.empty()))
                     pass_ref.extruders.push_back(unsigned(extruder_id));
             }
 
@@ -2579,8 +2582,8 @@ std::string Print::export_gcode(const std::string& path_template, GCodeProcessor
     gcode.set_gcode_offset(origin(0), origin(1));
     gcode.do_export(this, path.c_str(), result, thumbnail_cb);
 
-    //BBS
-    result->conflict_result = m_conflict_result;
+    if (result != nullptr)
+        result->conflict_result = m_conflict_result;
     return path.c_str();
 }
 

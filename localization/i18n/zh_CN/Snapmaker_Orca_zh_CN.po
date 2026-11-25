@@ -16164,8 +16164,9 @@ msgid "No mixing recommendations"
 msgstr "暂无混色推荐"
 
 # Mixed filament management (PRD 2.0).
-msgid "The limit is 256 mixed filaments. Deselect some recommendations before confirming."
-msgstr "超过256个混色耗材的上限，请取消选择部分混色卡后再确认。"
+#, c-format
+msgid "The limit is %u mixed filaments. Deselect some recommendations before confirming."
+msgstr "超过%u 个混色耗材的上限，请取消选择部分混色卡后再确认。"
 
 # Mixed filament management (PRD 2.0).
 msgid "Registration failed. Please try again."
@@ -16188,14 +16189,224 @@ msgid "Browse mixed colors made from the current filaments and choose combinatio
 msgstr "自动展示当前耗材色卡的混色素材库，便捷挑选适配的混色组合。"
 
 # Mixed filament management (PRD 2.0).
-msgid "Mixed filament limit reached (256 recipes). Excess mixed colors will be removed."
-msgstr "达到混色耗材数量上限（256个配方）。超出的混色将被移除。"
+#, c-format
+msgid "Mixed filament limit reached (%u recipes). Excess mixed colors will be removed."
+msgstr "达到混色耗材数量上限（%u 个配方）。超出的混色将被移除。"
 
 msgid "Are you sure you want to terminate the entire import process?"
 msgstr "确定要终止整个导入流程吗？"
 
 msgid "Material type of the new filament"
 msgstr "新耗材的材料类型"
+
+
+#: src/libslic3r/PrintConfig.cpp:2159
+msgid "Transmission distance"
+msgstr "透射距离"
+
+#: src/libslic3r/PrintConfig.cpp:2160
+msgid "Measured optical transmission distance for color calibration, in millimeters. Use 0 when unknown."
+msgstr "用于颜色校准的实测光学透射距离，单位为毫米。未知时填 0。"
+
+#: src/libslic3r/PrintConfig.cpp:2168
+msgid "FullSpectrum material ID"
+msgstr "FullSpectrum 材料 ID"
+
+#: src/libslic3r/PrintConfig.cpp:2169
+msgid "Stable material identifier from the FullSpectrum calibration database. Leave empty for uncalibrated filaments; color-only matching is used as a limited legacy fallback."
+msgstr "FullSpectrum 校准数据库中的固定材料标识。未经校准的耗材请留空。为兼容旧项目，部分情况下会仅按颜色匹配。"
+
+#: src/libslic3r/PrintConfig.cpp:3670
+msgid "Surface paint only"
+msgstr "仅表面涂色"
+
+#: src/libslic3r/PrintConfig.cpp:3671
+msgid "Restricts color-painted regions to the object's wall shell instead of filling the painted area through solid infill."
+msgstr "将涂色区域限制在模型的壁壳内，避免颜色贯穿内部实心填充。"
+
+#: src/libslic3r/PrintConfig.cpp:3678
+msgid "Extra perimeters in painted zones"
+msgstr "涂色区域额外墙数"
+
+#: src/libslic3r/PrintConfig.cpp:3679
+msgid "Adds this many perimeter walls to color-painted regions, on top of the object's normal perimeter count. The rest of the object keeps its normal perimeter count."
+msgstr "在模型原有墙数的基础上，为涂色区域增加指定圈数的墙。其他区域保持原有墙数。"
+
+#: src/libslic3r/PrintConfig.cpp:4601
+msgid "Subdivide all mix layers"
+msgstr "细分所有混色层"
+
+#: src/libslic3r/PrintConfig.cpp:4603
+msgid "Gradients automatically subdivide their mixed layers. Enable this override to also subdivide non-gradient mixed filaments.\n\nSubdivision blends colors by varying layer heights instead of using a fixed ratio of equal-height layers. This only affects blended color zones; non-blended areas keep their nominal layer height and cadence when possible.\n\nThe minimum sublayer height limits the achievable ratio. For example, at 0.20 mm cycle height with a 0.06 mm minimum, a requested 75/25 blend uses 0.14 mm and 0.06 mm passes."
+msgstr "渐变会自动细分混色层。启用此选项后，非渐变混色耗材也会细分。\n\n细分通过改变各子层的厚度来混色。仅混色区域受影响，其他区域会尽可能保持原有层高和打印顺序。\n\n可实现的混色比例受最小子层高度限制。例如，周期高度为 0.20 毫米、最小子层高度为 0.06 毫米时，75/25 的混色比例将使用 0.14 和 0.06 毫米的子层。"
+
+#: src/libslic3r/PrintConfig.cpp:4613
+msgid "Full domain for all mixes"
+msgstr "所有混色使用完整区域"
+
+#: src/libslic3r/PrintConfig.cpp:4615
+msgid "A mixed filament assigned to an entire object or volume automatically uses the full domain when it uses layer subdivision. Enable this override to extend full-domain subdivision to all eligible mixed wall regions.\n\nThis also lets subdivision continue through default mixed walls around painted areas instead of limiting the effect strictly to painted masks."
+msgstr "为整个对象或部件指定混色耗材后，细分会自动覆盖其完整区域。启用此选项可将完整区域细分扩展到所有符合条件的混色墙体。\n\n细分还会延伸到涂色区域周围使用默认混色耗材的墙体。"
+
+#: src/libslic3r/PrintConfig.cpp:4625
+msgid "Experimental. When Subdivide Mix Layer is enabled, also apply the same subdivision to infill inside mixed-color areas.\n\nThis is enabled automatically with Subdivide Mix Layer. Turn it off to keep infill on the normal layer height.\n\nIt can improve internal color mixing, but may add toolchanges and affect infill behavior."
+msgstr "实验功能。启用混色层细分时，也对混色区域内的填充使用相同的细分方式。\n\n启用混色层细分时会自动开启此选项。关闭后，填充将使用正常层高。\n\n此功能可改善内部混色效果，但可能增加换料次数并影响填充路径。"
+
+#: src/libslic3r/PrintConfig.cpp:4632
+msgid "Use direct multicolor Local-Z solver"
+msgstr "使用 Local-Z 直接多色计算"
+
+#: src/libslic3r/PrintConfig.cpp:4634
+msgid "For non-gradient mixed rows with 3 or more physical filaments, allocate Local-Z sublayers directly across all active components instead of collapsing them into pair cadence.\n\nMulti-stop gradients use Local-Z pair cadence.\n\nThis can reduce visible banding in multicolor Local-Z blends at the cost of more toolchanges. It is ignored when explicit Local-Z A/B heights are set."
+msgstr "对于使用三种或更多实际耗材的非渐变配方，直接将 Local-Z 子层分配给所有参与混色的耗材。\n\n多色标渐变仍按两种耗材交替打印。\n\n此方式可减少多色混合中可见的色带，但会增加换料次数。手动指定 Local-Z 的 A/B 层高时，此设置无效。"
+
+#: src/libslic3r/PrintConfig.cpp:4643
+msgid "Keep first layer unsplit"
+msgstr "保留完整首层"
+
+#: src/libslic3r/PrintConfig.cpp:4645
+msgid "Keep the first object layer at its initial layer height when gradients or SML subdivide mixed layers.\n\nThis prevents the first layer from being divided into very thin sublayers that may not adhere reliably."
+msgstr "渐变或混色层细分启用时，保持对象首层的设定高度。\n\n这样可避免首层子层过薄而导致附着不牢。"
+
+#: src/libslic3r/PrintConfig.cpp:4651
+msgid "Use independent Local-Z layer heights"
+msgstr "使用独立的 Local-Z 层高"
+
+#: src/libslic3r/PrintConfig.cpp:4653
+msgid "Experimental. Decouple direct multicolor Local-Z pass heights from the nominal layer height. The smallest active component uses the Local-Z minimum sublayer height and the other component heights are scaled to preserve the exact blend ratio. The resulting cadence may span multiple nominal layers.\n\nFor example, a 1/1/3 blend with a 0.04 mm Local-Z minimum uses a repeating 0.04/0.04/0.12 mm cadence even when the normal layer height is 0.08 mm.\n\nEvery pass is capped to the printer profile's maximum layer height. If a component's ratio requires more thickness, it is divided into multiple equal passes while preserving the total ratio."
+msgstr "实验功能。直接多色混合时，Local-Z 子层可独立于正常层高。占比最小的耗材使用最小子层高度，其他耗材按比例增加厚度，整个周期可跨越多个正常层。\n\n例如，比例为 1/1/3、最小子层高度为 0.04 毫米时，即使正常层高为 0.08 毫米，仍按 0.04/0.04/0.12 毫米循环打印。\n\n每个子层都受打印机预设的最大层高限制。某种耗材需要更大厚度时，会分成多个等厚子层以维持总比例。"
+
+#: src/libslic3r/PrintConfig.cpp:4664
+msgid "Gradient mix subdivision layer height"
+msgstr "渐变混色细分层高"
+
+#: src/libslic3r/PrintConfig.cpp:4666
+msgid "Independent nominal height used to build gradient Local-Z A/B cycles. This does not change the object's normal slicing layer height. Gradient passes may span multiple normal layers, so gradients continue to work even when the normal layer height is too small to contain two Local-Z passes.\n\nThe effective value is automatically raised when necessary so two active components can each satisfy the Local-Z minimum sublayer height."
+msgstr "用于生成渐变 Local-Z A/B 周期的独立标称层高。对象的正常切片层高保持不变。渐变周期可跨越多个正常层，因此即使正常层高放不下两个 Local-Z 子层，仍可打印渐变。\n\n必要时会自动增大该值，使两种耗材的子层都达到 Local-Z 最小高度。"
+
+#: src/libslic3r/PrintConfig.cpp:4677
+msgid "Middle filament window"
+msgstr "中间耗材纯色区宽度"
+
+#: src/libslic3r/PrintConfig.cpp:4679
+msgid "Sets the portion of a multi-filament Local-Z gradient occupied only by each internal filament. The window is centered on that filament's gradient stop, with the adjacent two-filament transitions ending and starting at the window edges. The requested width is capped at the neighboring transition stops so transition regions never overlap.\n\nFor example, 22% gives the middle filament a centered window covering 22% of the gradient whenever the surrounding stops leave enough room."
+msgstr "设置多耗材 Local-Z 渐变中，每种中间耗材单独打印的区间占比。纯色区以该耗材的色标为中心，两侧的双色过渡在纯色区边缘结束或开始。宽度受相邻过渡色标限制，以免过渡区重叠。\n\n例如，设为 22% 时，只要相邻色标间距足够，中间纯色区就会占整个渐变的 22%。"
+
+#: src/libslic3r/PrintObjectSlice.cpp:885
+msgid "Local-Z could not fit the nozzle layer height limits into part of a mixed region, so that part is printed without its full color ratio. Check the nozzle minimum and maximum layer heights in the printer settings."
+msgstr "部分混色区域无法满足喷嘴的层高限制，因此该处无法按设定的比例混色。请检查打印机设置中的喷嘴最小和最大层高。"
+
+#: src/libslic3r/GCode.cpp:3475
+msgid "Some filament changes could not be matched to the prime tower plan and were made without purging on the tower. Check the print for color contamination."
+msgstr "部分换料未能匹配擦料塔计划，换料时未在塔上清洗喷嘴。请检查打印件是否串色。"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:888
+msgid "Paint precision"
+msgstr "涂色精度"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:897
+msgid "Subdivides the mesh more finely at painted boundaries. Higher values use more CPU and memory."
+msgstr "在涂色边界处更精细地细分网格。数值越大，占用的处理器和内存资源越多。"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:899
+msgid "Rectangle mask"
+msgstr "矩形选区"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:909
+msgid "Drag a screen-space rectangle to paint front-facing facets inside it. Shift-drag erases; right-click cancels."
+msgstr "在屏幕上拖出矩形，为其中朝向屏幕的面涂色。按住 Shift 拖动可擦除，右键取消。"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:911
+msgid "Polygon mask"
+msgstr "多边形选区"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:921
+msgid "Click to place vertices, drag an existing vertex to edit it, then click the first vertex to paint. Right-click cancels."
+msgstr "单击放置顶点，拖动已有顶点可调整形状。单击第一个顶点完成涂色，右键取消。"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:168
+msgid "Choose a filament for the selected color stop. Selecting a filament already in use swaps the two stops."
+msgstr "为选中的色标选择耗材。如果选择已在使用的耗材，两个色标将交换耗材。"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:379
+msgid "Position:"
+msgstr "位置："
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:194
+msgid "Solid width:"
+msgstr "纯色宽度："
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:200
+msgid "Width of this solid color as a percentage of the complete gradient. Drag the square handles below the bar to adjust it."
+msgstr "此纯色区的宽度占整个渐变的百分比。拖动色带下方的方形手柄可调整宽度。"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:207
+msgid "Min Stop Gap:"
+msgstr "最小色标间距："
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:237
+msgid "Drag circles to move colors, white ticks to adjust transitions, and the square handles below each interior color to adjust its solid-color width."
+msgstr "拖动圆点移动色标，拖动白色刻线调整过渡，拖动中间色标下方的方形手柄调整纯色区宽度。"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:368
+msgid "Switch"
+msgstr "交换"
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:379
+msgid "Position (relative):"
+msgstr "相对位置："
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1139
+msgid "Select Gradient"
+msgstr "选择渐变"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1175
+msgid "Layered"
+msgstr "分层效果"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1175
+msgid "Blended"
+msgstr "混色效果"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2411
+msgid "Gradient Recommendations"
+msgstr "推荐渐变"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3111
+msgid "2-Material Gradients"
+msgstr "双材料渐变"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3111
+msgid "3-Material Gradients"
+msgstr "三材料渐变"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3112
+msgid "2-Material Mixes"
+msgstr "双材料混色"
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3112
+msgid "3-Material Mixes"
+msgstr "三材料混色"
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:670
+msgid "Selected filament"
+msgstr "已选耗材"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1326
+msgid "Remove filament"
+msgstr "移除耗材"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1342
+msgid "Add filament"
+msgstr "添加耗材"
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1158
+msgid "Filament color limit reached (%d colors). Colors over the limit have been removed."
+msgstr "已达到耗材颜色上限（%d 种）。超出上限的颜色已移除。"
+
+msgid "Changes apply to the selected objects (%d total).\n"
+msgstr "更改应用于选中的对象（共 %d 个）。\n"
+
 
 msgid "The current nozzle diameter does not support CMYW auto mixing. Please change the nozzle diameter or disable auto mixing."
 msgstr "当前喷嘴直径不支持 CMYW 自动混色，请修改喷嘴直径或取消使用混色。"

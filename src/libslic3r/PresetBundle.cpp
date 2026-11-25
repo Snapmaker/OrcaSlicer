@@ -327,6 +327,7 @@ PresetBundle& PresetBundle::operator=(const PresetBundle &rhs)
 
     filament_presets    = rhs.filament_presets;
     project_config      = rhs.project_config;
+    calibration_sources = rhs.calibration_sources;
     vendors             = rhs.vendors;
     obsolete_presets    = rhs.obsolete_presets;
     m_errors    = rhs.m_errors;
@@ -2709,6 +2710,9 @@ DynamicPrintConfig PresetBundle::full_fff_config() const
         out.option<ConfigOptionInts>("filament_flow_step_size", true)->values = flow_step_sizes;
     }
 
+    // Per-slot calibration was resolved against the selected presets and color library during refresh.
+    out.apply_only(project_config, {"filament_transmission_distance", "filament_full_spectrum_material_id"}, true);
+
     //BBS: add logic for settings check between different system presets
     std::string printer_inherits = this->printers.get_edited_preset().inherits();
     // Don't store the "compatible_printers_condition" for the printer profile, there is none.
@@ -3120,6 +3124,7 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
 
         // 4) Load the project config values (the per extruder wipe matrix etc).
         this->project_config.apply_only(config, s_project_options);
+        calibration_sources.clear();
         EnsureFilamentColorFieldsAligned(this->project_config);
         EnsureFilamentVolumeTypesAligned(this->project_config, this->filament_presets.size());
 
@@ -3910,27 +3915,48 @@ void PresetBundle::update_multi_material_filament_presets(size_t to_delete_filam
             if (deleting_filament && to_delete_filament_id < physical_material_ids.size())
                 physical_material_ids.erase(physical_material_ids.begin() + ptrdiff_t(to_delete_filament_id));
             physical_material_ids.resize(num_filaments);
+            if (deleting_filament && to_delete_filament_id < calibration_sources.size())
+                calibration_sources.erase(calibration_sources.begin() + ptrdiff_t(to_delete_filament_id));
+            calibration_sources.resize(num_filaments);
 
             for (size_t i = 0; i < num_filaments && i < this->filament_presets.size(); ++i) {
                 const std::string selected_filament_name = Preset::remove_suffix_modified(this->filament_presets[i]);
                 const Preset*     filament_preset = (!edited_filament_name.empty() && selected_filament_name == edited_filament_name) ?
                                                         edited_filament_preset :
                                                         this->filaments.find_preset(selected_filament_name, false);
-                // A loaded preset/color is authoritative. Do not carry calibration
-                // from the previous material in this slot to an unrelated filament.
-                if (filament_preset != nullptr) {
+                auto&             source                 = calibration_sources[i];
+                const std::string selected_color         = NormalizeFilamentHexColor(color_opt->values[i]);
+                if (!source.preset.empty() && source.preset != selected_filament_name) {
                     physical_tds[i] = 0.0;
                     physical_material_ids[i].clear();
+                } else if (!source.library_color.empty() && source.library_color != selected_color) {
+                    // Drop only the calibration supplied by the previous catalog swatch.
+                    if (physical_tds[i] == source.library_td)
+                        physical_tds[i] = 0.0;
+                    if (physical_material_ids[i] == source.library_material_id)
+                        physical_material_ids[i].clear();
+                }
+                source        = {};
+                source.preset = selected_filament_name;
+                if (filament_preset != nullptr) {
+                    const auto* td = filament_preset->config.option<ConfigOptionFloats>("filament_transmission_distance");
+                    if (td && !td->values.empty() && std::isfinite(td->values.front()) && td->values.front() > 0.)
+                        physical_tds[i] = td->values.front();
                     FilamentColorInfo library_filament;
                     if (FilamentColorLibrary::Instance().FindFilamentByName(selected_filament_name, library_filament)) {
                         for (const auto& item : library_filament.colors) {
                             if (item.colorData.colors.size() == 1 &&
-                                (item.colorData.PrimaryColor() == NormalizeFilamentHexColor(color_opt->values[i]) ||
-                                 (!item.legacyPrimaryColor.empty() && item.legacyPrimaryColor == NormalizeFilamentHexColor(color_opt->values[i])))) {
+                                (item.colorData.PrimaryColor() == selected_color ||
+                                 (!item.legacyPrimaryColor.empty() && item.legacyPrimaryColor == selected_color))) {
                                 if (!item.fullSpectrumMaterialId.empty())
                                     color_opt->values[i] = item.colorData.PrimaryColor();
-                                physical_tds[i]          = item.tdValue;
-                                physical_material_ids[i] = item.fullSpectrumMaterialId;
+                                source.library_color       = NormalizeFilamentHexColor(color_opt->values[i]);
+                                source.library_material_id = item.fullSpectrumMaterialId;
+                                source.library_td          = item.tdValue;
+                                if (std::isfinite(item.tdValue) && item.tdValue > 0.)
+                                    physical_tds[i] = item.tdValue;
+                                if (!item.fullSpectrumMaterialId.empty())
+                                    physical_material_ids[i] = item.fullSpectrumMaterialId;
                                 break;
                             }
                         }

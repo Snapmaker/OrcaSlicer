@@ -16327,3 +16327,434 @@ msgstr ""
 msgid "Rebuild toolpath geometry on the GPU: much faster preview loading and lower memory on capable graphics cards. If the preview moves slower than before (for example on basic integrated graphics), turn this off to use the compatible renderer. Takes effect when the preview is reloaded."
 msgstr ""
 
+
+
+#: src/libslic3r/PrintConfig.cpp:2159
+msgid "Transmission distance"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:2160
+msgid "Measured optical transmission distance for color calibration, in millimeters. Use 0 when unknown."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:2168
+msgid "FullSpectrum material ID"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:2169
+msgid "Stable material identifier from the FullSpectrum calibration database. Leave empty for uncalibrated filaments; color-only matching is used as a limited legacy fallback."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:3670
+msgid "Surface paint only"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:3671
+msgid "Restricts color-painted regions to the object's wall shell instead of filling the painted area through solid infill."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:3678
+msgid "Extra perimeters in painted zones"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:3679
+msgid "Adds this many perimeter walls to color-painted regions, on top of the object's normal perimeter count. The rest of the object keeps its normal perimeter count."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4601
+msgid "Subdivide all mix layers"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4603
+msgid "Gradients automatically subdivide their mixed layers. Enable this override to also subdivide non-gradient mixed filaments.\n\nSubdivision blends colors by varying layer heights instead of using a fixed ratio of equal-height layers. This only affects blended color zones; non-blended areas keep their nominal layer height and cadence when possible.\n\nThe minimum sublayer height limits the achievable ratio. For example, at 0.20 mm cycle height with a 0.06 mm minimum, a requested 75/25 blend uses 0.14 mm and 0.06 mm passes."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4613
+msgid "Full domain for all mixes"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4615
+msgid "A mixed filament assigned to an entire object or volume automatically uses the full domain when it uses layer subdivision. Enable this override to extend full-domain subdivision to all eligible mixed wall regions.\n\nThis also lets subdivision continue through default mixed walls around painted areas instead of limiting the effect strictly to painted masks."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4623
+msgid "Apply subdivision to infill"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4625
+msgid "Experimental. When Subdivide Mix Layer is enabled, also apply the same subdivision to infill inside mixed-color areas.\n\nThis is enabled automatically with Subdivide Mix Layer. Turn it off to keep infill on the normal layer height.\n\nIt can improve internal color mixing, but may add toolchanges and affect infill behavior."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4632
+msgid "Use direct multicolor Local-Z solver"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4634
+msgid "For non-gradient mixed rows with 3 or more physical filaments, allocate Local-Z sublayers directly across all active components instead of collapsing them into pair cadence.\n\nMulti-stop gradients use Local-Z pair cadence.\n\nThis can reduce visible banding in multicolor Local-Z blends at the cost of more toolchanges. It is ignored when explicit Local-Z A/B heights are set."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4643
+msgid "Keep first layer unsplit"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4645
+msgid "Keep the first object layer at its initial layer height when gradients or SML subdivide mixed layers.\n\nThis prevents the first layer from being divided into very thin sublayers that may not adhere reliably."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4651
+msgid "Use independent Local-Z layer heights"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4653
+msgid "Experimental. Decouple direct multicolor Local-Z pass heights from the nominal layer height. The smallest active component uses the Local-Z minimum sublayer height and the other component heights are scaled to preserve the exact blend ratio. The resulting cadence may span multiple nominal layers.\n\nFor example, a 1/1/3 blend with a 0.04 mm Local-Z minimum uses a repeating 0.04/0.04/0.12 mm cadence even when the normal layer height is 0.08 mm.\n\nEvery pass is capped to the printer profile's maximum layer height. If a component's ratio requires more thickness, it is divided into multiple equal passes while preserving the total ratio."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4664
+msgid "Gradient mix subdivision layer height"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4666
+msgid "Independent nominal height used to build gradient Local-Z A/B cycles. This does not change the object's normal slicing layer height. Gradient passes may span multiple normal layers, so gradients continue to work even when the normal layer height is too small to contain two Local-Z passes.\n\nThe effective value is automatically raised when necessary so two active components can each satisfy the Local-Z minimum sublayer height."
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4677
+msgid "Middle filament window"
+msgstr ""
+
+#: src/libslic3r/PrintConfig.cpp:4679
+msgid "Sets the portion of a multi-filament Local-Z gradient occupied only by each internal filament. The window is centered on that filament's gradient stop, with the adjacent two-filament transitions ending and starting at the window edges. The requested width is capped at the neighboring transition stops so transition regions never overlap.\n\nFor example, 22% gives the middle filament a centered window covering 22% of the gradient whenever the surrounding stops leave enough room."
+msgstr ""
+
+#: src/libslic3r/PrintObjectSlice.cpp:885
+msgid "Local-Z could not fit the nozzle layer height limits into part of a mixed region, so that part is printed without its full color ratio. Check the nozzle minimum and maximum layer heights in the printer settings."
+msgstr ""
+
+#: src/libslic3r/GCode.cpp:3475
+msgid "Some filament changes could not be matched to the prime tower plan and were made without purging on the tower. Check the print for color contamination."
+msgstr ""
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:888
+msgid "Paint precision"
+msgstr ""
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:897
+msgid "Subdivides the mesh more finely at painted boundaries. Higher values use more CPU and memory."
+msgstr ""
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:899
+msgid "Rectangle mask"
+msgstr ""
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:909
+msgid "Drag a screen-space rectangle to paint front-facing facets inside it. Shift-drag erases; right-click cancels."
+msgstr ""
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:911
+msgid "Polygon mask"
+msgstr ""
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:921
+msgid "Click to place vertices, drag an existing vertex to edit it, then click the first vertex to paint. Right-click cancels."
+msgstr ""
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:168
+msgid "Choose a filament for the selected color stop. Selecting a filament already in use swaps the two stops."
+msgstr ""
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:379
+msgid "Position:"
+msgstr ""
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:194
+msgid "Solid width:"
+msgstr ""
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:200
+msgid "Width of this solid color as a percentage of the complete gradient. Drag the square handles below the bar to adjust it."
+msgstr ""
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:207
+msgid "Min Stop Gap:"
+msgstr ""
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:237
+msgid "Drag circles to move colors, white ticks to adjust transitions, and the square handles below each interior color to adjust its solid-color width."
+msgstr ""
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:368
+msgid "Switch"
+msgstr ""
+
+#: src/slic3r/GUI/MixedGradientStops.hpp:379
+msgid "Position (relative):"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:791
+msgid "Swap filaments"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1139
+msgid "Select Gradient"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1175
+msgid "Layered"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1175
+msgid "Blended"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2411
+msgid "Mixing Recommendations"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2411
+msgid "Gradient Recommendations"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3111
+msgid "2-Material Gradients"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3111
+msgid "3-Material Gradients"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3112
+msgid "2-Material Mixes"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3112
+msgid "3-Material Mixes"
+msgstr ""
+
+#: src/slic3r/GUI/Gizmos/GLGizmoMmuSegmentation.cpp:670
+msgid "Selected filament"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:386
+msgid "Edit Mix"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:372
+msgid "Add Mix"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:507
+msgid "Ratio"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:507
+msgid "Cycle"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:507
+msgid "Match"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:507
+msgid "Gradient"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:651
+msgid "Target Color"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:748
+msgid "Please enter a valid 6-digit Hex value."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:784
+msgid "Filament Selection"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:874
+msgid "Mixing Ratio"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:942
+msgid "Mix Effect"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1017
+msgid "Min Mix Ratio"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1302
+msgid "Append filament %d to pattern"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:1344
+msgid "Allowed Input: Only digits, square brackets ([ and ]), and commas (,)."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2538
+msgid "Filament %d and Filament %d cannot be mixed. Please select filaments of the same type."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2540
+msgid "Different filament types cannot be mixed. Please correct the settings."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2546
+msgid "Same filament colors cannot produce new colors. Please select different colors for mixing."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2549
+msgid "Excessive filaments in the mix may affect the result. Please use with caution."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:2666
+msgid "Filament %d ratio is too high. Mix may be affected."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3495
+msgid "Leading or trailing commas are not allowed."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3500
+msgid "Invalid characters found. Only digits, square brackets ([ and ]), and commas (,) are allowed."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3505
+msgid "Unrecognized pattern format. Please check the pattern syntax."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentDialog.cpp:3516
+msgid "Filament %d not recognized. Please re-enter."
+msgstr ""
+
+#: src/slic3r/GUI/Plater.cpp:2475
+msgid "Filament Management"
+msgstr ""
+
+#: src/slic3r/GUI/Plater.cpp:6244
+msgid "Color Mixing"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:260
+msgid "Color Mixing Match"
+msgstr ""
+
+#: src/slic3r/GUI/Plater.cpp:6246
+msgid "Manage"
+msgstr ""
+
+#: src/slic3r/GUI/Plater.cpp:6248
+msgid "Browse mixed colors made from the current filaments and choose combinations to add."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1326
+msgid "Remove filament"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1342
+msgid "Add filament"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1158
+msgid "Filament color limit reached (%d colors). Colors over the limit have been removed."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1215
+msgid "Match Mode"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1261
+msgid "Start Matching"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1262
+msgid "Rematch"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1310
+msgid "Filament Setup"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1578
+msgid "Original"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1582
+msgid "Matched"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1657
+msgid "Isometric"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1658
+msgid "Top-Front"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1693
+msgid "Color Mapping"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1743
+msgid "Stop Matching"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1807
+msgid "Are you sure you want to discard this match? The current configuration will not be saved."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1808
+msgid "Discard Matching"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1846
+msgid "Official Full Spectrum filaments are not configured. Configured filaments will be used instead. Once the official filaments are added, the previously selected filaments can be replaced in the filament list without affecting the color mixing match result."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:1847
+msgid "Note"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2047
+msgid "Manually select filaments from the current list for color mixing."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2048
+msgid "Automatically select an official filament set for color mixing match. Two-color ratios: 15%–85%; three-color ratios: 15%–70%."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2165
+msgid "The mix ratios for %s in the Color Mapping list are outside the recommended ranges. Adjust the mix ratios manually for better results."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2383
+#, c-format
+msgid "Mixed filament limit reached (%u recipes). Excess mixed colors will be removed."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2395
+msgid "No model detected. Import a multi-color model to continue."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2407
+msgid "Automatic color mixing matching is not supported for the current nozzle diameter. Please use manual matching or replace with a smaller-size nozzle."
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2409
+msgid "Got it"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2993
+msgid "Good"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2994
+msgid "Fair"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentBatchDialog.cpp:2995
+msgid "Poor"
+msgstr ""
+
+#: src/slic3r/GUI/MixedFilamentManageDialog.cpp
+#, c-format
+msgid "The limit is %u mixed filaments. Deselect some recommendations before confirming."
+msgstr ""

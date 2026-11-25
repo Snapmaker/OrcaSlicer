@@ -1,4 +1,5 @@
 #include "../MixedFilament.hpp"
+#include "../MixedFilamentColorPrediction.hpp"
 #include "../PrintConfig.hpp"
 #include "../FullSpectrumKSPairResidual.hpp"
 #include "../filament_mixer.h"
@@ -187,7 +188,7 @@ std::string blend_display_color_from_sequence(const std::vector<std::string>&   
     if (color_percents.size() == 1)
         return color_percents.front().color_hex;
 
-    return MixedFilamentManager::blend_color_multi(color_percents, context.color_engine.value_or(MixedFilamentManager::color_engine()));
+    return blend_mixed_color_inputs_auto(color_percents, context.color_engine.value_or(MixedFilamentManager::color_engine()));
 }
 
 }} // namespace Slic3r::MixedFilamentInternal

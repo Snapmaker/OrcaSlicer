@@ -190,7 +190,11 @@ void MixedFilamentRecommendations::select_all(bool selected, size_t component_co
             item.selected = selected;
 }
 
-bool MixedFilamentRecommendations::exceeds_limit() const { return saved.size() - removals() + additions() > MAXIMUM_MIXED_FILAMENT_NUMBER; }
+bool MixedFilamentRecommendations::exceeds_limit() const
+{
+    const size_t added = additions();
+    return added > 0 && saved.size() - removals() + added > MAXIMUM_MIXED_FILAMENT_NUMBER;
+}
 
 MixedFilamentManager MixedFilamentRecommendations::prepare(const MixedFilamentManager& current) const
 {

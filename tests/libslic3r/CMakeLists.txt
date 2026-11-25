@@ -21,6 +21,7 @@ add_executable(${_TEST_NAME}_tests
 	test_local_z_order_optimizer.cpp
 	test_placeholder_parser.cpp
 	test_polygon.cpp
+	test_region_expansion.cpp
 	test_profile_load_util.cpp
 	test_mutable_polygon.cpp
 	test_mutable_priority_queue.cpp

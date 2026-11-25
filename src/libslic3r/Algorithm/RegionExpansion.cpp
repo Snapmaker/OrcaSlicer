@@ -188,22 +188,6 @@ static int sample_in_expolygons(
     return out;
 }
 
-// Index of the source region whose expanded outline contains pt, or -1 if there is none.
-// Used for seed segments made of boundary vertices only, which carry no source index in their Z.
-static int src_index_of_point_in_zpaths(const ClipperZUtils::ZPaths &zpaths, const Point &pt, const coord_t idx_src_base)
-{
-    // A point is inside a source if it is inside an odd number of its contours: the outline expanded
-    // by tiny_expansion and the holes shrunk by it. All the contours of one source share their Z coordinate.
-    std::vector<coord_t> inside;
-    for (const ClipperZUtils::ZPath &path : zpaths)
-        if (Polygon(ClipperZUtils::from_zpath(path)).contains(pt))
-            inside.emplace_back(path.front().z());
-    for (const coord_t z : inside)
-        if (std::count(inside.begin(), inside.end(), z) % 2 == 1)
-            return int(z - idx_src_base);
-    return -1;
-}
-
 std::vector<WaveSeed> wave_seeds(
     // Source regions that are supposed to touch the boundary.
     const ExPolygons      &src,
@@ -224,7 +208,6 @@ std::vector<WaveSeed> wave_seeds(
 
     ClipperZUtils::ZPaths segments;
     Intersections         intersections;
-    ClipperZUtils::ZPaths zsrc;
 
     coord_t               idx_boundary_begin = 1;
     coord_t               idx_boundary_end   = idx_boundary_begin;
@@ -237,7 +220,7 @@ std::vector<WaveSeed> wave_seeds(
         // as open contours
         std::vector<std::pair<ClipperZUtils::ZPoint, int>> zsrc_splits;
         idx_src_end = idx_boundary_end;
-        zsrc = expolygons_to_zpaths_expanded_opened(src, tiny_expansion, idx_src_end);
+        ClipperZUtils::ZPaths zsrc = expolygons_to_zpaths_expanded_opened(src, tiny_expansion, idx_src_end);
         zsrc_splits.reserve(zsrc.size());
         for (const ClipperZUtils::ZPath &path : zsrc) {
             assert(path.size() >= 2);
@@ -264,6 +247,13 @@ std::vector<WaveSeed> wave_seeds(
         assert(path.size() >= 2);
         ClipperZUtils::ZPoint front = path.front();
         ClipperZUtils::ZPoint back  = path.back();
+        // Both ends of a seed segment are supposed to be inside a single boundary expolygon.
+        // Thus as long as the seed contour is not closed, it should be open at a boundary point.
+        assert((front == back && front.z() >= idx_boundary_end && front.z() < idx_src_end) || 
+            //(front.z() < 0 && back.z() < 0));
+            // Hope that at least one end of an open polyline is clipped by the boundary, thus an intersection point is created.
+            (front.z() < 0 || back.z() < 0));
+
         if (front != back && front.z() >= 0 && back.z() >= 0) {
             // Both endpoints coincide with existing polygon vertices, so the
             // ZFillFunction callback was never called.  With complex geometry
@@ -296,31 +286,9 @@ std::vector<WaveSeed> wave_seeds(
                 ++ iseed;
                 continue;
             }
-            // No point of the path carries a source index: the piece joins boundary vertices that lie on or
-            // inside the expanded source, so both ends keep the boundary's Z. Find the source that contains it.
-            const int src_id = src_index_of_point_in_zpaths(zsrc, Point(front.x(), front.y()), idx_boundary_end);
-            if (src_id < 0)
-                // Unable to determine source ID - drop the segment.
-                continue;
-            int boundary_id = boundary_z >= 0 ? int(boundary_z - 1) : -1;
-            if (boundary_id < 0) {
-                if (aabb_tree.empty())
-                    aabb_tree = build_aabb_tree_over_expolygons(boundary);
-                boundary_id = sample_in_expolygons(aabb_tree, boundary, Point(front.x(), front.y()));
-            }
-            if (boundary_id >= 0)
-                out.push_back({ uint32_t(src_id), uint32_t(boundary_id), ClipperZUtils::from_zpath(path) });
-            ++ iseed;
+            // Unable to determine source ID – drop the segment.
             continue;
-        }
-
-        // Both ends of a seed segment are supposed to be inside a single boundary expolygon.
-        // Thus as long as the seed contour is not closed, it should be open at a boundary point.
-        assert((front == back && front.z() >= idx_boundary_end && front.z() < idx_src_end) || 
-            //(front.z() < 0 && back.z() < 0));
-            // Hope that at least one end of an open polyline is clipped by the boundary, thus an intersection point is created.
-            (front.z() < 0 || back.z() < 0));
-
+        } else
         if (front == back && (front.z() < idx_boundary_end)) {
             // This should be a very rare exception.
             // See https://github.com/prusa3d/PrusaSlicer/issues/12469.

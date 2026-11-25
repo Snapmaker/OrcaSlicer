@@ -16190,3 +16190,78 @@ msgstr "自动展示当前耗材色卡的混色素材库，便捷挑选适配的
 # Mixed filament management (PRD 2.0).
 msgid "Mixed filament limit reached (256 recipes). Excess mixed colors will be removed."
 msgstr "达到混色耗材数量上限（256个配方）。超出的混色将被移除。"
+
+msgid "Are you sure you want to terminate the entire import process?"
+msgstr "确定要终止整个导入流程吗？"
+
+msgid "Material type of the new filament"
+msgstr "新耗材的材料类型"
+
+msgid "The current nozzle diameter does not support CMYW auto mixing. Please change the nozzle diameter or disable auto mixing."
+msgstr "当前喷嘴直径不支持 CMYW 自动混色，请修改喷嘴直径或取消使用混色。"
+
+msgid "Simplified"
+msgstr "简化后"
+
+msgid "Color Simplification"
+msgstr "颜色简化"
+
+msgid "Tip: color count exceeds the original model color count"
+msgstr "提示：颜色数量超过了原模型颜色数量"
+
+msgid "Tip: parameters changed, click \"Apply\" on the right to take effect"
+msgstr "提示：参数已修改，单击右侧“应用”后生效"
+
+msgid "Direct Filament Mapping"
+msgstr "直接耗材映射"
+
+msgid "Previous Step"
+msgstr "上一步"
+
+msgid "Add Filament"
+msgstr "添加耗材"
+
+msgid "Select Filament"
+msgstr "选择耗材"
+
+msgid "CMYW Auto Mix"
+msgstr "CMYW 自动混色"
+
+msgid "What is CMYW mixing?"
+msgstr "什么是 CMYW 混色？"
+
+msgid "Filament Matching"
+msgstr "耗材匹配"
+
+msgid "Reset filament mapping to the automatic match"
+msgstr "重置耗材丝映射为自动匹配结果"
+
+msgid "Filament Mapping & Mixing"
+msgstr "耗材映射与混色"
+
+msgid "Gap Area"
+msgstr "间隙面积"
+
+msgid "Before simplification: %d colors"
+msgstr "简化前：%d 颜色"
+
+msgid "After simplification: %d colors"
+msgstr "简化后：%d 颜色"
+
+msgid "Return to the color simplification step"
+msgstr "返回颜色简化步骤"
+
+msgid "Apply the current parameters and continue to filament mapping"
+msgstr "应用当前参数并继续到耗材映射"
+
+msgid "Original %d colors / Simplified %d colors"
+msgstr "原模型 %d 色 / 简化后 %d 色"
+
+msgid "Processing"
+msgstr "处理中"
+
+msgid "Tip: gap area exceeds the range (0.00-5.00)"
+msgstr "提示：间隙面积超出范围（0.00-5.00）"
+
+msgid "Tip: smooth level exceeds the range (0-10)"
+msgstr "提示：平滑等级超出范围（0-10）"

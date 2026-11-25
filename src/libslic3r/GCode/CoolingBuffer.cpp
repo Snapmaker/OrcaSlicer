@@ -454,7 +454,7 @@ std::vector<PerExtruderAdjustments> CoolingBuffer::parse_layer_gcode(const std::
         unsigned int            extruder_id = m_extruder_ids[i];
         adj.extruder_id               = extruder_id;
         adj.cooling_slow_down_enabled = m_config.slow_down_for_layer_cooling.get_at(extruder_id);
-        adj.slow_down_layer_time = float(m_config.slow_down_layer_time.get_at(extruder_id));
+        adj.slow_down_layer_time = float(get_value_at(m_config, m_config.slow_down_layer_time, ConfigFlowDomain::Filament, extruder_id));
         adj.slow_down_min_speed           = float(m_config.slow_down_min_speed.get_at(extruder_id));
         // ORCA: To enable dont slow down external perimeters feature per filament (extruder)
         adj.dont_slow_down_outer_wall   = m_config.dont_slow_down_outer_wall.get_at(extruder_id);
@@ -974,8 +974,8 @@ std::string CoolingBuffer::apply_layer_cooldown(
         }
         if (int(layer_id) >= close_fan_the_first_x_layers) {
             float   fan_max_speed             = get_value_at(m_config, m_config.fan_max_speed, ConfigFlowDomain::Filament, m_current_extruder);
-            float slow_down_layer_time = float(EXTRUDER_CONFIG(slow_down_layer_time));
-            float fan_cooling_layer_time      = float(EXTRUDER_CONFIG(fan_cooling_layer_time));
+            float slow_down_layer_time = float(get_value_at(m_config, m_config.slow_down_layer_time, ConfigFlowDomain::Filament, m_current_extruder));
+            float fan_cooling_layer_time      = float(get_value_at(m_config, m_config.fan_cooling_layer_time, ConfigFlowDomain::Filament, m_current_extruder));
             //BBS: always enable the fan speed interpolation according to layer time
             //if (EXTRUDER_CONFIG(cooling)) {
                 if (layer_time < slow_down_layer_time) {

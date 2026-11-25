@@ -8784,7 +8784,7 @@ std::string GCode::travel_to(const Point& point, ExtrusionRole role, std::string
         // use a lower acceleration for short travel moves near external perimeters to reduce ringing / VFA (vertical fine artifacts).
         double short_travel_accel   = this->process_flow_value(m_config.travel_short_distance_acceleration);
         bool use_short_travel_accel = short_travel_accel > 0.5 &&  (role == erExternalPerimeter || role == erOverhangPerimeter) &&
-                                      unscaled(travel.length()) < EXTRUDER_CONFIG(retraction_minimum_travel);
+                                      unscaled(travel.length()) < get_value_at(m_config, m_config.retraction_minimum_travel, ConfigFlowDomain::Filament, m_writer.extruder()->id());
         if (use_short_travel_accel) {
             acceleration_to_set = (unsigned int) floor(short_travel_accel + 0.5);
         } else if (this->process_flow_value(m_config.default_acceleration) > 0 && this->process_flow_value(m_config.travel_acceleration) > 0) {
@@ -8910,7 +8910,7 @@ LiftType GCode::to_lift_type(ZHopType z_hop_types)
 
 bool GCode::needs_retraction(const Polyline& travel, ExtrusionRole role, LiftType& lift_type)
 {
-    if (travel.length() < scale_(EXTRUDER_CONFIG(retraction_minimum_travel))) {
+    if (travel.length() < scale_(get_value_at(m_config, m_config.retraction_minimum_travel, ConfigFlowDomain::Filament, m_writer.extruder()->id()))) {
         // skip retraction if the move is shorter than the configured threshold
         return false;
     }

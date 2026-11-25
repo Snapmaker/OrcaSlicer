@@ -169,7 +169,7 @@ double Extruder::retraction_length() const
 
 double Extruder::retract_lift() const
 {
-    return m_config->z_hop.get_at(m_id);
+    return get_value_at(*m_config, m_config->z_hop, ConfigFlowDomain::Filament, m_id);
 }
 
 int Extruder::retract_speed() const

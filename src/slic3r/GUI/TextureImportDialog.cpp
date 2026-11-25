@@ -16,6 +16,7 @@
 #include "FilamentColorUtils.hpp"
 #include "Widgets/ComboBox.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp"
+#include "libslic3r/FullSpectrumMaterialDatabaseProfile.h"
 #include "libslic3r/MeshRepair.hpp"
 #include "libslic3r/Color.hpp"
 #include <optional>
@@ -4658,6 +4659,10 @@ void TextureImportDialog::set_state(TextureImportState new_state)
 {
     m_state = new_state;
     update_ui_for_state();
+    if (new_state == TextureImportState::Ready && m_auto_mix_pending) {
+        m_auto_mix_pending = false;
+        apply_auto_standard_mix(TextureAutoMixMode::CMYW);
+    }
 }
 
 void TextureImportDialog::update_ui_for_state()
@@ -4945,6 +4950,7 @@ void TextureImportDialog::on_computation_complete(wxCommandEvent&)
     // A fresh computation rebuilds the baseline mapping; any applied
     // one-click mix (and its snapshot) is obsolete now.
     m_auto_mix_snapshot.reset();
+    m_auto_mix_pending = false;
 
     m_applied_color_count = m_param_color_count;
     m_applied_smooth      = m_param_smooth;
@@ -5543,11 +5549,19 @@ void TextureImportDialog::select_mix_mode(int index)
             }
         });
     // 0 = Direct Filament Mapping (baseline), 1 = CMYW Auto Mix (one-click
-    // mix); mirrors the old checkbox on/off behaviour.
-    if (index == 1)
-        apply_auto_standard_mix(TextureAutoMixMode::CMYW);
-    else
+    // mix); mirrors the old checkbox on/off behaviour. Selecting CMYW while
+    // the mapping rows are not ready yet (still computing, or no clusters)
+    // arms m_auto_mix_pending so the mix runs as soon as the rows exist.
+    if (index == 1) {
+        if (m_state == TextureImportState::Ready && !m_current_matches.empty() && !m_mapping_rows.empty())
+            apply_auto_standard_mix(TextureAutoMixMode::CMYW);
+        else
+            m_auto_mix_pending = true;
+    }
+    else {
+        m_auto_mix_pending = false;
         reset_auto_mix();
+    }
 }
 
 void TextureImportDialog::set_mix_mode_ui(int index)
@@ -5566,6 +5580,7 @@ void TextureImportDialog::set_mix_mode_ui(int index)
 
 // Mode list popup: always opens DOWNWARD below the trigger (2026-11 design;
 // the shared ComboBox cannot be forced to drop down).
+static bool texture_import_nozzle_08();
 void TextureImportDialog::show_mix_mode_popup()
 {
     if (!m_mix_mode_trigger || m_mix_mode_popup)
@@ -5597,21 +5612,26 @@ void TextureImportDialog::show_mix_mode_popup()
     const int item_h = FromDIP(36);
     auto* sizer = new wxBoxSizer(wxVERTICAL);
     const wxString labels[2] = { _L("Direct Filament Mapping"), _L("CMYW Auto Mix") };
+    const bool nozzle_08 = texture_import_nozzle_08();
     for (int i = 0; i < 2; ++i) {
+        const bool disabled = (i == 1 && nozzle_08);
         auto* row = new wxPanel(panel, wxID_ANY, wxDefaultPosition, wxSize(item_w, item_h));
         row->SetBackgroundColour(pop_bg);
         row->SetBackgroundStyle(wxBG_STYLE_PAINT);
-        row->SetCursor(wxCursor(wxCURSOR_HAND));
-        row->Bind(wxEVT_PAINT, [this, i, labels, pop_bg](wxPaintEvent& e) {
+        row->SetCursor(wxCursor(disabled ? wxCURSOR_ARROW : wxCURSOR_HAND));
+        if (disabled)
+            row->SetToolTip(_L("Mixing is not supported for the 0.8 mm nozzle."));
+        row->Bind(wxEVT_PAINT, [this, i, labels, pop_bg, disabled](wxPaintEvent& e) {
             auto* p = static_cast<wxPanel*>(e.GetEventObject());
             wxAutoBufferedPaintDC dc(p);
             const wxSize sz = p->GetClientSize();
             dc.SetBackground(wxBrush(pop_bg));
             dc.Clear();
             // Hover fill #BEE1DB (2026-11 spec, 24px-high band); selected row
-            // carries the check on the LEFT, text stays #18181B.
+            // carries the check on the LEFT, text stays #18181B. The disabled
+            // CMYW option (0.8 mm nozzle) draws grey with no hover fill.
             const wxPoint mouse = p->ScreenToClient(wxGetMousePosition());
-            const bool hovered = p->GetClientRect().Contains(mouse);
+            const bool hovered = !disabled && p->GetClientRect().Contains(mouse);
             dc.SetPen(*wxTRANSPARENT_PEN);
             dc.SetBrush(wxBrush(StateColor::darkModeColorFor(hovered ? wxColour("#BEE1DB") : wxColour("#FFFFFF"))));
             dc.DrawRectangle(0, 0, sz.x, sz.y);
@@ -5644,11 +5664,13 @@ void TextureImportDialog::show_mix_mode_popup()
             f.SetPointSize(10); // 14px at default MSW DPI
             f.SetWeight(wxFONTWEIGHT_MEDIUM);
             dc.SetFont(f);
-            dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#18181B")));
+            dc.SetTextForeground(StateColor::darkModeColorFor(disabled ? wxColour("#949494") : wxColour("#18181B")));
             const wxSize tsz = dc.GetTextExtent(labels[i]);
             dc.DrawText(labels[i], text_x, (sz.y - tsz.y) / 2);
         });
-        row->Bind(wxEVT_LEFT_DOWN, [this, i, popup](wxMouseEvent&) {
+        row->Bind(wxEVT_LEFT_DOWN, [this, i, popup, disabled](wxMouseEvent&) {
+            if (disabled)
+                return;
             popup->Dismiss();
             select_mix_mode(i);
         });
@@ -5681,12 +5703,50 @@ void TextureImportDialog::show_mix_mode_popup()
     popup->Popup();
 }
 
+// Calibrated CMYW base set used by the auto-mix path below; resolved next to
+// add_decomposed_mixed_filament (both consumers share the same base colours).
+struct CymwBaseColor
+{
+    std::string hex;
+    std::string name;
+    std::string material_id;
+};
+static std::vector<CymwBaseColor> cymw_base_colors();
+
+// True when any nozzle of the current printer is 0.8 mm; CMYW mixing is
+// unsupported for that diameter (shared by the dropdown disabled state and
+// the runtime gate).
+static bool texture_import_nozzle_08()
+{
+    PresetBundle* pb = wxGetApp().preset_bundle;
+    if (pb == nullptr)
+        return false;
+    const auto* opt = pb->printers.get_edited_preset().config.option<ConfigOptionFloats>("nozzle_diameter");
+    if (opt == nullptr)
+        return false;
+    for (double nozzle_mm : opt->values)
+        if (nozzle_mm - 0.8 == 0.0)
+            return true;
+    return false;
+}
+
 void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
 {
     if (mode != TextureAutoMixMode::CMYW)
         return;
     if (m_state != TextureImportState::Ready || m_current_matches.empty() || m_mapping_rows.empty())
         return;
+
+    // 0.8 mm nozzles cannot mix: warn and fall back to direct mapping even if
+    // a Full Spectrum preset for the nozzle were shipped later.
+    if (texture_import_nozzle_08()) {
+        MessageDialog dlg(this,
+            _L("Mixing is not supported for the 0.8 mm nozzle. Direct Filament Mapping will be used instead."),
+            _L("Texture Import Warning"), wxOK | wxICON_INFORMATION);
+        dlg.ShowModal();
+        set_mix_mode_ui(0);
+        return;
+    }
 
     // Doc section 3.3.5 note 1: mixing needs a nozzle with a Full Spectrum (CMYW)
     // preset; refuse otherwise and keep the mapping untouched.
@@ -5729,73 +5789,260 @@ void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
         set_mix_mode_ui(0);
     };
 
-    // CMYW base palette. Unconfigured materials are auto-added as virtual
-    // filaments (doc section 3.3.5 note 3), typed after the fork's Full Spectrum family.
-    static const char* CMYW_HEX[4] = {"#00AEEF", "#EC008C", "#FFF200", "#FFFFFF"};
+    // Drop the direct-mapping virtual leftovers so the CMYW base colours and
+    // the new mixed recipes are numbered right after the project's existing
+    // filaments (max existing number + 1) instead of after the leftovers.
+    // References to existing mixed filaments are kept: a repeat match of the
+    // same model reuses them (and the base entries they depend on) instead of
+    // creating duplicates.
+    for (auto& m : m_current_matches) {
+        if (m.filament_index < 0 || m.filament_index >= (int)m_filament_entries.size() ||
+            !texture_entry_is_mixed(m_filament_entries[m.filament_index].kind))
+            m.filament_index = 0;
+    }
+    compact_used_virtual_filaments();
+
+    // CMYW base palette: the calibrated 0.2 mm cyan/magenta/yellow/white
+    // family from the K/S material database. Project filaments calibrated to
+    // the same kit (filament_full_spectrum_material_id) are reused in place so
+    // the spectral engine resolves their measured spectra; unconfigured
+    // materials are auto-added as virtual filaments (doc section 3.3.5 note 3).
+    const std::vector<CymwBaseColor> base_colors = cymw_base_colors();
+    if (base_colors.size() < 2) {
+        abort_apply();
+        return;
+    }
     const std::string base_preset = Slic3r::GUI::full_spectrum_preset_name();
 
-    std::vector<int>         base_idx;
+    const ConfigOptionStrings* proj_material_ids = nullptr;
+    if (PresetBundle* pb = wxGetApp().preset_bundle)
+        proj_material_ids = pb->project_config.option<ConfigOptionStrings>("filament_full_spectrum_material_id");
+
+    std::vector<int> base_idx;
     std::vector<std::string> palette_hex;
-    base_idx.reserve(4);
-    palette_hex.reserve(4);
-    for (const char* hex : CMYW_HEX) {
-        const int idx = add_virtual_filament(parse_color_string(hex), hex, base_preset);
-        if (idx < 0) {
-            abort_apply();
-            return;
+    base_idx.reserve(base_colors.size());
+    palette_hex.reserve(base_colors.size());
+    for (const CymwBaseColor& base : base_colors) {
+        const std::string norm = texture_normalize_color_hex(base.hex);
+        int idx = -1;
+
+        // 1) Reuse the project physical filament calibrated to this material.
+        if (proj_material_ids) {
+            for (size_t j = 0; j < proj_material_ids->values.size(); ++j) {
+                if (proj_material_ids->values[j] != base.material_id)
+                    continue;
+                for (size_t i = 0; i < m_filament_entries.size(); ++i) {
+                    const TextureFilamentEntry& e = m_filament_entries[i];
+                    if (e.kind == TextureFilamentKind::ExistingPhysical && e.project_config_index == j) {
+                        idx = static_cast<int>(i);
+                        break;
+                    }
+                }
+                if (idx >= 0)
+                    break;
+            }
         }
+
+        // 2) Reuse a physical entry carrying the base colour AND the Full
+        // Spectrum preset: colour alone is not enough — a same-colour filament
+        // of an incompatible material would pass the import but fail the
+        // slice-time compatibility check.
+        if (idx < 0) {
+            for (size_t i = 0; i < m_filament_entries.size(); ++i) {
+                const TextureFilamentEntry& entry = m_filament_entries[i];
+                if (!texture_entry_is_physical(entry.kind))
+                    continue;
+                const std::string entry_hex = texture_normalize_color_hex(
+                    entry.color_hex.empty() ? m_filament_color_strs[i] : entry.color_hex);
+                if (entry_hex != norm)
+                    continue;
+                std::string entry_preset = entry.preset_name;
+                if (entry_preset.empty() && entry.kind == TextureFilamentKind::ExistingPhysical) {
+                    if (PresetBundle* pb = wxGetApp().preset_bundle) {
+                        if (entry.project_config_index < pb->filament_presets.size())
+                            entry_preset = pb->filament_presets[entry.project_config_index];
+                    }
+                }
+                if (entry_preset == base_preset) {
+                    idx = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+
+        // 3) Otherwise create a virtual physical entry for the base colour,
+        // typed after the Full Spectrum preset (add_virtual_filament names it
+        // from the preset label, e.g. "Snapmaker PLA Full Spectrum").
+        if (idx < 0) {
+            idx = add_virtual_filament(parse_color_string(norm), norm, base_preset);
+            if (idx < 0) {
+                abort_apply();
+                return;
+            }
+        }
+
         base_idx.push_back(idx);
-        palette_hex.push_back(texture_normalize_color_hex(hex));
+        palette_hex.push_back(texture_normalize_color_hex(
+            m_filament_entries[idx].color_hex.empty() ? m_filament_color_strs[idx] : m_filament_entries[idx].color_hex));
+    }
+
+    // Recipes of mixed filaments that survived the compaction (a previous
+    // match of the same model, or project mixed rows), keyed by component
+    // colours + ratios so a repeat match reuses them instead of duplicating.
+    auto recipe_key_for_entry = [this](const TextureFilamentEntry& entry) -> std::string {
+        if (entry.mixed_components.size() < 2 || entry.mixed_components.size() != entry.mixed_ratios.size())
+            return std::string();
+        std::string key;
+        for (size_t mi = 0; mi < entry.mixed_components.size(); ++mi) {
+            const int comp_idx = entry.mixed_components[mi] >= 1 ? (int)entry.mixed_components[mi] - 1 : -1;
+            if (comp_idx < 0 || comp_idx >= (int)m_filament_color_strs.size())
+                return std::string();
+            if (mi > 0) key += '/';
+            key += texture_normalize_color_hex(m_filament_color_strs[comp_idx]) + ':' + std::to_string(entry.mixed_ratios[mi]);
+        }
+        return key;
+    };
+    std::map<std::string, int> existing_recipe_idx;
+    for (const auto& entry : m_filament_entries) {
+        if (!texture_entry_is_mixed(entry.kind))
+            continue;
+        const std::string key = recipe_key_for_entry(entry);
+        if (!key.empty() && entry.dialog_index >= 0)
+            existing_recipe_idx.emplace(key, entry.dialog_index);
     }
 
     // Best CMYW recipe per cluster color; identical recipes share one mixed
-    // filament so the 64-filament budget is not wasted on duplicates.
+    // filament so the 64-filament budget is not wasted on duplicates. Recipes
+    // are predicted with the calibrated K/S spectral engine (the base hexes
+    // resolve to their measured spectra) instead of the legacy RGB mixer.
+    MixedFilamentDisplayContext context = build_mixed_filament_display_context(palette_hex);
+    // Stamp the selected slots' calibrated identity: the context resolves
+    // materials by matching the project's colours, which cannot name the
+    // virtual base filaments, so assign the base material ids explicitly.
+    context.physical_material_ids.assign(palette_hex.size(), "");
+    for (size_t k = 0; k < palette_hex.size() && k < base_colors.size(); ++k)
+        context.physical_material_ids[k] = base_colors[k].material_id;
     std::map<std::string, int> recipe_mixed_idx;
     for (auto& match : m_current_matches) {
         const wxColour target((unsigned char)match.cluster_color[0],
                               (unsigned char)match.cluster_color[1],
                               (unsigned char)match.cluster_color[2]);
+
+        // Reuse a CMYW base filament when the target is already close to a
+        // pure base colour (ΔE2000 ≤ 5), so near-pure targets do not spawn
+        // junk recipes. The scan is limited to the base set: the direct
+        // mapping baseline contains an exact-colour filament for every
+        // cluster, and scanning those would short-circuit every mix.
+        {
+            constexpr double kReuseDeltaEThreshold = 5.0;
+            int best_idx = -1;
+            double best_delta = std::numeric_limits<double>::max();
+            for (int base : base_idx) {
+                const double delta = Slic3r::compute_delta_e(match.cluster_color, m_filament_colors_rgba[base]);
+                if (delta < best_delta) {
+                    best_delta = delta;
+                    best_idx = base;
+                }
+            }
+            if (best_idx >= 0 && best_delta <= kReuseDeltaEThreshold) {
+                match.filament_index = best_idx;
+                match.filament_color = m_filament_colors_rgba[best_idx];
+                match.delta_e = best_delta;
+                continue;
+            }
+        }
+
         const auto recipe = Slic3r::GUI::build_best_color_match_recipe(
-            palette_hex, target, 0, 100, false);
+            palette_hex, target, 5, 100, false, &context);
         if (!recipe.valid)
             continue; // keep the previous mapping for this cluster
 
-        int target_idx = -1;
-        if (recipe.mix_b_percent <= 0) {
-            target_idx = base_idx[recipe.component_a - 1];
-        } else if (recipe.mix_b_percent >= 100) {
-            target_idx = base_idx[recipe.component_b - 1];
-        } else {
-            const std::string key = wxString::Format("a%db%dp%d",
-                (int)recipe.component_a, (int)recipe.component_b, recipe.mix_b_percent).ToStdString();
-            auto it = recipe_mixed_idx.find(key);
-            if (it != recipe_mixed_idx.end()) {
-                target_idx = it->second;
-            } else {
-                const wxColour& pc = recipe.preview_color;
-                const std::string mixed_hex = wxString::Format("#%02X%02X%02X",
-                    pc.Red(), pc.Green(), pc.Blue()).ToStdString();
-                const std::vector<int> components = {
-                    base_idx[recipe.component_a - 1], base_idx[recipe.component_b - 1] };
-                const std::vector<int> ratios = { 100 - recipe.mix_b_percent, recipe.mix_b_percent };
-                const int mixed_idx = add_virtual_mixed_filament(mixed_hex, components, ratios);
-                if (mixed_idx < 0) {
-                    abort_apply();
-                    return;
-                }
-                recipe_mixed_idx[key] = mixed_idx;
-                target_idx = mixed_idx;
+        const std::vector<int> weights = expand_color_match_recipe_weights(recipe, palette_hex.size());
+        std::vector<int> components;
+        std::vector<int> ratios;
+        std::vector<std::string> component_hexes;
+        for (size_t k = 0; k < weights.size(); ++k) {
+            if (weights[k] <= 0)
+                continue;
+            components.push_back(base_idx[k]);
+            ratios.push_back(weights[k]);
+            component_hexes.push_back(palette_hex[k]);
+        }
+        if (components.size() < 2) {
+            // Single-component recipe: point at the base filament directly.
+            if (components.size() == 1) {
+                match.filament_index = components.front();
+                match.filament_color = m_filament_colors_rgba[components.front()];
+                match.delta_e = recipe.delta_e;
             }
+            continue;
+        }
+
+        std::string key;
+        for (size_t k = 0; k < components.size(); ++k) {
+            if (k > 0) key += '/';
+            key += component_hexes[k] + ':' + std::to_string(ratios[k]);
+        }
+
+        int target_idx = -1;
+        auto it = recipe_mixed_idx.find(key);
+        if (it != recipe_mixed_idx.end()) {
+            target_idx = it->second;
+        }
+        else {
+            const auto eit = existing_recipe_idx.find(key);
+            if (eit != existing_recipe_idx.end()) {
+                // Reuse the mixed filament created by an earlier match of the
+                // same model instead of creating a duplicate.
+                target_idx = eit->second;
+                recipe_mixed_idx[key] = target_idx;
+            }
+        }
+        if (target_idx < 0) {
+            const wxColour& pc = recipe.preview_color;
+            const std::string mixed_hex = wxString::Format("#%02X%02X%02X",
+                pc.Red(), pc.Green(), pc.Blue()).ToStdString();
+            const int mixed_idx = add_virtual_mixed_filament(mixed_hex, components, ratios);
+            if (mixed_idx < 0) {
+                abort_apply();
+                return;
+            }
+            recipe_mixed_idx[key] = mixed_idx;
+            target_idx = mixed_idx;
         }
 
         if (target_idx >= 0 && target_idx < (int)m_filament_colors_rgba.size()) {
             match.filament_index = target_idx;
             match.filament_color = m_filament_colors_rgba[target_idx];
-            match.delta_e        = recipe.delta_e;
+            match.delta_e = recipe.delta_e;
         }
     }
 
     m_auto_mix_snapshot = std::move(snap);
+
+    // Drop mixed filaments the rematch no longer references (e.g. the colour
+    // set changed between runs) so no orphan recipes reach the confirm step;
+    // compact also renumbers the survivors.
+    compact_used_virtual_filaments();
+
+    // The compaction above also drops base colours no recipe references; keep
+    // the full four-colour Full Spectrum base set in the list regardless.
+    for (const std::string& hex : palette_hex) {
+        const std::string norm = texture_normalize_color_hex(hex);
+        bool found = false;
+        for (size_t i = 0; i < m_filament_entries.size(); ++i) {
+            if (!texture_entry_is_physical(m_filament_entries[i].kind))
+                continue;
+            const std::string entry_hex = texture_normalize_color_hex(
+                m_filament_entries[i].color_hex.empty() ? m_filament_color_strs[i] : m_filament_entries[i].color_hex);
+            if (entry_hex == norm) {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+            add_virtual_filament(parse_color_string(norm), norm, base_preset);
+    }
 
     rebuild_mapping_rows();
     update_filament_color_map();
@@ -5819,6 +6066,7 @@ void TextureImportDialog::reset_auto_mix()
         m_filaments_dropped         = snap.filaments_dropped;
     }
     m_auto_mix_snapshot.reset();
+    m_auto_mix_pending = false;
 
     rebuild_mapping_rows();
     update_filament_color_map();
@@ -5827,10 +6075,228 @@ void TextureImportDialog::reset_auto_mix()
     Layout();
 }
 
+// CYMW V3 base set: the calibrated 0.2 mm cyan/magenta/yellow/white family
+// embedded in the K/S database (FullSpectrumMaterialDatabaseProfile). Every
+// target colour is mixed from these four base colours instead of the
+// project's arbitrary palette. Carries the material id so project filaments
+// calibrated to the same kit can be reused in place.
+static std::vector<CymwBaseColor> cymw_base_colors()
+{
+    using Slic3r::FullSpectrumMaterialDatabaseProfileData::MATERIAL_COUNT;
+    using Slic3r::FullSpectrumMaterialDatabaseProfileData::MATERIAL_HEX;
+    using Slic3r::FullSpectrumMaterialDatabaseProfileData::MATERIAL_ID;
+
+    static const std::unordered_map<std::string, std::string> kNames = {
+        {"#DA548F", "Full Spectrum Magenta"},
+        {"#008FC0", "Full Spectrum Cyan"},
+        {"#D9B500", "Full Spectrum Yellow"},
+        {"#E2E5E0", "Full Spectrum White"},
+    };
+
+    std::vector<CymwBaseColor> base;
+    for (size_t i = 0; i < MATERIAL_COUNT; ++i) {
+        if (std::string(MATERIAL_ID[i]).compare(0, 8, "cymw_v3_") != 0)
+            continue;
+        const std::string hex = MATERIAL_HEX[i];
+        const auto it = kNames.find(hex);
+        base.push_back({hex, it != kNames.end() ? it->second
+                                                : "Full Spectrum " + std::to_string(base.size() + 1),
+                        MATERIAL_ID[i]});
+    }
+    return base;
+}
+
 bool TextureImportDialog::add_decomposed_mixed_filament(size_t row_index)
 {
-    (void) row_index;
-    return false;
+    if (row_index >= m_mapping_rows.size())
+        return false;
+
+    // If the filament list already holds a filament whose colour matches the
+    // row's target — physical or mixed, no distinction — use it directly
+    // instead of creating a new mixed recipe. Same CIEDE2000 threshold as
+    // do_auto_match's NEW_FILAMENT_THRESHOLD.
+    {
+        constexpr double kReuseDeltaEThreshold = 5.0;
+        int best_idx = -1;
+        double best_delta = std::numeric_limits<double>::max();
+        const std::array<std::size_t, 3> target_rgb = m_mapping_rows[row_index].source_color;
+        const size_t scan_count = std::min(m_filament_entries.size(), m_filament_colors_rgba.size());
+        for (size_t i = 0; i < scan_count; ++i) {
+            const double delta = Slic3r::compute_delta_e(target_rgb, m_filament_colors_rgba[i]);
+            if (delta < best_delta) {
+                best_delta = delta;
+                best_idx = static_cast<int>(i);
+            }
+        }
+        if (best_idx >= 0 && best_delta <= kReuseDeltaEThreshold) {
+            m_mapping_rows[row_index].target_filament_idx = best_idx;
+            if (row_index < m_current_matches.size()) {
+                m_current_matches[row_index].filament_index = best_idx;
+                m_current_matches[row_index].filament_color = m_filament_colors_rgba[best_idx];
+                m_current_matches[row_index].delta_e = best_delta;
+            }
+            rebuild_mapping_rows();
+            update_filament_color_map();
+            return true;
+        }
+    }
+
+    const std::vector<CymwBaseColor> base_colors = cymw_base_colors();
+    if (base_colors.size() < 2)
+        return false;
+
+    // Project filaments calibrated to the CYMW kit (filament_full_spectrum_material_id
+    // starting with cymw_v3_) are reused in place: no new physical filament is
+    // created and the existing numbers stay valid, so the new mixed recipes are
+    // numbered from the project's max filament + 1.
+    const ConfigOptionStrings* proj_material_ids = nullptr;
+    if (PresetBundle* pb = wxGetApp().preset_bundle)
+        proj_material_ids = pb->project_config.option<ConfigOptionStrings>("filament_full_spectrum_material_id");
+
+    std::vector<int> base_dialog_indices;
+    std::vector<std::string> base_hexes;
+    base_dialog_indices.reserve(base_colors.size());
+    base_hexes.reserve(base_colors.size());
+    for (const CymwBaseColor& base : base_colors) {
+        const std::string norm = texture_normalize_color_hex(base.hex);
+        int idx = -1;
+
+        // 1) Reuse the project physical filament calibrated to this material.
+        if (proj_material_ids) {
+            for (size_t j = 0; j < proj_material_ids->values.size(); ++j) {
+                if (proj_material_ids->values[j] != base.material_id)
+                    continue;
+                for (size_t i = 0; i < m_filament_entries.size(); ++i) {
+                    const TextureFilamentEntry& e = m_filament_entries[i];
+                    if (e.kind == TextureFilamentKind::ExistingPhysical &&
+                        e.project_config_index == j) {
+                        idx = static_cast<int>(i);
+                        break;
+                    }
+                }
+                if (idx >= 0)
+                    break;
+            }
+        }
+
+        // 2) Reuse any physical entry already carrying the base colour.
+        if (idx < 0) {
+            for (size_t i = 0; i < m_filament_entries.size(); ++i) {
+                if (!texture_entry_is_physical(m_filament_entries[i].kind))
+                    continue;
+                const std::string entry_hex = texture_normalize_color_hex(
+                    m_filament_entries[i].color_hex.empty() ? m_filament_color_strs[i] : m_filament_entries[i].color_hex);
+                if (entry_hex == norm) {
+                    idx = static_cast<int>(i);
+                    break;
+                }
+            }
+        }
+
+        // 3) Otherwise create a virtual physical entry for the base colour.
+        if (idx < 0) {
+            const wxColour c(norm);
+            const std::array<float, 4> rgba = {c.Red() / 255.0f, c.Green() / 255.0f, c.Blue() / 255.0f, 1.0f};
+            idx = add_virtual_filament(rgba, norm);
+            if (idx < 0)
+                return false;
+            m_filament_names[idx] = base.name;
+            m_filament_entries[idx].name = base.name;
+        }
+
+        base_dialog_indices.push_back(idx);
+        base_hexes.push_back(texture_normalize_color_hex(
+            m_filament_entries[idx].color_hex.empty() ? m_filament_color_strs[idx] : m_filament_entries[idx].color_hex));
+    }
+
+    const FilamentMappingRow &row = m_mapping_rows[row_index];
+    wxColour target;
+    const bool target_ok = !row.source_hex.empty() &&
+                           try_parse_color_match_hex(wxString::FromUTF8(row.source_hex), target);
+    if (!target_ok)
+        target = wxColour(static_cast<unsigned char>(row.source_color[0]),
+                          static_cast<unsigned char>(row.source_color[1]),
+                          static_cast<unsigned char>(row.source_color[2]));
+
+    // CMYW match: search the recipe (components + ratios) whose predicted
+    // blend is closest to the row's colour, evaluated with the calibrated K/S
+    // engine (the four base hexes resolve to their measured spectra). The
+    // category filter is bypassed: the base set is a calibrated kit and the
+    // dialog entries have no project filament category to resolve against.
+    const MixedFilamentDisplayContext context = build_mixed_filament_display_context(base_hexes);
+    const MixedColorMatchRecipeResult recipe = build_best_color_match_recipe(base_hexes, target, 5, 100, false, &context);
+    if (!recipe.valid)
+        return false;
+
+    const std::vector<int> weights = expand_color_match_recipe_weights(recipe, base_hexes.size());
+    std::vector<int> component_dialog_indices;
+    std::vector<int> ratios;
+    for (size_t k = 0; k < weights.size(); ++k) {
+        if (weights[k] <= 0)
+            continue;
+        component_dialog_indices.push_back(base_dialog_indices[k]);
+        ratios.push_back(weights[k]);
+    }
+    if (component_dialog_indices.size() < 2)
+        return false;
+
+    // If the list already holds a mixed filament built from the identical
+    // recipe (same CYMW components and ratios), reuse it. The predicted colour
+    // of an imperfect mix can sit far from its target (ΔE beyond the colour
+    // reuse threshold above), so recipe identity — not colour distance — is
+    // what dedupes repeat imports of the same model.
+    {
+        int reused_mixed_idx = -1;
+        for (size_t i = 0; i < m_filament_entries.size(); ++i) {
+            const TextureFilamentEntry& e = m_filament_entries[i];
+            if (!texture_entry_is_mixed(e.kind))
+                continue;
+            std::vector<int> entry_weights(base_dialog_indices.size(), 0);
+            bool all_components_are_bases = true;
+            for (size_t mi = 0; mi < e.mixed_components.size() && mi < e.mixed_ratios.size(); ++mi) {
+                const int comp_di = e.mixed_components[mi] >= 1 ? static_cast<int>(e.mixed_components[mi]) - 1 : -1;
+                int base_k = -1;
+                for (size_t k = 0; k < base_dialog_indices.size(); ++k) {
+                    if (base_dialog_indices[k] == comp_di) {
+                        base_k = static_cast<int>(k);
+                        break;
+                    }
+                }
+                if (base_k < 0) {
+                    all_components_are_bases = false;
+                    break;
+                }
+                entry_weights[base_k] += e.mixed_ratios[mi];
+            }
+            if (!all_components_are_bases || entry_weights != weights)
+                continue;
+            reused_mixed_idx = static_cast<int>(i);
+            break;
+        }
+        if (reused_mixed_idx >= 0) {
+            m_mapping_rows[row_index].target_filament_idx = reused_mixed_idx;
+            if (row_index < m_current_matches.size()) {
+                m_current_matches[row_index].filament_index = reused_mixed_idx;
+                m_current_matches[row_index].filament_color = m_filament_colors_rgba[reused_mixed_idx];
+            }
+            rebuild_mapping_rows();
+            update_filament_color_map();
+            return true;
+        }
+    }
+
+    const std::string mixed_hex = texture_normalize_color_hex(
+        recipe.preview_color.GetAsString(wxC2S_HTML_SYNTAX).ToStdString());
+    const int new_idx = add_virtual_mixed_filament(mixed_hex, component_dialog_indices, ratios);
+    if (new_idx < 0)
+        return false;
+
+    m_mapping_rows[row_index].target_filament_idx = new_idx;
+    if (row_index < m_current_matches.size())
+        m_current_matches[row_index].filament_index = new_idx;
+    rebuild_mapping_rows();
+    update_filament_color_map();
+    return true;
 }
 
 void TextureImportDialog::dismiss_filament_popup_on_wheel(wxMouseEvent& evt)
@@ -5862,18 +6328,14 @@ void TextureImportDialog::show_filament_popup(size_t row_index)
             ? display_numbers[idx] : idx + 1;
     };
 
-    auto on_select = [this, row_index, display_number](int idx) {
+    auto on_select = [this, row_index](int idx) {
         if (row_index >= m_mapping_rows.size()) return;
         m_mapping_rows[row_index].target_filament_idx = idx;
         if (row_index < m_current_matches.size())
             m_current_matches[row_index].filament_index = idx;
-        if (m_mapping_rows[row_index].target_panel) {
-            wxString label = (idx >= 0 && idx < (int)m_filament_names.size())
-                ? filament_name_to_wx_string(m_filament_names[idx])
-                : wxString::Format(_L("Filament %d"), display_number(idx));
-            m_mapping_rows[row_index].target_panel->SetToolTip(label);
-            m_mapping_rows[row_index].target_panel->Refresh();
-        }
+        // Rebuild the rows so the out-of-range ratio warning under this row
+        // refreshes together with the new target.
+        rebuild_mapping_rows();
         update_filament_color_map();
     };
 
@@ -6330,6 +6792,24 @@ void TextureImportDialog::do_auto_match()
     update_filament_color_map();
 }
 
+// Recommended mix-ratio bounds, mirroring the manual batch dialog's ratio
+// guard (MixedFilamentBatchDialog::check_manual_recipe_ratio).
+static constexpr int kTextureAutoMixMinComponentPercent = 15;
+static constexpr int kTextureAutoMixMaxPairComponentPercent = 85;
+static constexpr int kTextureAutoMixMaxMultiComponentPercent = 70;
+
+static bool mixed_ratios_out_of_recommended_range(const TextureFilamentEntry& entry)
+{
+    if (entry.mixed_components.size() < 2 || entry.mixed_components.size() != entry.mixed_ratios.size())
+        return false;
+    const int max_pct = entry.mixed_ratios.size() >= 3 ? kTextureAutoMixMaxMultiComponentPercent
+                                                       : kTextureAutoMixMaxPairComponentPercent;
+    for (const int ratio : entry.mixed_ratios)
+        if (ratio < kTextureAutoMixMinComponentPercent || ratio > max_pct)
+            return true;
+    return false;
+}
+
 void TextureImportDialog::rebuild_mapping_rows()
 {
     m_mapping_scroll->Freeze();
@@ -6631,9 +7111,27 @@ void TextureImportDialog::rebuild_mapping_rows()
 
         row_panel->SetSizer(row_sizer);
         // 20px only BETWEEN rows (Figma 4+12+4 rhythm); no trailing gap after
-        // the last row, so 4 rows = 4x32 + 3x20 = 188 and never overflow.
+        // the last row, so 4 rows = 4x32 + 3x20 = 188 and never overflow. A
+        // row whose target is a mixed filament with an out-of-range ratio
+        // carries the warning right below it instead (same thresholds as the
+        // manual batch dialog's ratio guard).
         const bool last_row = (ci + 1 == m_current_matches.size());
-        m_mapping_sizer->Add(row_panel, 0, wxEXPAND | wxBOTTOM, last_row ? 0 : FromDIP(20));
+        const bool ratio_warning = row.target_filament_idx >= 0 &&
+                                    row.target_filament_idx < (int)m_filament_entries.size() &&
+                                    mixed_ratios_out_of_recommended_range(m_filament_entries[row.target_filament_idx]);
+        m_mapping_sizer->Add(row_panel, 0, wxEXPAND | wxBOTTOM,
+                             ratio_warning ? FromDIP(4) : (last_row ? 0 : FromDIP(20)));
+
+        if (ratio_warning) {
+            auto* warn = new wxStaticText(m_mapping_scroll, wxID_ANY,
+                _L("The mix ratio is outside the recommended range. Adjust the ratios manually for better results."));
+            wxFont wf = warn->GetFont();
+            wf.SetPointSize(9);
+            warn->SetFont(wf);
+            warn->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#FF6F00")));
+            m_mapping_sizer->Add(warn, wxSizerFlags().Border(wxLEFT, src_group_w + FromDIP(12) + gap_after_swatch)
+                                                     .Border(wxBOTTOM, last_row ? 0 : FromDIP(20)));
+        }
     }
 
     m_mapping_scroll->FitInside();

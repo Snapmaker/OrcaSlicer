@@ -169,7 +169,9 @@ public:
     // many-second) deletion loop. Default-empty: existing callers see no change.
     void cleanup_unused_filaments_after_batch_match(const BatchMatchResult& match_result,
                                                     std::function<void(int /*current*/, int /*total*/)> on_progress = nullptr);
-    void add_custom_filament(wxColour new_col);
+    // Returns false when the new filament cannot be added (physical or total
+    // filament cap reached); true when the filament was actually created.
+    bool add_custom_filament(wxColour new_col, const std::string& preset_name = std::string());
     void edit_filament();
 
     void on_filaments_delete(size_t filament_id);

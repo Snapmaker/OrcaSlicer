@@ -69,6 +69,9 @@ struct TextureFilamentEntry {
     TextureFilamentKind kind{TextureFilamentKind::ExistingPhysical};
     int                 dialog_index{-1};
     size_t              project_config_index{size_t(-1)};
+    // Stable id of an ExistingMixed row; resolved to the final filament id
+    // via MixedFilamentManager::filament_id_from_stable_id at confirm time.
+    uint64_t            stable_id{0};
     std::string         color_hex;
     std::string         name;
     std::string         type;
@@ -488,6 +491,9 @@ private:
     // bottom buttons; never affects the mapping itself.
     bool                               m_filaments_dropped = false;
     TextureAutoMixMode                 m_auto_mix_mode = TextureAutoMixMode::CMYW;
+    // CMYW Auto Mix selected in the dropdown while the mapping rows were not
+    // ready yet (still computing, or no clusters); set_state(Ready) applies it.
+    bool m_auto_mix_pending = false;
 
     Slic3r::PaintedMesh               m_painted;
     std::vector<Slic3r::FilamentMatch> m_current_matches;

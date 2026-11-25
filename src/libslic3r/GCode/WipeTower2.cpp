@@ -1844,7 +1844,7 @@ WipeTower::ToolChangeResult WipeTower2::tool_change_new(const WipeTowerInfo::Too
         // G-code generation matches these results against the planned tool changes.
         BOOST_LOG_TRIVIAL(warning) << "WipeTower2::tool_change_new: no wipe tower block for adhesiveness category "
             << m_filpar[new_tool].category << ", emitting an empty tool change result";
-        WipeTower::ToolChangeResult result;
+        WipeTower::ToolChangeResult result{};
         result.initial_tool = int(old_tool);
         result.new_tool = int(new_tool);
         result.print_z = m_z_pos;

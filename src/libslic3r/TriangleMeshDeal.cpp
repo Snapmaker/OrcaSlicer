@@ -178,7 +178,8 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
                                                           const std::vector<char>&                         subdivide_face,
                                                           std::map<std::pair<uint32_t, uint32_t>, uint32_t>* edge_new_vertex_out = nullptr,
                                                           const std::vector<char>*                         vertex_boundary_extra = nullptr,
-                                                          bool                                             linear = false)
+                                                          bool                                             linear = false,
+                                                          const std::set<std::pair<uint32_t, uint32_t>>*   force_midpoint_edges = nullptr)
 {
     const size_t vertex_count = vertices.size();
     const size_t face_count   = faces.size();
@@ -232,7 +233,8 @@ static indexed_triangle_set loop_subdivide_fixed_boundary(const std::vector<stl_
             const auto edge_key = a < b ? std::make_pair(a, b) : std::make_pair(b, a);
             const auto result   = edge_new_vertex.emplace(edge_key, uint32_t(out.vertices.size()));
             if (result.second) {
-                if (linear || ff_index[face][j] < 0 || (vertex_on_boundary[a] && vertex_on_boundary[b]))
+                if (linear || ff_index[face][j] < 0 || (vertex_on_boundary[a] && vertex_on_boundary[b])
+                    || (force_midpoint_edges != nullptr && force_midpoint_edges->count(edge_key) > 0))
                     {
                     // Boundary edge: exact midpoint of the two endpoints.
                     const stl_vertex& va = vertices[a];
@@ -348,25 +350,38 @@ static bool validate_region_children(const std::vector<stl_vertex>& parent_verti
                                      const indexed_triangle_set&     its,
                                      size_t                         region_faces,
                                      const std::vector<int>&        child_parent,
-                                     const std::vector<stl_triangle_vertex_indices>& parents)
+                                     const std::vector<stl_triangle_vertex_indices>& parents,
+                                     std::vector<int>*              failed_parents_out = nullptr)
 {
     // Minimum child area as a fraction of the parent's longest edge squared.
     // Deliberately tiny: it only has to reject flips (negative), exact degenerates
     // (zero) and float-collapsed faces, not thin-but-legitimate ones.
+    // Full scan (no early exit): the caller wants ALL failing parents so it can
+    // downgrade them in one round instead of one per rebuild.
     constexpr double MinChildAreaRatio = 1e-9;
 
+    bool all_valid = true;
     for (size_t i = 0; i < region_faces; ++i) {
         const stl_triangle_vertex_indices& p    = parents[size_t(child_parent[i])];
         const Vec3d p0 = parent_vertices[size_t(p[0])].cast<double>();
         const Vec3d p1 = parent_vertices[size_t(p[1])].cast<double>();
         const Vec3d p2 = parent_vertices[size_t(p[2])].cast<double>();
         const double L2 = std::max({(p1 - p0).squaredNorm(), (p2 - p1).squaredNorm(), (p0 - p2).squaredNorm()});
-        if (! (L2 > 0.) || ! std::isfinite(L2))
-            return false; // the parent itself is degenerate: children cannot be valid
+        if (! (L2 > 0.) || ! std::isfinite(L2)) {
+            // the parent itself is degenerate: children cannot be valid
+            all_valid = false;
+            if (failed_parents_out != nullptr)
+                failed_parents_out->push_back(child_parent[i]);
+            continue;
+        }
         const Vec3d n = (p1 - p0).cross(p2 - p0);
         const double n_norm = n.norm();
-        if (! (n_norm > 0.) || ! std::isfinite(n_norm))
-            return false;
+        if (! (n_norm > 0.) || ! std::isfinite(n_norm)) {
+            all_valid = false;
+            if (failed_parents_out != nullptr)
+                failed_parents_out->push_back(child_parent[i]);
+            continue;
+        }
         const Vec3d nhat = n / n_norm;
 
         const stl_triangle_vertex_indices& c    = its.indices[i];
@@ -374,16 +389,28 @@ static bool validate_region_children(const std::vector<stl_vertex>& parent_verti
         const Vec3d c1 = its.vertices[size_t(c[1])].cast<double>();
         const Vec3d c2 = its.vertices[size_t(c[2])].cast<double>();
         const double proj = nhat.dot((c1 - c0).cross(c2 - c0));
-        if (! std::isfinite(proj) || ! (proj > MinChildAreaRatio * L2))
-            return false;
+        if (! std::isfinite(proj) || ! (proj > MinChildAreaRatio * L2)) {
+            all_valid = false;
+            if (failed_parents_out != nullptr)
+                failed_parents_out->push_back(child_parent[i]);
+        }
     }
-    return true;
+    return all_valid;
 }
 
-indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok, SubdivisionFailure* failure) {
+// Diagnostic hooks: vertex triples (indices into the level's INPUT vertex array)
+// of the round-1 failing parents and of the finally downgraded faces. Populated
+// by smooth_triangle_mesh_local_its for the test-side STL export.
+static std::vector<stl_triangle_vertex_indices> s_round1_failing;
+static std::vector<stl_triangle_vertex_indices> s_final_downgraded;
+
+indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const indexed_triangle_set& origin, const std::vector<uint32_t>& facet_indices, bool& ok, SubdivisionFailure* failure,
+                                                                     size_t* region_face_count) {
     s_local_its_call_count.fetch_add(1, std::memory_order_relaxed);
     if (failure != nullptr)
         *failure = SubdivisionFailure::None;
+    s_round1_failing.clear();
+    s_final_downgraded.clear();
 
     // Only the selected faces take part in the subdivision; the patch BOUNDARY,
     // however, is detected against the full mesh (see the neighborhood pass below):
@@ -394,6 +421,27 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
     for (uint32_t facet : facet_indices)
         if (facet < origin.indices.size())
             is_selected[facet] = 1;
+
+    // Zero-area selected faces (collinear or coincident vertices, e.g. the 11
+    // slivers shipped inside 3DBenchy) pass through untouched instead of failing
+    // the whole region: their children would be zero-area in ANY construction —
+    // smooth, linear, anything — so validate_region_children can never accept
+    // them, and subdividing a zero-area face carries no geometry anyway.
+    // Unselecting them here routes every downstream pass (boundary detection,
+    // stitching, the validator) through the existing untouched-face path; the
+    // only side effect is that edges shared with a real selected face degrade to
+    // conservative boundary treatment, same as any other unselected neighbor.
+    for (size_t i = 0; i < origin.indices.size(); ++i) {
+        if (! is_selected[i])
+            continue;
+        const stl_triangle_vertex_indices& f = origin.indices[i];
+        const Vec3d p0 = origin.vertices[size_t(f(0))].cast<double>();
+        const Vec3d p1 = origin.vertices[size_t(f(1))].cast<double>();
+        const Vec3d p2 = origin.vertices[size_t(f(2))].cast<double>();
+        const double n_norm = (p1 - p0).cross(p2 - p0).norm();
+        if (! (n_norm > 0.) || ! std::isfinite(n_norm))
+            is_selected[i] = 0;
+    }
 
     // Drop duplicate faces inside the selection (either winding): two copies share
     // every edge four times and derail the pairing.
@@ -427,6 +475,8 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
                     ok = false;
                     if (failure != nullptr)
                         *failure = SubdivisionFailure::NonManifold;
+                    if (region_face_count != nullptr)
+                        *region_face_count = 0;
                     return indexed_triangle_set();
                 }
             }
@@ -536,21 +586,35 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
     for (size_t i = 0; i < selected_faces.size(); ++i)
         subdivide_face[i] = bound_face_index[i].size() == 3 ? 1 : 0;
 
-    // Build the region (split + stitched children) with the smooth Loop configuration,
-    // validate every child against its direct parent, and on failure rebuild the WHOLE
-    // level linearly (vertices kept in place, all edge points at exact midpoints,
-    // boundary faces fanned from their triangle centroid) - valid by construction
-    // whenever the selection itself is. Two attempts suffice.
+    // Build the region (split + stitched children) with the smooth Loop
+    // configuration and validate every child against its direct parent. One
+    // repair round: the failing parents' three edges fall back to exact midpoints
+    // and their vertices are pinned, then the level is rebuilt and re-validated.
+    // If the second detection still finds problems (a fundamentally concave
+    // region whose normals keep flipping), stop processing and ship the INITIAL
+    // Loop result unchanged: reprocessing such a region further mostly freezes
+    // midpoint patches over it, which visually hurts more than the few invalid
+    // children it would remove.
     indexed_triangle_set its;
     std::vector<int>     child_parent; // direct parent (selected face index) of every region child
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        const bool linear = (attempt == 1);
+    std::set<std::pair<uint32_t, uint32_t>> forced_midpoint_edges; // downgraded edges → exact midpoints
+    std::vector<char>    pinned_vertices(vertices.size(), 0);      // downgraded vertices → never repositioned
+    std::vector<int>     failed_parents;
+    bool                 level_valid = false;
+    indexed_triangle_set initial_loop_result; // round-0 build, shipped when the repair round fails
+    for (int attempt = 0; attempt < 2 && ! level_valid; ++attempt) {
         child_parent.clear();
+        failed_parents.clear();
+
+        std::vector<char> effective_pins(vertex_touched_by_unselected);
+        for (size_t v = 0; v < effective_pins.size(); ++v)
+            effective_pins[v] |= pinned_vertices[v];
 
         // Edge -> index of the vertex inserted on that edge; fresh per attempt, so
         // the two attempts share no vertex indices.
         std::map<std::pair<uint32_t, uint32_t>, uint32_t> edge_new_vertex;
-        its = loop_subdivide_fixed_boundary(vertices, selected_faces, subdivide_face, &edge_new_vertex, &vertex_touched_by_unselected, linear);
+        its = loop_subdivide_fixed_boundary(vertices, selected_faces, subdivide_face, &edge_new_vertex, &effective_pins, false,
+                                            &forced_midpoint_edges);
 
         // The split children were emitted first, four per split face in face order:
         // record their parents for the validation below.
@@ -657,23 +721,63 @@ indexed_triangle_set TriangleMeshDeal::smooth_triangle_mesh_local_its(const inde
     }
 
     // Every region child must keep its direct parent's orientation and a minimum
-    // area: the smooth attempt can still produce flipped or degenerate children
-    // (see validate_region_children), the linear attempt cannot unless the
-    // selection itself contains degenerate faces.
-    if (validate_region_children(vertices, its, child_parent.size(), child_parent, selected_faces))
+    // area (see validate_region_children). The first round's failure schedules
+    // exactly one repair round; a second failure ends the processing.
+    if (validate_region_children(vertices, its, child_parent.size(), child_parent, selected_faces, &failed_parents)) {
+        level_valid = true;
         break;
-    if (linear) {
-        // Even the linear construction failed: the selection cannot be subdivided
-        // into valid geometry (e.g. a zero-area face in the selection).
-        ok = false;
-        if (failure != nullptr)
-            *failure = SubdivisionFailure::DegenerateGeometry;
-        return indexed_triangle_set();
     }
-    // Smooth attempt failed: retry the whole level linearly.
+    if (attempt == 0) {
+        // Diagnostic hook: the parents that failed the pure-smooth round (one
+        // entry per parent, not per failing child).
+        std::set<int> seen;
+        for (int pi : failed_parents)
+            if (seen.insert(pi).second)
+                s_round1_failing.push_back(selected_faces[size_t(pi)]);
+        // Keep the initial build for the ship-as-is fallback and schedule the
+        // single repair round.
+        initial_loop_result = std::move(its);
+        for (int pi : failed_parents) {
+            const stl_triangle_vertex_indices& tri = selected_faces[size_t(pi)];
+            for (int j = 0; j < 3; ++j) {
+                const uint32_t a = tri[j];
+                const uint32_t b = tri[(j + 1) % 3];
+                forced_midpoint_edges.insert(a < b ? std::make_pair(a, b) : std::make_pair(b, a));
+                pinned_vertices[size_t(a)] = 1;
+                pinned_vertices[size_t(b)] = 1;
+            }
+        }
+    }
+    }
+
+    if (! level_valid) {
+        // Two detections both found problems: ship the initial Loop result.
+        its = std::move(initial_loop_result);
     }
 
     ok = true;
+    // Where the subdivided region ends in the output face list (split + stitched
+    // children precede the untouched tail). Identical across attempts: forced
+    // midpoints change neither the pairing nor the stitching branch of a face.
+    if (region_face_count != nullptr)
+        *region_face_count = child_parent.size();
+
+    // Diagnostic hook: the faces the downgrade finally landed on (any of their
+    // three edges carries a forced midpoint). Empty when the initial result
+    // shipped - no downgrade applies to that output.
+    if (level_valid) {
+        for (size_t f = 0; f < selected_faces.size(); ++f) {
+            const stl_triangle_vertex_indices& tri = selected_faces[f];
+            for (int j = 0; j < 3; ++j) {
+                const uint32_t a = tri[j];
+                const uint32_t b = tri[(j + 1) % 3];
+                if (forced_midpoint_edges.count(a < b ? std::make_pair(a, b) : std::make_pair(b, a)) > 0) {
+                    s_final_downgraded.push_back(tri);
+                    break;
+                }
+            }
+        }
+    }
 
     // Finally append the untouched part of the original mesh: every face outside the
     // selection. Its vertex indices are still valid in its.vertices, where the original
@@ -703,6 +807,16 @@ uint64_t TriangleMeshDeal::smooth_triangle_mesh_local_its_call_count()
 void TriangleMeshDeal::reset_smooth_triangle_mesh_local_its_call_count()
 {
     s_local_its_call_count.store(0, std::memory_order_relaxed);
+}
+
+std::vector<stl_triangle_vertex_indices> TriangleMeshDeal::diag_round1_failing_faces()
+{
+    return s_round1_failing;
+}
+
+std::vector<stl_triangle_vertex_indices> TriangleMeshDeal::diag_final_downgraded_faces()
+{
+    return s_final_downgraded;
 }
 
 } // namespace Slic3r

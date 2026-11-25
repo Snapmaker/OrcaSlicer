@@ -268,6 +268,8 @@ void GLGizmoPainterBase::render_triangles(const Selection& selection) const
             continue;
 
         ++mesh_id;
+        if (! render_selector_for_volume(mv))
+            continue;
 
         Transform3d trafo_matrix;
         if (m_parent.get_canvas_type() == GLCanvas3D::CanvasAssembleView) {

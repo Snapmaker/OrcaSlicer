@@ -84,8 +84,6 @@ private:
         // cleared - whenever the selection or the mesh changes, so an unchanged
         // failing selection (e.g. non-manifold edges) is not recomputed every frame.
         int                       failed_level = -1;
-        // Why the growth stopped below the requested level (valid when failed_level >= 0).
-        TriangleMeshDeal::SubdivisionFailure failure_reason = TriangleMeshDeal::SubdivisionFailure::None;
         GLModel                   model;            // non-region geometry, drawn by the gizmo with the volume color
         GLModel                   model_region;     // region-only geometry, colored like the level-0 painting
         bool                      hidden = false;   // the original volume is hidden while the preview is shown
@@ -93,9 +91,12 @@ private:
     void        update_preview();
     void        restore_preview();
     void        render_preview_meshes();
-    // Failure notification text matching the recorded per-preview reasons: the
-    // specific cause when all failed previews share one, the combined wording when
-    // they mix. apply selects the "Subdivision failed" family, otherwise the
+    // Per-volume gate for the inherited selector draw: skip exactly the volumes
+    // whose draw render_preview_meshes replaces (conditions mirrored), so
+    // unpainted siblings and failed previews keep their original rendering.
+    bool        render_selector_for_volume(const ModelVolume* mv) const override;
+    // Failure notification text (the only reachable cause is the non-manifold
+    // guard). apply selects the "Subdivision failed" family, otherwise the
     // "stopped at level" family.
     wxString    subdivision_failure_text(int lowest_achieved, bool apply) const;
 

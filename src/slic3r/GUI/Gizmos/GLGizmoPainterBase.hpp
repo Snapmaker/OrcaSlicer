@@ -389,6 +389,11 @@ public:
 
 protected:
     virtual void render_triangles(const Selection& selection) const;
+    // Whether the triangle selector of this model part is drawn by render_triangles.
+    // A derived gizmo that replaces some volumes' draw with its own preview mesh
+    // overrides this to skip exactly those volumes - the conditions must mirror
+    // the replacement draw's, or volumes vanish / get drawn twice.
+    virtual bool render_selector_for_volume(const ModelVolume* mv) const { return true; }
     void render_cursor();
     void render_cursor_circle();
     void render_cursor_sphere(const Transform3d& trafo) const;

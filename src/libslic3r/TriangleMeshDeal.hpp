@@ -9,13 +9,12 @@ namespace Slic3r {
 class TriangleMeshDeal
 {
 public:
-    // Why a local subdivision level failed (valid when ok == false): the selected
-    // edges were non-manifold, or the region could not be subdivided into valid
-    // geometry (degenerate faces, float collapse).
+    // Why a local subdivision level failed (valid when ok == false): an edge of
+    // the selection is shared by more than two selected faces. Geometry problems
+    // never reject a level - the initial Loop result ships instead.
     enum class SubdivisionFailure {
         None,
         NonManifold,
-        DegenerateGeometry,
     };
 
     static TriangleMesh smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok);
@@ -34,6 +33,13 @@ public:
     // failing selection is not recomputed on every frame.
     static uint64_t smooth_triangle_mesh_local_its_call_count();
     static void     reset_smooth_triangle_mesh_local_its_call_count();
+
+    // Diagnostic hooks for the test-side STL export: vertex triples (indices into
+    // the subdivision INPUT vertex array) of the parents that failed the pure
+    // smooth round, and of the faces the downgrade finally landed on. Empty after
+    // a call that needs no downgrade.
+    static std::vector<stl_triangle_vertex_indices> diag_round1_failing_faces();
+    static std::vector<stl_triangle_vertex_indices> diag_final_downgraded_faces();
 };
 } // namespace Slic3r
 

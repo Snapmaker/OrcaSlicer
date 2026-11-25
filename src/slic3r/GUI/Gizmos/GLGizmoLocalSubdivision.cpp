@@ -94,10 +94,10 @@ void GLGizmoLocalSubdivision::render_painter_gizmo()
     glsafe(::glEnable(GL_BLEND));
     glsafe(::glEnable(GL_DEPTH_TEST));
 
-    // While the preview is shown the region is highlighted inside the preview mesh
-    // itself; skip the painting overlay, which is drawn on the original geometry.
-    if (m_shown_level == 0)
-        render_triangles(selection);
+    // Parts replaced by a preview mesh skip their selector draw inside
+    // render_triangles (render_selector_for_volume); every other part - unpainted
+    // siblings, previews that could not reach level 1 - keeps its original draw.
+    render_triangles(selection);
     m_c->object_clipper()->render_cut();
     m_c->instances_hider()->render_cut();
 
@@ -115,6 +115,9 @@ void GLGizmoLocalSubdivision::update_from_model_object(bool first_update)
 
     wxBusyCursor wait;
     const ModelObject* mo = m_c->selection_info()->model_object();
+    // Model data replaces these selectors, so drop the active stroke instead of writing it back.
+    ResetPaintingStroke();
+    DetachTriangleSelectorGlResources();
     m_triangle_selectors.clear();
     std::vector<ColorRGBA> ebt_colors;
     ebt_colors.push_back(GLVolume::NEUTRAL_COLOR);
@@ -366,8 +369,41 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
         ImGui::PopStyleColor(3);
 
         ImGui::SameLine(0.f, 0.f);
-        if (ImGui::Button("+##subdiv_plus", ImVec2(btn_w, 0.f)) && m_subdiv_level < MaxSubdivLevel)
-            ++m_subdiv_level;
+        if (ImGui::Button("+##subdiv_plus", ImVec2(btn_w, 0.f)) && m_subdiv_level < MaxSubdivLevel) {
+            const int next_level = m_subdiv_level + 1;
+            // The preview builds every level eagerly on the UI thread and keeps the
+            // intermediate meshes, so a step that projects past the face budget can
+            // freeze the editor long before the apply path runs. Ask here, at the
+            // step — but only when this step still has work to do: stepping back
+            // down and up again reuses the cached meshes (and a cached failure
+            // never recomputes), so the warning must not repeat either. Mirrors
+            // update_preview's any-growth-pending predicate.
+            bool needs_compute = m_preview_dirty;
+            for (const Preview& p : m_previews)
+                if (int(p.meshes.size()) <= next_level && ! p.next_facets.empty() && p.failed_level != int(p.meshes.size()))
+                    needs_compute = true;
+            bool over_budget = false;
+            const ModelObject* mo = m_c->selection_info()->model_object();
+            if (needs_compute && m_selected_facet_count > 0) {
+                size_t growth = 1;
+                for (int i = 0; i <= m_subdiv_level; ++i)
+                    growth *= 4;
+                size_t future_face_count = size_t(m_selected_facet_count) * (growth - 1);
+                for (const ModelVolume* mv : mo->volumes)
+                    if (mv->is_model_part())
+                        future_face_count += mv->mesh().its.indices.size();
+                over_budget = future_face_count > 1000000;
+            }
+            if (over_budget) {
+                auto name_str = wxString::FromUTF8(mo->name);
+                auto content  = wxString::Format(
+                    _L("\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"), name_str);
+                WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), content, wxEmptyString, wxYES_NO);
+                if (dlg.ShowModal() != wxID_NO)
+                    ++m_subdiv_level;
+            } else
+                ++m_subdiv_level;
+        }
 
         ImGui::PopStyleColor(4); // Button, ButtonHovered, ButtonActive, Text
     }
@@ -511,8 +547,7 @@ void GLGizmoLocalSubdivision::update_preview()
             TriangleMeshDeal::SubdivisionFailure failure = TriangleMeshDeal::SubdivisionFailure::None;
             indexed_triangle_set        next       = TriangleMeshDeal::smooth_triangle_mesh_local_its(src, p.next_facets, ok, &failure);
             if (! ok) {
-                p.failed_level   = next_level;
-                p.failure_reason = failure;
+                p.failed_level = next_level;
                 break;
             }
             const size_t region = next.indices.size() - unselected;
@@ -612,6 +647,34 @@ void GLGizmoLocalSubdivision::update_preview()
         m_parent.set_as_dirty();
 }
 
+bool GLGizmoLocalSubdivision::render_selector_for_volume(const ModelVolume* mv) const
+{
+    if (m_shown_level == 0)
+        return true;
+    const Preview* p = nullptr;
+    for (const Preview& cand : m_previews)
+        if (cand.volume == mv) {
+            p = &cand;
+            break;
+        }
+    if (p == nullptr)
+        return true; // not painted: the selector is this volume's only draw
+    const int level = std::min(m_subdiv_level, int(p->meshes.size()) - 1);
+    if (level <= 0)
+        return true; // preview stuck at level 0 (e.g. non-manifold selection): nothing replaces the selector
+    if (! p->model.is_initialized() && ! p->model_region.is_initialized())
+        return true; // render_preview_meshes skips uninitialized models
+    // Mirror the GLVolume match of render_preview_meshes: without it the preview
+    // would not draw this volume either.
+    const Selection& selection = m_parent.get_selection();
+    for (const auto& i : selection.get_volume_idxs()) {
+        const GLVolume* v = selection.get_volume(i);
+        if (v != nullptr && v->volume_idx() == p->gl_volume_idx)
+            return false; // the preview mesh replaces the selector for this volume
+    }
+    return true;
+}
+
 void GLGizmoLocalSubdivision::render_preview_meshes()
 {
     if (m_shown_level == 0 || m_previews.empty())
@@ -627,6 +690,13 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
     glsafe(::glPushAttrib(GL_DEPTH_BUFFER_BIT));
     glsafe(::glEnable(GL_DEPTH_TEST));
     gouraud_shader->start_using();
+    // The section plane (Alt+wheel) and the z range must reach this draw: the canvas
+    // volume renderer normally sets them per volume, but the previewed volumes are
+    // hidden and the opaque pass is delegated to the gizmo, so nothing refreshes the
+    // uniforms and the preview would clip against stale values from earlier frames.
+    ClippingPlaneDataWrapper clp_data = get_clipping_plane_data();
+    gouraud_shader->set_uniform("clipping_plane", clp_data.clp_dataf);
+    gouraud_shader->set_uniform("z_range", clp_data.z_range);
     const Camera&     camera      = wxGetApp().plater()->get_camera();
     const Transform3d view_matrix = camera.get_view_matrix();
     for (Preview& p : m_previews) {
@@ -643,6 +713,14 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
         if (glv == nullptr)
             continue;
         const Transform3d trafo_matrix      = glv->world_matrix();
+        // A mirrored volume (negative-determinant transform) reverses the projected
+        // winding, and the canvas leaves back-face culling enabled at this point
+        // (the transparent pass re-enables it at its end), so the raw GLModel draws
+        // must flip the front face for such volumes and restore it after - the same
+        // rule as GLGizmoPainterBase::render_triangles and GLVolume::render.
+        const bool is_left_handed = trafo_matrix.matrix().determinant() < 0.;
+        if (is_left_handed)
+            glsafe(::glFrontFace(GL_CW));
         const Transform3d view_model_matrix = view_matrix * trafo_matrix;
         gouraud_shader->set_uniform("view_model_matrix", view_model_matrix);
         gouraud_shader->set_uniform("projection_matrix", camera.get_projection_matrix());
@@ -654,6 +732,8 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
             p.model.render();
         if (p.model_region.is_initialized())
             p.model_region.render();
+        if (is_left_handed)
+            glsafe(::glFrontFace(GL_CCW));
     }
     gouraud_shader->stop_using();
     glsafe(::glPopAttrib());
@@ -661,32 +741,13 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
 
 wxString GLGizmoLocalSubdivision::subdivision_failure_text(int lowest_achieved, bool apply) const
 {
-    bool any_non_manifold = false, any_degenerate = false;
-    for (const Preview& p : m_previews)
-        if (p.failure_reason == TriangleMeshDeal::SubdivisionFailure::NonManifold)
-            any_non_manifold = true;
-        else if (p.failure_reason == TriangleMeshDeal::SubdivisionFailure::DegenerateGeometry)
-            any_degenerate = true;
-
-    // Name the specific cause when all failed previews share one; mixed causes get
-    // the combined wording.
-    if (apply) {
-        if (any_non_manifold && any_degenerate)
-            return wxString::Format(_L("Subdivision failed: the selected region could not be subdivided (non-manifold edges or degenerate geometry; reached level %d of %d). No changes were applied."),
-                                    lowest_achieved, m_subdiv_level);
-        if (any_non_manifold)
-            return wxString::Format(_L("Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."),
-                                    lowest_achieved, m_subdiv_level);
-        return wxString::Format(_L("Subdivision failed: the selected region contains degenerate geometry (reached level %d of %d). No changes were applied."),
+    // The only reachable rejection is the non-manifold guard (more than two
+    // selected faces on one edge); geometry problems ship the initial Loop
+    // result instead of failing.
+    if (apply)
+        return wxString::Format(_L("Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."),
                                 lowest_achieved, m_subdiv_level);
-    }
-    if (any_non_manifold && any_degenerate)
-        return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region could not be subdivided (non-manifold edges or degenerate geometry)."),
-                                lowest_achieved, m_subdiv_level);
-    if (any_non_manifold)
-        return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."),
-                                lowest_achieved, m_subdiv_level);
-    return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains degenerate geometry."),
+    return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."),
                             lowest_achieved, m_subdiv_level);
 }
 
@@ -713,32 +774,8 @@ void GLGizmoLocalSubdivision::apply_subdivision()
         return;
     }
 
-    // Upper bound of the face count after the subdivision: unselected faces stay,
-    // every painted face becomes at most 4^level faces.
-    size_t growth = 1;
-    for (int i = 0; i < m_subdiv_level; ++i)
-        growth *= 4;
-    size_t future_face_count = 0;
-    for (const ModelVolume* mv : mo->volumes) {
-        if (! mv->is_model_part())
-            continue;
-        size_t painted = 0;
-        for (const Preview& p : m_previews)
-            if (p.volume == mv) {
-                painted = p.facet_count;
-                break;
-            }
-        future_face_count += mv->mesh().its.indices.size() + painted * (growth - 1);
-    }
-
-    if (future_face_count > 1000000) {
-        auto         name_str = wxString::FromUTF8(mo->name);
-        auto         content  = wxString::Format(
-            _L("\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"), name_str);
-        WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), content, wxEmptyString, wxYES_NO);
-        if (dlg.ShowModal() == wxID_NO)
-            return;
-    }
+    // The 1-million-face guard moved to the level stepper: the preview has already
+    // built (and paid for) the meshes by the time the apply path could ask.
 
     auto      plater     = wxGetApp().plater();
     const int object_idx = m_parent.get_selection().get_object_idx();

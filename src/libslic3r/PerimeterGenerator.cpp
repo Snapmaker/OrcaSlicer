@@ -14,6 +14,7 @@
 #include "ExPolygonCollection.hpp"
 #include "Geometry.hpp"
 #include "Line.hpp"
+#include <algorithm>
 #include <cmath>
 #include <cassert>
 #include <unordered_set>
@@ -270,36 +271,45 @@ static ExtrusionEntityCollection traverse_loops(const PerimeterGenerator &perime
 
 static ClipperZUtils::ZPaths clip_extrusion(const ClipperZUtils::ZPath& subject, const ClipperZUtils::ZPaths& clip, ClipType clipType)
 {
-    auto zfill = [](const ClipperZUtils::ZPoint& e1bot, const ClipperZUtils::ZPoint& e1top, const ClipperZUtils::ZPoint& e2bot,
-        const ClipperZUtils::ZPoint& e2top, ClipperZUtils::ZPoint& pt) {
-            ClipperZUtils::ZPoint start = e1bot;
-            ClipperZUtils::ZPoint end = e1top;
+    auto interpolate_z = [](const ClipperZUtils::ZPoint &a, const ClipperZUtils::ZPoint &b, const Point &p) -> coord_t {
+        const Vec2d  seg(double(b.x()) - double(a.x()), double(b.y()) - double(a.y()));
+        const double seg_len_sqr = seg.squaredNorm();
+        double       t           = 0.;
+        if (seg_len_sqr > 0.) {
+            const Vec2d rel(double(p.x()) - double(a.x()), double(p.y()) - double(a.y()));
+            t = std::clamp(rel.dot(seg) / seg_len_sqr, 0., 1.);
+        }
+        return coord_t(double(a.z()) + t * (double(b.z()) - double(a.z())));
+    };
 
-            if (start.z() <= 0 && end.z() <= 0) {
-                start = e2bot;
-                end = e2top;
-            }
+    auto zfill = [&interpolate_z](const ClipperZUtils::ZPoint &e1bot, const ClipperZUtils::ZPoint &e1top,
+                                  const ClipperZUtils::ZPoint &e2bot, const ClipperZUtils::ZPoint &e2top,
+                                  ClipperZUtils::ZPoint &pt) {
+        ClipperZUtils::ZPoint start = e1bot;
+        ClipperZUtils::ZPoint end   = e1top;
 
-            assert(start.z() >= 0 && end.z() >= 0);
+        if (start.z() <= 0 && end.z() <= 0) {
+            start = e2bot;
+            end   = e2top;
+        }
 
-            // Interpolate extrusion line width.
-            double length_sqr = (end - start).cast<double>().squaredNorm();
-            double dist_sqr = (pt - start).cast<double>().squaredNorm();
-            double t = std::sqrt(dist_sqr / length_sqr);
+        assert(start.z() >= 0 && end.z() >= 0);
 
-            pt.z() = start.z() + coord_t((end.z() - start.z()) * t);
-        };
+        // Interpolate extrusion line width along the XY segment.
+        pt.z() = interpolate_z(start, end, Point(pt.x(), pt.y()));
+    };
 
     ClipperZUtils::ZPaths clipped_paths = ClipperZUtils::clip_zpaths(clipType, ClipperZUtils::ZPaths{ subject }, true, clip, zfill);
 
     // Clipped path could contain vertices from the clip with a Z coordinate equal to zero.
     // For those vertices, we must assign value based on the subject.
-    // This happens only in sporadic cases.
+    // This happens when an intersection lands on a clip vertex (where Clipper2 copies clip Z = 0
+    // and skips the Z callback), including for two-point subject segments.
     for (ClipperZUtils::ZPath& path : clipped_paths)
         for (ClipperZUtils::ZPoint& c_pt : path)
             if (c_pt.z() == 0) {
-                // Now we must find the corresponding line on with this point is located and compute line width (Z coordinate).
-                if (subject.size() <= 2)
+                // Now we must find the corresponding line on which this point is located and compute line width (Z coordinate).
+                if (subject.size() < 2)
                     continue;
 
                 const Point pt(c_pt.x(), c_pt.y());
@@ -321,11 +331,7 @@ static ClipperZUtils::ZPaths clip_extrusion(const ClipperZUtils::ZPath& subject,
                 assert(dist_sqr_min <= SCALED_EPSILON);
                 assert(std::next(it_min) != subject.end());
 
-                const Point  pt_a(it_min->x(), it_min->y());
-                const Point  pt_b(std::next(it_min)->x(), std::next(it_min)->y());
-                const double line_len = (pt_b - pt_a).cast<double>().norm();
-                const double dist = (projected_pt_min - pt_a).cast<double>().norm();
-                c_pt.z() = coord_t(double(it_min->z()) + (dist / line_len) * double(std::next(it_min)->z() - it_min->z()));
+                c_pt.z() = interpolate_z(*it_min, *std::next(it_min), projected_pt_min);
             }
 
     assert([&clipped_paths = std::as_const(clipped_paths)]() -> bool {

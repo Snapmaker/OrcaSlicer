@@ -5622,10 +5622,12 @@ void PrintConfigDef::init_fff_params()
     def->enum_values.push_back("1");
     def->enum_values.push_back("2");
     def->enum_values.push_back("3");
+    def->enum_values.push_back("4");
     def->enum_labels.push_back("0");
     def->enum_labels.push_back("1");
     def->enum_labels.push_back("2");
     def->enum_labels.push_back("3");
+    def->enum_labels.push_back("4");
     def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionInt(3));
 

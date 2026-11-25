@@ -17,6 +17,51 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Generator: Poedit 3.8\n"
 
+msgid "Restore defaults"
+msgstr "恢复默认"
+
+msgid "Suggestion"
+msgstr "建议"
+
+msgid "Current Value"
+msgstr "当前值"
+
+msgid "Recommended Value"
+msgstr "推荐值"
+
+msgid "Default Value"
+msgstr "默认值"
+
+msgid "When a support material is used as the support interface, we recommend the following settings:"
+msgstr "当使用支撑材料作为支撑接触面时，我们推荐以下设置:"
+
+msgid "You are no longer using support material. Restore these settings to the preset defaults?"
+msgstr "您已经不再使用支撑耗材。是否将以下设置恢复为预设默认值？"
+
+msgid "Support Material Usage Guide"
+msgstr "支撑材料使用指南"
+
+msgid "Using support material for the first time? We strongly recommend reading the official guide first to avoid unexpected print results."
+msgstr "首次使用支撑材料？我们强烈建议您先阅读官方指南,以免不符合预期的打印效果；"
+
+msgid "If you want to use this material for support printing, you can go to the process parameters and change the \"Support/Raft Interface\" parameter to the corresponding material number. We will recommend suitable support settings for you."
+msgstr "若您想要使用该材料来打印支撑，您可以前往工艺参数中将“支撑/筏层界面”参数改为对应编号的耗材，我们将为您推荐合适的支撑参数。"
+
+msgid "Support for PLA is brittle and may break when it is used as the support base.\nUse it as the support base anyway?"
+msgstr "Support for PLA 较脆，用作支撑主体时可能断裂。\n仍要将其用作支撑主体吗？"
+
+msgid "PLA and PETG do not bond together. The following support settings are recommended:"
+msgstr "PLA 和 PETG 无法粘接在一起。推荐以下支撑设置："
+
+msgid "Change these settings automatically?"
+msgstr "自动更改这些设置？"
+
+msgid "View User Guide"
+msgstr "查看用户指南"
+
+msgid "Don't remind me again"
+msgstr "不再提醒"
+
 msgid "Enable model shadows"
 msgstr "显示模型阴影"
 

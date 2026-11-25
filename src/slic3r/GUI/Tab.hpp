@@ -35,6 +35,7 @@
 #include "ConfigManipulation.hpp"
 #include "OptionsGroup.hpp"
 #include "libslic3r/Preset.hpp"
+#include "libslic3r/SupportFilamentRules.hpp"
 //BBS: GUI refactor
 #include "Notebook.hpp"
 #include "ParamsPanel.hpp"
@@ -184,6 +185,9 @@ protected:
 
 	// just be used for edit filament dialog
     bool m_just_edit{false};
+    int m_previous_support_filament{0};
+    SupportFilamentKind m_previous_support_interface_kind{SupportFilamentKind::None};
+    void show_support_recommendation_dialog(const std::map<std::string, std::string>& diff);
 
 	ScalableButton*			m_undo_btn;
 	ScalableButton*			m_undo_to_sys_btn;
@@ -412,6 +416,11 @@ public:
     size_t flow_variant_view_index() const;
 
 	virtual void    on_value_change(const std::string& opt_key, const boost::any& value);
+    void            check_support_restore_defaults();
+    bool            is_support_interface_filament(const Preset& preset) const;
+    void            check_support_interface_recommendation(const Preset& edited_preset);
+    SupportFilamentKind support_interface_filament_kind() const;
+    void                refresh_support_interface_kind();
 
     void            update_wiping_button_visibility();
 	void			activate_option(const std::string& opt_key, const wxString& category);

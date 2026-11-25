@@ -33,6 +33,7 @@
 #include <boost/asio/ip/host_name.hpp>
 #include <wx/stdpaths.h>
 #include <wx/msgdlg.h>
+#include <wx/recguard.h>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -4232,12 +4233,20 @@ void SSWCP_UserLogin_Instance::sw_DownloadFileAndOpen()
             return;
         }
 
+        // Reserve on the UI thread before posting: ShowModal can dispatch a second request.
+        static wxRecursionGuardFlag download_open_active = 0;
+        auto                        guard                = std::make_shared<wxRecursionGuard>(download_open_active);
+        if (guard->IsInside()) {
+            handle_general_fail(-1, "Download and open already in progress");
+            return;
+        }
+
         // WebView script message runs inside the webview event handler; calling ShowModal() synchronously
         // (via GenericDownloadDialog in downloadOpenProject) causes re-entrancy / crashes on Windows.
         // Defer to the next event-loop iteration to avoid webview event re-entrancy.
         std::shared_ptr<SSWCP_UserLogin_Instance> self =
             std::static_pointer_cast<SSWCP_UserLogin_Instance>(shared_from_this());
-        wxGetApp().CallAfter([self, fileUrl, fileName]() {
+        wxGetApp().CallAfter([self, fileUrl, fileName, guard]() {
             if (!wxGetApp().mainframe) {
                 self->handle_general_fail(-1, wxString::FromUTF8("Main window not available"));
                 return;

@@ -47,6 +47,8 @@
 #include "EditGCodeDialog.hpp"
 #include "MsgDialog.hpp"
 #include "Notebook.hpp"
+#include "SupportFilamentDialogs.hpp"
+#include "libslic3r/SupportFilamentRules.hpp"
 
 #include "Widgets/Label.hpp"
 #include "Widgets/TabCtrl.hpp"
@@ -272,14 +274,15 @@ void Tab::create_preset_tab()
         m_presets_choice = new TabPresetComboBox(panel, m_type);
         // m_presets_choice->SetFont(Label::Body_10); // BBS
         m_presets_choice->set_selection_changed_function([this](int selection) {
-            if (!m_presets_choice->selection_is_changed_according_to_physical_printers())
-            {
+            if (!m_presets_choice->selection_is_changed_according_to_physical_printers()) {
                 if (m_type == Preset::TYPE_PRINTER && !m_presets_choice->is_selected_physical_printer())
                     m_preset_bundle->physical_printers.unselect_printer();
 
                 // select preset
                 std::string preset_name = m_presets_choice->GetString(selection).ToUTF8().data();
-                select_preset(Preset::remove_suffix_modified(preset_name));
+                if (select_preset(Preset::remove_suffix_modified(preset_name)) && m_type == Preset::TYPE_FILAMENT) {
+                    show_support_filament_guide_if_needed(m_presets->get_edited_preset());
+                }
             }
         });
     }
@@ -632,6 +635,9 @@ void Tab::add_scaled_bitmap(wxWindow* parent,
 void Tab::load_initial_data()
 {
     m_config = &m_presets->get_edited_preset().config;
+    if (m_config != nullptr && m_config->has("support_filament"))
+        m_previous_support_filament = m_config->opt_int("support_filament");
+    refresh_support_interface_kind();
     bool has_parent = m_presets->get_selected_preset_parent() != nullptr;
     m_bmp_non_system = has_parent ? &m_bmp_value_unlock : &m_bmp_white_bullet;
     m_ttg_non_system = has_parent ? &m_ttg_value_unlock : &m_ttg_white_bullet_ns;
@@ -1477,6 +1483,9 @@ void Tab::load_config(const DynamicPrintConfig& config)
 // Reload current $self->{config} (aka $self->{presets}->edited_preset->config) into the UI fields.
 void Tab::reload_config()
 {
+    if (m_config != nullptr && m_config->has("support_filament"))
+        m_previous_support_filament = m_config->opt_int("support_filament");
+    refresh_support_interface_kind();
     if (m_active_page)
         m_active_page->reload_config();
 }
@@ -1703,66 +1712,190 @@ static wxString pad_combo_value_for_config(const DynamicPrintConfig &config)
     return config.opt_bool("pad_enable") ? (config.opt_bool("pad_around_object") ? _("Around object") : _("Below object")) : _("None");
 }
 
-//---------------------------------------------------------------------------
-// Build the parameter recommendation dialog message body.
-// Returns the complete wxString ready for MessageDialog display.
-//---------------------------------------------------------------------------
-namespace {
-wxString build_support_recommendation_message(
-    bool                is_support_material,
-    const std::string  &interface_filament_type,
-    const DynamicPrintConfig &filtered_conf,
-    const DynamicPrintConfig &current_config)
+static wxString support_dialog_option_name(const ConfigOptionDef& definition)
 {
-    wxString msg_text;
-
-    if (is_support_material) {
-        msg_text = _L(
-            "When using support material for the support interface, "
-            "we recommend the following settings:\n"
-            "0 top Z distance, 0 interface spacing, interlaced "
-            "rectilinear pattern and disable independent support "
-            "layer height");
-    } else {
-        wxString model_type =
-            (interface_filament_type == "PLA") ? "PETG" : "PLA";
-        msg_text = wxString::Format(
-            _L("Detected %s as support interface material for %s "
-               "models. PLA and PETG do not bond together — we "
-               "recommend adjusting the following parameters:"),
-            from_u8(interface_filament_type), model_type);
-        msg_text += "\n\n";
-        for (const t_config_option_key &key : filtered_conf.keys()) {
-            const ConfigOption *opt = filtered_conf.option(key);
-            if (opt == nullptr) continue;
-            if (key == "support_top_z_distance")
-                msg_text += wxString::Format(
-                    _L("  \342\200\242 Top Z distance: %.2f \342\206\222 0 mm\n"),
-                    current_config.opt_float("support_top_z_distance"));
-            else if (key == "support_base_pattern")
-                msg_text += _L("  \342\200\242 Base pattern \342\206\222 Default\n");
-            else if (key == "support_interface_top_layers")
-                msg_text += wxString::Format(
-                    _L("  \342\200\242 Top interface layers: %d \342\206\222 3\n"),
-                    current_config.opt_int("support_interface_top_layers"));
-            else if (key == "support_interface_pattern")
-                msg_text += _L(
-                    "  \342\200\242 Interface pattern \342\206\222 Rectilinear Interlaced\n");
-            else if (key == "support_interface_spacing")
-                msg_text += wxString::Format(
-                    _L("  \342\200\242 Interface spacing: %.2f \342\206\222 0 mm\n"),
-                    current_config.opt_float("support_interface_spacing"));
-        }
-    }
-
-    msg_text += "\n" + _L(
-        "Change these settings automatically?\n"
-        "Yes - Change these settings automatically\n"
-        "No  - Do not change these settings for me");
-
-    return msg_text;
+    return definition.full_label.empty() ? _(definition.label) : _(definition.full_label);
 }
-} // anonymous namespace
+
+static wxString support_dialog_option_value(const ConfigOptionDef& definition, const ConfigOption& option)
+{
+    switch (definition.type) {
+    case coEnum: {
+        const int value = option.getInt();
+        if (definition.enum_keys_map != nullptr) {
+            for (size_t i = 0; i < definition.enum_values.size(); ++i) {
+                const auto it = definition.enum_keys_map->find(definition.enum_values[i]);
+                if (it != definition.enum_keys_map->end() && it->second == value && i < definition.enum_labels.size())
+                    return _(definition.enum_labels[i]);
+            }
+        }
+        break;
+    }
+    case coBool:
+        return option.getBool() ? _L("Enabled") : _L("Disabled");
+    case coFloat:
+        return double_to_string(option.getFloat());
+    case coInt:
+        return from_u8((boost::format("%1%") % option.getInt()).str());
+    default:
+        break;
+    }
+    return from_u8(option.serialize());
+}
+
+static std::unique_ptr<ConfigOption> support_dialog_target_option(const std::string& key, const std::string& value)
+{
+    const ConfigOptionDef* definition = print_config_def.get(key);
+    if (definition == nullptr || definition->default_value.get() == nullptr)
+        return nullptr;
+
+    std::unique_ptr<ConfigOption> option(definition->default_value->clone());
+    if (option == nullptr || !option->deserialize(value))
+        return nullptr;
+    return option;
+}
+
+static std::vector<SupportParameterDiffDialog::Item> support_dialog_items(const DynamicPrintConfig&                 config,
+                                                                          const std::map<std::string, std::string>& diff)
+{
+    std::vector<SupportParameterDiffDialog::Item> items;
+    items.reserve(diff.size());
+    for (const auto& entry : diff) {
+        const ConfigOptionDef* definition = print_config_def.get(entry.first);
+        const ConfigOption*    current    = config.option(entry.first);
+        if (definition == nullptr || current == nullptr)
+            continue;
+
+        std::unique_ptr<ConfigOption> target = support_dialog_target_option(entry.first, entry.second);
+        if (target == nullptr)
+            continue;
+
+        SupportParameterDiffDialog::Item item;
+        item.name          = support_dialog_option_name(*definition);
+        item.current_value = support_dialog_option_value(*definition, *current);
+        item.target_value  = support_dialog_option_value(*definition, *target);
+        items.push_back(std::move(item));
+    }
+    return items;
+}
+
+static void apply_support_dialog_diff(DynamicPrintConfig& config, const std::map<std::string, std::string>& diff)
+{
+    for (const auto& entry : diff) {
+        if (config.option(entry.first) == nullptr)
+            continue;
+        std::unique_ptr<ConfigOption> target = support_dialog_target_option(entry.first, entry.second);
+        if (target != nullptr)
+            config.set_key_value(entry.first, target.release());
+    }
+}
+
+void Tab::check_support_restore_defaults()
+{
+    if (m_preset_bundle == nullptr || m_config == nullptr)
+        return;
+
+    const SupportFilamentKind current_kind = support_interface_filament_kind();
+    const SupportFilamentKind previous_kind = m_previous_support_interface_kind;
+    if (current_kind != SupportFilamentKind::None || previous_kind == SupportFilamentKind::None)
+        return;
+
+    const SupportParameterRule* rule = SupportFilamentRules::instance().rule(previous_kind);
+    if (rule == nullptr)
+        return;
+
+    const std::map<std::string, std::string> diff = support_restore_default_diff(*m_config,
+                                                                                 m_preset_bundle->prints.get_selected_preset().config,
+                                                                                 rule->restore_check_keys);
+    if (diff.empty())
+        return;
+
+    std::vector<SupportParameterDiffDialog::Item> items = support_dialog_items(*m_config, diff);
+    if (items.empty())
+        return;
+
+    SupportParameterDiffDialog dialog(SupportParameterDiffDialog::Mode::RestoreDefaults, std::move(items));
+    if (dialog.ShowModal() != wxID_YES)
+        return;
+
+    DynamicPrintConfig new_conf = *m_config;
+    apply_support_dialog_diff(new_conf, diff);
+    m_config_manipulation.apply(m_config, &new_conf);
+    wxGetApp().plater()->update();
+}
+
+SupportFilamentKind Tab::support_interface_filament_kind() const
+{
+    if (m_preset_bundle == nullptr || m_config == nullptr || !m_config->has("support_interface_filament"))
+        return SupportFilamentKind::None;
+
+    const int interface_filament_id = m_config->opt_int("support_interface_filament") - 1;
+    if (interface_filament_id < 0 || interface_filament_id >= static_cast<int>(m_preset_bundle->filament_presets.size()))
+        return SupportFilamentKind::None;
+
+    const Preset* interface_preset = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[interface_filament_id]);
+    return interface_preset == nullptr ? SupportFilamentKind::None : classify_support_filament(interface_preset->config);
+}
+
+void Tab::refresh_support_interface_kind()
+{
+    m_previous_support_interface_kind = support_interface_filament_kind();
+}
+
+bool Tab::is_support_interface_filament(const Preset& preset) const
+{
+    if (m_preset_bundle == nullptr || m_config == nullptr || !m_config->has("support_interface_filament"))
+        return false;
+
+    const int interface_filament_id = m_config->opt_int("support_interface_filament") - 1;
+    if (interface_filament_id < 0 || interface_filament_id >= static_cast<int>(m_preset_bundle->filament_presets.size()))
+        return false;
+
+    const Preset* interface_preset = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[interface_filament_id]);
+    return interface_preset != nullptr && interface_preset->name == preset.name;
+}
+
+void Tab::show_support_recommendation_dialog(const std::map<std::string, std::string>& diff)
+{
+    if (diff.empty())
+        return;
+
+    std::vector<SupportParameterDiffDialog::Item> items = support_dialog_items(*m_config, diff);
+    if (items.empty())
+        return;
+
+    SupportParameterDiffDialog dialog(SupportParameterDiffDialog::Mode::ApplyRecommendation, std::move(items));
+    if (dialog.ShowModal() == wxID_YES) {
+        DynamicPrintConfig new_conf = *m_config;
+        apply_support_dialog_diff(new_conf, diff);
+        m_config_manipulation.apply(m_config, &new_conf);
+    }
+    wxGetApp().plater()->update();
+}
+
+void Tab::check_support_interface_recommendation(const Preset& edited_preset)
+{
+    if (m_preset_bundle == nullptr || m_config == nullptr || !m_config->has("support_interface_filament"))
+        return;
+
+    const int interface_filament_id = m_config->opt_int("support_interface_filament") - 1;
+    if (interface_filament_id < 0 || interface_filament_id >= static_cast<int>(m_preset_bundle->filament_presets.size()))
+        return;
+
+    const Preset* interface_preset = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[interface_filament_id]);
+    if (interface_preset == nullptr || interface_preset->name != edited_preset.name)
+        return;
+
+    const SupportFilamentKind kind = classify_support_filament(interface_preset->config);
+    if (kind == SupportFilamentKind::None)
+        return;
+
+    const SupportParameterRule* rule = SupportFilamentRules::instance().rule(kind);
+    if (rule == nullptr)
+        return;
+
+    show_support_recommendation_dialog(support_recommendation_diff(*m_config, rule->recommendations));
+}
 
 void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 {
@@ -1771,6 +1904,18 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
     }
     if (m_config == nullptr) {
         return;
+    }
+
+    if (m_type == Preset::TYPE_FILAMENT && opt_key == "filament_is_support" && !m_postpone_update_ui) {
+        if (Tab* print_tab = wxGetApp().get_tab(Preset::TYPE_PRINT)) {
+            const auto* is_support = m_config->option<ConfigOptionBools>("filament_is_support");
+            const bool checked = is_support != nullptr && !is_support->empty() && is_support->get_at(0);
+            if (checked)
+                print_tab->check_support_interface_recommendation(m_presets->get_edited_preset());
+            else if (print_tab->is_support_interface_filament(m_presets->get_edited_preset()))
+                print_tab->check_support_restore_defaults();
+            print_tab->refresh_support_interface_kind();
+        }
     }
 
     if (opt_key == "compatible_prints")
@@ -1979,100 +2124,82 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
 
     // BBS: warn when non-soluble support material is used as support base
     if (opt_key == "support_filament") {
-        int support_filament_id =
-            m_config->opt_int("support_filament") - 1;
-        if (check_pla_petg_support_pair(support_filament_id)) {
-            wxString msg_text = _L(
-                "Non-soluble support materials are not recommended for "
-                "support base.\nAre you sure to use them for support "
-                "base?");
-            MessageDialog dialog(wxGetApp().plater(), msg_text, "",
-                                 wxICON_WARNING | wxYES | wxNO);
-            DynamicPrintConfig new_conf = *m_config;
-            if (dialog.ShowModal() == wxID_NO) {
-                new_conf.set_key_value("support_filament",
-                                       new ConfigOptionInt(0));
-                m_config_manipulation.apply(m_config, &new_conf);
+        const bool suppress_dialog = m_postpone_update_ui;
+
+        if (!suppress_dialog) {
+            int           support_filament_id = m_config->opt_int("support_filament") - 1;
+            const int     previous_support_filament = m_previous_support_filament;
+            const Preset* support_preset      = nullptr;
+            if (support_filament_id >= 0 && support_filament_id < static_cast<int>(m_preset_bundle->filament_presets.size())) {
+                support_preset = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[support_filament_id]);
             }
-            wxGetApp().plater()->update();
+
+            if (support_preset != nullptr && classify_support_filament(support_preset->config) == SupportFilamentKind::SupportPla) {
+                MessageDialog dialog(wxGetApp().plater(),
+                                     _L("Support for PLA is brittle and may break when it is used as the "
+                                        "support base.\nUse it as the support base anyway?"),
+                                     "",
+                                     wxYES | wxNO);
+                if (dialog.ShowModal() != wxID_YES) {
+                    DynamicPrintConfig new_conf = *m_config;
+                    new_conf.set_key_value("support_filament", new ConfigOptionInt(previous_support_filament));
+                    m_config_manipulation.apply(m_config, &new_conf);
+                }
+                wxGetApp().plater()->update();
+            } else if (check_pla_petg_support_pair(support_filament_id)) {
+                wxString           msg_text = _L("Non-soluble support materials are not recommended for "
+                                                 "support base.\nAre you sure to use them for support "
+                                                 "base?");
+                MessageDialog      dialog(wxGetApp().plater(), msg_text, "", wxYES | wxNO);
+                DynamicPrintConfig new_conf = *m_config;
+                if (dialog.ShowModal() == wxID_NO) {
+                    new_conf.set_key_value("support_filament", new ConfigOptionInt(previous_support_filament));
+                    m_config_manipulation.apply(m_config, &new_conf);
+                }
+                wxGetApp().plater()->update();
+            }
         }
+
+        m_previous_support_filament = m_config->opt_int("support_filament");
     }
 
     // BBS popup a message to ask the user to set optimum parameters
     // for support interface if support materials are used
     if (opt_key == "support_interface_filament") {
-        // The two guards only suppress the recommendation dialog; they must
-        // NOT return early. The update() at the end of on_value_change is the
-        // only path that propagates this edit to the plater (background
+        // The postpone guard only suppresses the recommendation dialog; it
+        // must NOT return early. The update() at the end of on_value_change is
+        // the only path that propagates this edit to the plater (background
         // slicing process -> re-slice prompt), so an early return here makes a
         // changed support interface filament a silent no-op: the slice button
-        // never lights up even though the config value changed. The reload
-        // case is already handled by the m_postpone_update_ui guard at the end
-        // of on_value_change.
-        const t_config_option_keys &applying = m_config_manipulation.applying_keys();
-        const bool suppress_dialog =
-            // during config reload/rollback
-            m_postpone_update_ui ||
-            // or cascaded from programmatic apply()
-            std::find(applying.begin(), applying.end(),
-                      "support_interface_filament") != applying.end();
+        // never lights up even though the config value changed.
+        const bool suppress_dialog = m_postpone_update_ui;
 
         if (!suppress_dialog) {
             // The config value is 1-based (0 = unset/default).
-            int interface_filament_id =
-                m_config->opt_int("support_interface_filament") - 1;
+            int interface_filament_id = m_config->opt_int("support_interface_filament") - 1;
 
-            // Resolve interface filament type string. Only when a specific
-            // filament is explicitly selected (id >= 0). id == -1 means
-            // "unset" — is_support_filament(-1) returns false via bounds
-            // check, so no dialog is triggered.
-            std::string interface_filament_type;
-            if (interface_filament_id >= 0) {
-                const std::vector<std::string> &filament_presets =
-                    wxGetApp().preset_bundle->filament_presets;
-                if (interface_filament_id <
-                    static_cast<int>(filament_presets.size())) {
-                    const Preset *preset_ptr =
-                        wxGetApp().preset_bundle->filaments.find_preset(
-                            filament_presets[interface_filament_id]);
-                    if (preset_ptr != nullptr) {
-                        const ConfigOptionStrings *ft_opt =
-                            preset_ptr->config.option<ConfigOptionStrings>(
-                                "filament_type");
-                        if (ft_opt != nullptr && !ft_opt->values.empty())
-                            interface_filament_type = ft_opt->values[0];
+            const SupportFilamentKind support_kind = support_interface_filament_kind();
+            if (support_kind != SupportFilamentKind::None) {
+                const SupportParameterRule* rule = SupportFilamentRules::instance().rule(support_kind);
+                if (rule != nullptr) {
+                    const std::map<std::string, std::string> diff = support_recommendation_diff(*m_config, rule->recommendations);
+                    if (!diff.empty()) {
+                        show_support_recommendation_dialog(diff);
                     }
                 }
             }
 
-            // --- Detection ---
-            bool is_support_material =
-                is_support_filament(interface_filament_id);
-            bool is_pla_petg_pair =
-                !is_support_material &&
-                check_pla_petg_support_pair(interface_filament_id);
+            const bool previous_was_support = m_previous_support_interface_kind != SupportFilamentKind::None;
+            bool is_pla_petg_pair = support_kind == SupportFilamentKind::None && check_pla_petg_support_pair(interface_filament_id);
+            if (previous_was_support && support_kind == SupportFilamentKind::None && !is_pla_petg_pair)
+                check_support_restore_defaults();
 
             // --- Build recommended params ---
             DynamicPrintConfig recommended_conf;
 
-            if (is_support_material) {
-                // Original 4-parameter recommendation for support material.
-                // The original already-optimal check is handled by
-                // filtered_conf below — if all params match, no dialog.
-                recommended_conf.set_key_value("support_top_z_distance",
-                    new ConfigOptionFloat(0));
-                recommended_conf.set_key_value("support_interface_spacing",
-                    new ConfigOptionFloat(0));
-                recommended_conf.set_key_value("support_interface_pattern",
-                    new ConfigOptionEnum<SupportMaterialInterfacePattern>(
-                        smipRectilinearInterlaced));
-                recommended_conf.set_key_value(
-                    "independent_support_layer_height",
-                    new ConfigOptionBool(false));
-            } else if (is_pla_petg_pair) {
+            if (is_pla_petg_pair) {
                 // PLA↔PETG: 5 parameters per process engineer confirmation.
-                recommended_conf.set_key_value("support_top_z_distance",
-                    new ConfigOptionFloat(0));
+                recommended_conf.set_key_value("support_top_z_distance", new ConfigOptionFloat(0));
                 recommended_conf.set_key_value("support_base_pattern",
                     new ConfigOptionEnum<SupportMaterialPattern>(
                         smpDefault));
@@ -2098,16 +2225,23 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 }
 
                 if (!filtered_conf.empty()) {
-                    // Build dialog message via extracted helper.
-                    wxString msg_text = build_support_recommendation_message(
-                        is_support_material,
-                        interface_filament_type,
-                        filtered_conf,
-                        *m_config);
+                    wxString msg_text = _L(
+                        "PLA and PETG do not bond together. The following support "
+                        "settings are recommended:");
+                    msg_text += "\n\n";
+                    for (const t_config_option_key &key : filtered_conf.keys()) {
+                        const ConfigOptionDef *definition = print_config_def.get(key);
+                        if (definition != nullptr)
+                            msg_text += wxString::Format("  %s: %s -> %s\n",
+                                wxString::FromUTF8(definition->label),
+                                from_u8(m_config->option(key)->serialize()),
+                                from_u8(filtered_conf.option(key)->serialize()));
+                    }
+                    msg_text += "\n" + _L("Change these settings automatically?");
 
                     MessageDialog dialog(wxGetApp().plater(), msg_text,
                                          "Suggestion",
-                                         wxICON_WARNING | wxYES | wxNO);
+                                         wxYES | wxNO);
                     if (dialog.ShowModal() == wxID_YES) {
                         m_config_manipulation.apply(m_config, &filtered_conf);
                     }
@@ -2115,6 +2249,7 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 }
             }
         }
+        refresh_support_interface_kind();
     }
 
     if(opt_key == "make_overhang_printable"){

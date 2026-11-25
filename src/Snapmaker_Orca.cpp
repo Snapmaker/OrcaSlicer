@@ -5182,7 +5182,31 @@ int CLI::run(int argc, char **argv)
                                     // The outfile is processed by a PlaceholderParser.
                                     //outfile = part_plate->get_tmp_gcode_path();
                                     if (outfile_dir.empty()) {
-                                        outfile = part_plate->get_tmp_gcode_path();
+                                        // No --outputdir: write plate_<n>.gcode to the current
+                                        // working directory instead of the per-run temp backup
+                                        // dir. The temp dir is deleted by
+                                        // remove_backup_path_if_exist() before CLI::run returns
+                                        // (see the end of CLI::run), so a .gcode written there
+                                        // is silently discarded and the run exits 0 with no
+                                        // file anywhere: that is the fixed6 no-.gcode symptom
+                                        // (bare and U1-settings runs all exited 0, no .gcode).
+                                        // The path MUST be absolute. The first version of this
+                                        // fix wrote the bare relative name "plate_<n>.gcode",
+                                        // and GCode::do_export() calls
+                                        // boost::filesystem::create_directory() on the output's
+                                        // parent path: for a bare name the parent is empty, so
+                                        // the call throws ("The system cannot find the path
+                                        // specified"), the slice action catches it and exits
+                                        // 100 with no .gcode — that is the fixed7 re-test
+                                        // failure (tests (b) and (d) exit 100). Prepending the
+                                        // working directory gives create_directory a real parent
+                                        // (the CWD always exists, so the check is a no-op) and
+                                        // the file still lands in the working directory. The
+                                        // bridge/dashboard always pass --outputdir, so that
+                                        // path is unchanged.
+                                        outfile = (boost::filesystem::current_path() /
+                                                   ("plate_" + std::to_string(index + 1) + ".gcode")).string();
+                                        part_plate->set_tmp_gcode_path(outfile);
                                     }
                                     else {
                                         outfile = outfile_dir + "/plate_" + std::to_string(index + 1) + ".gcode";

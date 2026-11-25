@@ -2133,6 +2133,51 @@ void ModelVolume::reset_extra_facets()
     this->fuzzy_skin_facets.reset();
 }
 
+std::optional<TriangleSelector::SavedPainting> ModelVolume::save_painting() const
+{
+    if (is_any_painted() && is_model_part() && !mesh().empty()) {
+        TriangleSelector::SavedPainting sp;
+        sp.mesh      = mesh();
+        sp.supported = supported_facets.get_data();
+        sp.seam      = seam_facets.get_data();
+        sp.mmu       = mmu_segmentation_facets.get_data();
+        sp.fuzzy     = fuzzy_skin_facets.get_data();
+        return sp;
+    }
+
+    return {};
+}
+
+void ModelVolume::restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, const bool keep_existing_paint, const bool transfer_by_projection)
+{
+    if (!keep_existing_paint) {
+        reset_extra_facets();
+    }
+
+    if (!saved) {
+        return;
+    }
+
+    auto remap_one = [&](const TriangleSelector::TriangleSplittingData& src_data,
+                         FacetsAnnotation& target_facets) {
+        if (src_data.bitstream.empty())
+            return;
+        const std::optional<std::reference_wrapper<const TriangleSelector::TriangleSplittingData>> existing =
+            keep_existing_paint ?
+                std::optional<std::reference_wrapper<const TriangleSelector::TriangleSplittingData>>{std::ref(target_facets.get_data())} :
+                std::optional<std::reference_wrapper<const TriangleSelector::TriangleSplittingData>>{};
+        auto result = transfer_by_projection ?
+            TriangleSelector::remap_painting_by_projection(saved->mesh.its, src_data, mesh().its, Geometry::translation_transform(mesh().get_init_shift()), existing) :
+            TriangleSelector::remap_painting(saved->mesh.its, src_data, mesh().its, Geometry::translation_transform(mesh().get_init_shift()), existing);
+        if (!result.bitstream.empty())
+            target_facets.set_data(std::move(result));
+    };
+    remap_one(saved->supported, supported_facets);
+    remap_one(saved->seam,      seam_facets);
+    remap_one(saved->mmu,       mmu_segmentation_facets);
+    remap_one(saved->fuzzy,     fuzzy_skin_facets);
+}
+
 static void invalidate_translations(ModelObject* object, const ModelInstance* src_instance)
 {
     if (!object->origin_translation.isApprox(Vec3d::Zero()) && src_instance->get_offset().isApprox(Vec3d::Zero())) {
@@ -2157,13 +2202,12 @@ static double bbox_overlap_volume(const BoundingBoxf3& a, const BoundingBoxf3& b
     return size.x() > 0. && size.y() > 0. && size.z() > 0. ? size.x() * size.y() * size.z() : 0.;
 }
 
-void ModelObject::split(ModelObjectPtrs* new_objects)
+void ModelObject::split(ModelObjectPtrs* new_objects, const bool remap_paint)
 {
     std::vector<TriangleMesh> all_meshes;
     std::vector<Transform3d> all_transfos;
     std::vector<std::pair<int, int>> volume_mesh_counts;
     all_meshes.reserve(this->volumes.size() * 5);
-
     // Only count model parts when deciding whether this is a "multi volume" object.
     // Non-solid volumes (negative volumes, modifiers, support blockers/enforcers) must not
     // force the multi-volume branch, otherwise a single-part object with e.g. a negative
@@ -2173,6 +2217,7 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
         if (volume->type() == ModelVolumeType::MODEL_PART)
             model_part_cnt++;
     bool is_multi_volume_object = (model_part_cnt > 1);
+    std::optional<TriangleSelector::SavedPainting> saved_painting;
 
     // Collect non-solid volumes (negative volumes, modifiers, support blockers/enforcers)
     // together with their bounding boxes in the object coordinate system, so that they can be
@@ -2210,6 +2255,10 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
             volume->text_configuration.reset();
 
         if (!is_multi_volume_object) {
+            if (remap_paint) {
+                // Save painting so we could restore them after the mesh split
+                saved_painting = volume->save_painting();
+            }
             //BBS: not multi volume object, then split mesh.
             std::vector<TriangleMesh> volume_meshes = volume->mesh().split();
             int mesh_count = 0;
@@ -2282,10 +2331,19 @@ void ModelObject::split(ModelObjectPtrs* new_objects)
             ModelVolume* new_vol = new_object->add_volume(*volume, std::move(mesh));
 
             if (is_multi_volume_object) {
-                // BBS: volume geometry not changed, so we can keep the color paint facets
-                if (new_vol->mmu_segmentation_facets.timestamp() == volume->mmu_segmentation_facets.timestamp())
-                    new_vol->mmu_segmentation_facets.reset(); // BBS: let next assign take effect
-                new_vol->mmu_segmentation_facets.assign(volume->mmu_segmentation_facets);
+                // BBS: volume geometry not changed, so we can keep the paint facets
+#define COPY_FACETS(f) \
+                if (new_vol->f.timestamp() == volume->f.timestamp()) \
+                    new_vol->f.reset(); /* BBS: let next assign take effect */ \
+                new_vol->f.assign(volume->f)
+
+                COPY_FACETS(supported_facets);
+                COPY_FACETS(seam_facets);
+                COPY_FACETS(mmu_segmentation_facets);
+                COPY_FACETS(fuzzy_skin_facets);
+            } else if (saved_painting) {
+                // Geometry changed, attempt to remap them to the new mesh
+                new_vol->restore_painting(saved_painting);
             }
 
             // BBS: clear volume's config, as we already set them into object
@@ -2998,7 +3056,7 @@ std::string ModelVolume::type_to_string(const ModelVolumeType t)
 // Split this volume, append the result to the object owning this volume.
 // Return the number of volumes created from this one.
 // This is useful to assign different materials to different volumes of an object.
-size_t ModelVolume::split(unsigned int max_extruders)
+size_t ModelVolume::split(unsigned int max_extruders, bool remap_paint)
 {
     std::vector<TriangleMesh> meshes = this->mesh().split();
     if (meshes.size() <= 1)
@@ -3007,6 +3065,9 @@ size_t ModelVolume::split(unsigned int max_extruders)
     // splited volume should not be text object
     if (text_configuration.has_value())
         text_configuration.reset();
+
+    std::optional<TriangleSelector::SavedPainting> saved_painting = remap_paint ? save_painting() :
+                                                                                  std::optional<TriangleSelector::SavedPainting>{};
 
     size_t idx = 0;
     size_t ivolume = std::find(this->object->volumes.begin(), this->object->volumes.end(), this) - this->object->volumes.begin();
@@ -3030,11 +3091,7 @@ size_t ModelVolume::split(unsigned int max_extruders)
             this->source = ModelVolume::Source();
 
             // BBS: reset facet annotations
-            this->mmu_segmentation_facets.reset();
-            this->exterior_facets.reset();
-            this->supported_facets.reset();
-            this->seam_facets.reset();
-            this->fuzzy_skin_facets.reset();
+            this->reset_extra_facets();
         }
         else
             this->object->volumes.insert(this->object->volumes.begin() + (++ivolume), new ModelVolume(object, *this, std::move(mesh)));
@@ -3047,6 +3104,8 @@ size_t ModelVolume::split(unsigned int max_extruders)
         this->object->volumes[ivolume]->config.set("extruder", this->extruder_id());
         //this->object->volumes[ivolume]->config.set("extruder", auto_extruder_id(max_extruders, extruder_counter));
         this->object->volumes[ivolume]->m_is_splittable = 0;
+        this->object->volumes[ivolume]->restore_painting(saved_painting);
+
         ++ idx;
     }
 

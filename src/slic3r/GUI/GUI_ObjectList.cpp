@@ -2862,7 +2862,7 @@ void ObjectList::split()
 
     take_snapshot("Split to parts");
 
-    volume->split(filament_cnt);
+    volume->split(filament_cnt, wxGetApp().app_config->get_bool("keep_painting"));
 
     wxBusyCursor wait;
 
@@ -3064,9 +3064,6 @@ void ObjectList::merge(bool to_multipart_object)
                         new_volume->config.set_key_value("extruder", new ConfigOptionInt(opt->getInt()));
                     }
                 }
-
-
-                new_volume->mmu_segmentation_facets.assign(std::move(volume->mmu_segmentation_facets));
             }
             new_object->sort_volumes(true);
 
@@ -3225,6 +3222,22 @@ void ObjectList::boolean()
     Plater::TakeSnapshot snapshot(wxGetApp().plater(), "boolean");
 
     ModelObject* object = (*m_objects)[obj_idxs.front()];
+
+    const bool keep_painting = wxGetApp().app_config->get_bool("keep_painting");
+    std::vector<std::optional<TriangleSelector::SavedPainting>> saved_paintings;
+    if (keep_painting) {
+        // Save painting of all the positive parts
+        saved_paintings.reserve(object->volumes.size());
+        for (const ModelVolume* vol : object->volumes) {
+            if (vol && vol->mesh_ptr() && vol->is_model_part() && vol->is_any_painted()) {
+                saved_paintings.emplace_back(vol->save_painting());
+                if (saved_paintings.back()) {
+                    saved_paintings.back()->mesh.transform(vol->get_matrix(), true);
+                }
+            }
+        }
+    }
+
     TriangleMesh mesh = Plater::combine_mesh_fff(*object, -1, [this](const std::string& msg) {return wxGetApp().notification_manager()->push_plater_error_notification(msg); });
 
     // add mesh to model as a new object, keep the original object's name and config
@@ -3235,6 +3248,30 @@ void ObjectList::boolean()
     if (new_object->instances.empty())
         new_object->add_instance();
     ModelVolume* new_volume = new_object->add_volume(mesh);
+
+    // Remap paint
+    if (keep_painting) {
+        for (auto& saved_painting : saved_paintings) {
+            if (saved_painting) {
+                // For each original painted volume, we need to apply to each instance
+                // because we merged all instances into one in `combine_mesh_fff`
+
+                // First we save the non-instance-translated mesh
+                TriangleMesh vols_mesh(std::move(saved_painting->mesh));
+
+                for (const ModelInstance* i : object->instances) {
+                    // Then for each instance, we apply the paint at the given instance place
+                    saved_painting->mesh = vols_mesh;
+                    // Match the instance transform used by combine_mesh_fff(), including mirrored instances.
+                    saved_painting->mesh.transform(i->get_matrix(), true);
+
+                    // Then paint it
+                    new_volume->restore_painting(saved_painting, true);
+                }
+
+            }
+        }
+    }
 
     // BBS: ensure on bed but no need to ensure locate in the center around origin
     new_object->ensure_on_bed();
@@ -5698,9 +5735,14 @@ void ObjectList::fix_through_netfabb()
             msg += "\n";
         }
 
-        plater->clear_before_change_mesh(obj_idx);
+        const bool keep_painting = wxGetApp().app_config->get_bool("keep_painting");
+        BOOST_LOG_TRIVIAL(info) << "fix_through_netfabb: keep_painting=" << (keep_painting ? "true" : "false")
+                                << ", obj_idx=" << obj_idx << ", vol_idx=" << vol_idx;
+        if (!keep_painting) {
+            plater->clear_before_change_mesh(obj_idx);
+        }
         std::string res;
-        if (!fix_model_by_win10_sdk_gui(*(object(obj_idx)), vol_idx, progress_dlg, msg, res))
+        if (!fix_model_by_win10_sdk_gui(*(object(obj_idx)), vol_idx, progress_dlg, msg, res, keep_painting))
             return false;
         //wxGetApp().plater()->changed_mesh(obj_idx);
         object(obj_idx)->ensure_on_bed();
@@ -5823,7 +5865,6 @@ void GUI::ObjectList::smooth_mesh()
         WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), content, wxEmptyString, wxOK);
         dlg.ShowModal();
     };
-
     // Collect one job per volume to smooth: for a volume selection, the selected parts of
     // the first object; otherwise all volumes of every selected object.
     struct SmoothJob {
@@ -5996,17 +6037,23 @@ void GUI::ObjectList::smooth_mesh()
                 // the meshes are replaced - otherwise Ctrl+Z would restore the already
                 // subdivided meshes. One snapshot covers the whole multi-object operation.
                 plater->take_snapshot("smooth_mesh");
+                const bool keep_painting = wxGetApp().app_config->get_bool("keep_painting");
                 for (SmoothResult *result : apply_list) {
+                    // The volume still owns the pre-smoothing mesh here, so save the
+                    // painting now and remap it onto the smoothed mesh below.
+                    const std::optional<TriangleSelector::SavedPainting> saved_painting = keep_painting ?
+                        result->volume->save_painting() :
+                        std::optional<TriangleSelector::SavedPainting>{};
                     result->volume->set_mesh(std::move(*result->smoothed));
+                    result->volume->restore_painting(saved_painting);
                     result->volume->calculate_convex_hull();
                     result->volume->invalidate_convex_hull_2d();
                     result->volume->set_new_unique_id();
-                    // The four FacetsAnnotation stores (supports, seams, MMU segmentation,
-                    // fuzzy skin) are indexed by face number; subdivision replaced every
-                    // face with four new ones, so the stale markers would land on wrong
-                    // faces. set_mesh()/set_new_unique_id() do not touch them - drop them
-                    // explicitly (the "(Lost color)" menu note assumes exactly this).
-                    result->volume->reset_extra_facets();
+                    // restore_painting() clears the four FacetsAnnotation stores (supports,
+                    // seams, MMU segmentation, fuzzy skin) before remapping: subdivision
+                    // replaced every face with new ones, so stale markers would land on
+                    // wrong faces. When painting is not kept they simply stay cleared (the
+                    // "(Lost color)" menu note assumes exactly this).
                 }
                 for (int obj_idx : changed_objs) {
                     model.objects[obj_idx]->invalidate_bounding_box();

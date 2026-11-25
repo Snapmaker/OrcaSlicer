@@ -321,7 +321,7 @@ public:
 // returt FALSE, if fixing was canceled
 // fix_result is empty, if fixing finished successfully
 // fix_result containes a message if fixing failed
-bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::ProgressDialog& progress_dialog, const wxString& msg_header, std::string& fix_result)
+bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::ProgressDialog& progress_dialog, const wxString& msg_header, std::string& fix_result, bool keep_painting)
 {
     std::mutex mtx;
     std::condition_variable condition;
@@ -350,7 +350,7 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 		progress.updated = true;
 	    condition.notify_all();
 	};
-	auto worker_thread = boost::thread([&model_object, &volumes, &ivolume, on_progress, &success, &canceled, &finished]() {
+	auto worker_thread = boost::thread([&model_object, &volumes, &ivolume, on_progress, &success, &canceled, &finished, keep_painting]() {
 		try {
 			std::vector<TriangleMesh> meshes_repaired;
 			meshes_repaired.reserve(volumes.size());
@@ -400,10 +400,17 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 	 			meshes_repaired.emplace_back(std::move(model.objects.front()->volumes.front()->mesh()));
 			}
 			for (size_t i = 0; i < volumes.size(); ++ i) {
+				// Save the painting before the mesh is replaced, so it can be remapped
+				// onto the repaired mesh. Runs per volume: painting of one volume is
+				// never restored onto another one.
+				const std::optional<TriangleSelector::SavedPainting> saved_painting = keep_painting ?
+				    volumes[i]->save_painting() :
+				    std::optional<TriangleSelector::SavedPainting>{};
 				volumes[i]->set_mesh(std::move(meshes_repaired[i]));
 				volumes[i]->calculate_convex_hull();
 				volumes[i]->invalidate_convex_hull_2d();
 				volumes[i]->set_new_unique_id();
+				volumes[i]->restore_painting(saved_painting);
 			}
 			model_object.invalidate_bounding_box();
 			-- ivolume;

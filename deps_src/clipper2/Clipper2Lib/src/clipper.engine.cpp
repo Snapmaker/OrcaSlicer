@@ -2969,9 +2969,15 @@ namespace Clipper2Lib {
     // nb: use indexing (not an iterator) in case 'splits' is modified inside this loop (#1029)
     for (size_t idx = 0; idx < splits->size(); ++idx)
     {
-      OutRec* split = (*splits)[idx]; 
-      if (!split->pts && split->splits &&
-        CheckSplitOwner(outrec, split->splits)) return true; //#942
+      OutRec* split = (*splits)[idx];
+      if (!split) continue;
+      if (!split->pts && split->splits)
+      {
+        // Orca: guard emptied OutRec cycles before recursing into split->splits (upstream f97d65d).
+        if (split == outrec || split->recursive_split == outrec) continue;
+        split->recursive_split = outrec;
+        if (CheckSplitOwner(outrec, split->splits)) return true; //#942
+      }
       split = GetRealOutRec(split);
       if (!split || split == outrec || split->recursive_split == outrec) continue;
       split->recursive_split = outrec; // prevent infinite loops

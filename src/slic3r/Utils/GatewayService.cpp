@@ -492,7 +492,7 @@ bool GatewayService::start(const std::string& locale)
     return true;
 }
 
-void GatewayService::stop()
+void GatewayService::stop(bool terminate_cli)
 {
     std::lock_guard<std::mutex> lifecycle_lock(lifecycle_mutex_);
     if (!worker_.joinable() && stop_requested_.load(std::memory_order_relaxed))
@@ -513,6 +513,8 @@ void GatewayService::stop()
         worker_.join();
     fail_pending({GatewayErrorCode::Cancelled, "GatewayService was stopped"});
     dispatch_state(ConnectionState::Disconnected, {GatewayErrorCode::Cancelled, "GatewayService was stopped"});
+    if (terminate_cli && dependencies_.process_manager)
+        dependencies_.process_manager->terminate();
 }
 
 bool GatewayService::is_connected() const

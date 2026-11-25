@@ -132,7 +132,8 @@ public:
     GatewayService& operator=(const GatewayService&) = delete;
 
     bool            start(const std::string& locale);
-    void            stop();
+    // terminate_cli also kills the snapmaker_connection CLI this service spawned (app exit on macOS, #1238).
+    void            stop(bool terminate_cli = false);
     bool            is_connected() const;
     bool            wait_for_connected(std::chrono::milliseconds timeout);
     ConnectionState state() const;

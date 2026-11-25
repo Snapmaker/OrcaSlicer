@@ -560,16 +560,32 @@ void GLGizmoLocalSubdivision::update_preview()
             TriangleMeshDeal::SubdivisionFailure failure = TriangleMeshDeal::SubdivisionFailure::None;
             indexed_triangle_set        next  = TriangleMeshDeal::smooth_triangle_mesh_local_its(src, p.next_facets, ok, &failure, &region);
             if (! ok) {
-                p.failed_level = next_level;
+                p.failed_level   = next_level;
+                p.failure_reason = failure;
                 break;
             }
             if (region == 0) {
-                // Nothing to subdivide on this volume: drop the preview. Unhide
-                // first (restore_preview's per-volume form) - the entry may have
-                // been hiding the volume at a lower shown level.
-                if (p.hidden)
-                    m_parent.toggle_model_objects_visibility(true, mo, grow_active_instance, p.volume);
-                dropped = true;
+                if (next_level == 1) {
+                    // The ORIGINAL selection had no subdividable face at all (every
+                    // painted face was filtered as zero-area): a no-op for this
+                    // volume, drop the whole preview. The entry cannot hold any
+                    // GLModel at this point (models are only built once a level is
+                    // shown), so the by-value erase below cannot duplicate GPU
+                    // handles.
+                    if (p.hidden)
+                        m_parent.toggle_model_objects_visibility(true, mo, grow_active_instance, p.volume);
+                    dropped = true;
+                } else {
+                    // A LATER level collapsed entirely: the two-strike policy shipped
+                    // the previous round's degenerate children, so nothing here is
+                    // subdividable. Keep the last validated preview (do NOT drop the
+                    // entry - it holds built GPU resources, and a mid-vector by-value
+                    // erase would duplicate the GLModel handles into the shifted
+                    // entries), record the failure, and let the lowest_achieved gate
+                    // block the whole batch from being half-applied.
+                    p.failed_level   = next_level;
+                    p.failure_reason = TriangleMeshDeal::SubdivisionFailure::DegenerateGeometry;
+                }
                 break;
             }
             // The region boundary comes from the algorithm, not subtraction: the
@@ -778,13 +794,35 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
 
 wxString GLGizmoLocalSubdivision::subdivision_failure_text(int lowest_achieved, bool apply) const
 {
-    // The only reachable rejection is the non-manifold guard (more than two
-    // selected faces on one edge); geometry problems ship the initial Loop
-    // result instead of failing.
-    if (apply)
-        return wxString::Format(_L("Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."),
+    bool any_non_manifold = false, any_degenerate = false;
+    for (const Preview& p : m_previews) {
+        if (p.failed_level < 0)
+            continue;
+        if (p.failure_reason == TriangleMeshDeal::SubdivisionFailure::DegenerateGeometry)
+            any_degenerate = true;
+        else
+            any_non_manifold = true;
+    }
+
+    // Name the specific cause when all failed previews share one; mixed causes get
+    // the combined wording.
+    if (apply) {
+        if (any_degenerate && ! any_non_manifold)
+            return wxString::Format(_L("Subdivision failed: the selected region contains degenerate geometry (reached level %d of %d). No changes were applied."),
+                                    lowest_achieved, m_subdiv_level);
+        if (any_non_manifold && ! any_degenerate)
+            return wxString::Format(_L("Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."),
+                                    lowest_achieved, m_subdiv_level);
+        return wxString::Format(_L("Subdivision failed: the selected region could not be subdivided (non-manifold edges or degenerate geometry; reached level %d of %d). No changes were applied."),
                                 lowest_achieved, m_subdiv_level);
-    return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."),
+    }
+    if (any_degenerate && ! any_non_manifold)
+        return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains degenerate geometry."),
+                                lowest_achieved, m_subdiv_level);
+    if (any_non_manifold && ! any_degenerate)
+        return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."),
+                                lowest_achieved, m_subdiv_level);
+    return wxString::Format(_L("Local subdivision stopped at level %d of %d: the selected region could not be subdivided (non-manifold edges or degenerate geometry)."),
                             lowest_achieved, m_subdiv_level);
 }
 

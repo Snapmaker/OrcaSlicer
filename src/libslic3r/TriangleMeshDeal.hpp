@@ -10,11 +10,15 @@ class TriangleMeshDeal
 {
 public:
     // Why a local subdivision level failed (valid when ok == false): an edge of
-    // the selection is shared by more than two selected faces. Geometry problems
-    // never reject a level - the initial Loop result ships instead.
+    // the selection is shared by more than two selected faces (NonManifold).
+    // DegenerateGeometry is NOT a rejection: the two-strike policy ships the
+    // initial Loop result, and the GUI records this reason when the shipped
+    // children turned out fully degenerate (the next level's grow then finds
+    // nothing subdividable).
     enum class SubdivisionFailure {
         None,
         NonManifold,
+        DegenerateGeometry,
     };
 
     static TriangleMesh smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok);

@@ -84,6 +84,9 @@ private:
         // cleared - whenever the selection or the mesh changes, so an unchanged
         // failing selection (e.g. non-manifold edges) is not recomputed every frame.
         int                       failed_level = -1;
+        // Why the growth stopped below the requested level (valid when
+        // failed_level >= 0).
+        TriangleMeshDeal::SubdivisionFailure failure_reason = TriangleMeshDeal::SubdivisionFailure::None;
         GLModel                   model;            // non-region geometry, drawn by the gizmo with the volume color
         GLModel                   model_region;     // region-only geometry, colored like the level-0 painting
         bool                      hidden = false;   // the original volume is hidden while the preview is shown

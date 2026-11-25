@@ -3,6 +3,7 @@
 #include <limits>
 #include <numeric>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "AABBTreeIndirect.hpp"
 #include "ClipperUtils.hpp"
@@ -1468,19 +1469,263 @@ Polygons union_pt_chained_outside_in(const Polygons &subject)
     return retval;
 }
 
-// Clipper2 unions are strictly simple, like Clipper1's with StrictlySimple(true).
+static bool has_repeated_vertex(const Points &pts)
+{
+    if (pts.size() < 4)
+        return false;
+    std::unordered_set<Point, PointHash> seen;
+    seen.reserve(pts.size());
+    for (const Point &pt : pts)
+        if (! seen.insert(pt).second)
+            return true;
+    return false;
+}
+
+static void remove_exact_collinear(Points &pts)
+{
+    bool changed = true;
+    while (changed && pts.size() >= 3) {
+        changed = false;
+        Points next;
+        next.reserve(pts.size());
+        const size_t n = pts.size();
+        for (size_t i = 0; i < n; ++i) {
+            const Point &prev = pts[(i + n - 1) % n];
+            const Point &curr = pts[i];
+            const Point &succ = pts[(i + 1) % n];
+            if (curr == prev || int128::orient(prev, curr, succ) == 0) {
+                changed = true;
+                continue;
+            }
+            next.push_back(curr);
+        }
+        pts = std::move(next);
+    }
+}
+
+// Split a contour at every repeated vertex into strictly simple loops (Clipper1 StrictlySimple semantics).
+static void split_self_touching_polygon(const Points &pts, Polygons &out)
+{
+    if (pts.size() < 3)
+        return;
+    if (! has_repeated_vertex(pts)) {
+        if (Polygon::area(pts) != 0.)
+            out.emplace_back(pts);
+        return;
+    }
+
+    Points                                    stack;
+    std::unordered_map<Point, size_t, PointHash> pos;
+    stack.reserve(pts.size());
+    pos.reserve(pts.size());
+
+    auto emit_loop = [&out](Points loop) {
+        remove_exact_collinear(loop);
+        if (loop.size() >= 3 && Polygon::area(loop) != 0.)
+            out.emplace_back(std::move(loop));
+    };
+
+    for (const Point &pt : pts) {
+        if (auto it = pos.find(pt); it != pos.end()) {
+            const size_t k = it->second;
+            Points loop(stack.begin() + k, stack.end());
+            for (size_t j = k + 1; j < stack.size(); ++j)
+                pos.erase(stack[j]);
+            stack.resize(k + 1);
+            emit_loop(std::move(loop));
+        } else {
+            pos.emplace(pt, stack.size());
+            stack.push_back(pt);
+        }
+    }
+    emit_loop(std::move(stack));
+}
+
+// Exact point-in-polygon for doubled coordinates (pt2 = 2*P tested against 2*path): 1 inside, 0 outside, -1 boundary.
+static int point_in_polygon_doubled(const Vec2crd &pt2, const Points &path)
+{
+    const size_t cnt = path.size();
+    if (cnt < 3)
+        return 0;
+    int     result = 0;
+    Vec2crd ip(path[0].x() * 2, path[0].y() * 2);
+    for (size_t i = 1; i <= cnt; ++i) {
+        const Point  &raw_next = (i == cnt) ? path[0] : path[i];
+        const Vec2crd ip_next(raw_next.x() * 2, raw_next.y() * 2);
+        if (ip_next.y() == pt2.y() &&
+            (ip_next.x() == pt2.x() || (ip.y() == pt2.y() && ((ip_next.x() > pt2.x()) == (ip.x() < pt2.x())))))
+            return -1;
+        if ((ip.y() < pt2.y()) != (ip_next.y() < pt2.y())) {
+            if (ip.x() >= pt2.x()) {
+                if (ip_next.x() > pt2.x())
+                    result = 1 - result;
+                else {
+                    const int sign = int128::orient(pt2, ip, ip_next);
+                    if (! sign)
+                        return -1;
+                    if ((sign > 0) == (ip_next.y() > ip.y()))
+                        result = 1 - result;
+                }
+            } else if (ip_next.x() > pt2.x()) {
+                const int sign = int128::orient(pt2, ip, ip_next);
+                if (! sign)
+                    return -1;
+                if ((sign > 0) == (ip_next.y() > ip.y()))
+                    result = 1 - result;
+            }
+        }
+        ip = ip_next;
+    }
+    return result;
+}
+
+static bool simple_ring_encloses(const Polygon &outer, const Polygon &inner)
+{
+    // 1. Try any vertex of `inner` not lying on `outer`'s boundary.
+    for (const Point &pt : inner.points) {
+        const Vec2crd pt2(pt.x() * 2, pt.y() * 2);
+        const int     pip = point_in_polygon_doubled(pt2, outer.points);
+        if (pip != -1)
+            return pip == 1;
+    }
+    // 2. All vertices of `inner` lie on `outer`'s boundary: test exact doubled-coordinate edge midpoints.
+    const size_t n = inner.points.size();
+    for (size_t i = 0; i < n; ++i) {
+        const Point  &a    = inner.points[i];
+        const Point  &b    = inner.points[(i + 1 == n) ? 0 : i + 1];
+        const Vec2crd mid2 = Vec2crd(a.x() + b.x(), a.y() + b.y());
+        const int     pip  = point_in_polygon_doubled(mid2, outer.points);
+        if (pip != -1)
+            return pip == 1;
+    }
+    // 3. Fallback: scanline strict interior point.
+    C2::Path64 c2_outer, c2_inner;
+    c2_outer.reserve(outer.points.size());
+    for (const Point &pt : outer.points)
+        c2_outer.emplace_back(pt.x(), pt.y());
+    c2_inner.reserve(inner.points.size());
+    for (const Point &pt : inner.points)
+        c2_inner.emplace_back(pt.x(), pt.y());
+    double mx = 0., my = 0.;
+    if (c2_find_interior_point(c2_inner, mx, my))
+        return c2_point_in_path_double(mx, my, c2_outer);
+    return false;
+}
+
 Polygons simplify_polygons(const Polygons &subject)
 {
-    C2::Paths64 out;
-    c2_clip(C2::ClipType::Union, to_paths64(ClipperUtils::PolygonsProvider(subject)), {}, C2::FillRule::NonZero, out);
-    return c2_to_polygons(out);
+    C2::Paths64 united;
+    c2_clip(C2::ClipType::Union, to_paths64(ClipperUtils::PolygonsProvider(subject)), {}, C2::FillRule::NonZero, united);
+    Polygons out;
+    out.reserve(united.size());
+    for (const C2::Path64 &path : united)
+        split_self_touching_polygon(c2_to_points(path), out);
+    return out;
 }
 
 ExPolygons simplify_polygons_ex(const Polygons &subject)
 {
-    C2::PolyTree64 out;
-    c2_clip(C2::ClipType::Union, to_paths64(ClipperUtils::PolygonsProvider(subject)), {}, C2::FillRule::NonZero, out);
-    return c2_to_expolygons(out);
+    C2::PolyTree64 tree;
+    c2_clip(C2::ClipType::Union, to_paths64(ClipperUtils::PolygonsProvider(subject)), {}, C2::FillRule::NonZero, tree);
+    ExPolygons raw = c2_to_expolygons(tree);
+    ExPolygons out;
+    out.reserve(raw.size());
+
+    for (ExPolygon &ex : raw) {
+        bool needs_split = has_repeated_vertex(ex.contour.points);
+        if (! needs_split) {
+            for (const Polygon &h : ex.holes)
+                if (has_repeated_vertex(h.points)) {
+                    needs_split = true;
+                    break;
+                }
+        }
+        if (! needs_split) {
+            out.emplace_back(std::move(ex));
+            continue;
+        }
+
+        // Split only this ExPolygon's contours and re-nest its holes locally.
+        Polygons split_rings;
+        split_self_touching_polygon(ex.contour.points, split_rings);
+        for (const Polygon &h : ex.holes)
+            split_self_touching_polygon(h.points, split_rings);
+
+        struct SimpleRing
+        {
+            Polygon     poly;
+            double      area   = 0.;
+            BoundingBox bbox;
+            bool        is_ccw = false;
+        };
+        std::vector<SimpleRing> rings;
+        rings.reserve(split_rings.size());
+        std::vector<size_t> ccw_indices;
+        std::vector<size_t> cw_indices;
+        for (Polygon &p : split_rings) {
+            SimpleRing r;
+            r.area   = p.area();
+            r.is_ccw = r.area > 0.;
+            r.bbox   = get_extents(p);
+            r.poly   = std::move(p);
+            const size_t idx = rings.size();
+            rings.emplace_back(std::move(r));
+            if (rings.back().is_ccw)
+                ccw_indices.push_back(idx);
+            else
+                cw_indices.push_back(idx);
+        }
+
+        const size_t base_out = out.size();
+        out.resize(base_out + ccw_indices.size());
+        // Cache contour copies/references before moving; keep rings[idx].poly alive until hole assignment finishes.
+        if (! cw_indices.empty() && ! ccw_indices.empty()) {
+            if (ccw_indices.size() == 1) {
+                const size_t c_ring = ccw_indices.front();
+                for (size_t h_ring : cw_indices)
+                    if (rings[c_ring].bbox.contains(rings[h_ring].bbox) &&
+                        simple_ring_encloses(rings[c_ring].poly, rings[h_ring].poly))
+                        out[base_out].holes.emplace_back(std::move(rings[h_ring].poly));
+            } else {
+                std::vector<C2BBoxNode> bbox_nodes;
+                bbox_nodes.reserve(ccw_indices.size());
+                for (size_t k = 0; k < ccw_indices.size(); ++k) {
+                    const BoundingBox &bb = rings[ccw_indices[k]].bbox;
+                    bbox_nodes.emplace_back(k, C2::Rect64(bb.min.x(), bb.min.y(), bb.max.x(), bb.max.y()));
+                }
+                AABBTreeIndirect::Tree<2, coord_t> aabb;
+                aabb.build(std::move(bbox_nodes));
+
+                std::vector<size_t> candidates;
+                for (size_t h_ring : cw_indices) {
+                    const BoundingBox &hbb     = rings[h_ring].bbox;
+                    const double       h_abs   = -rings[h_ring].area;
+                    const AABBTreeIndirect::Tree<2, coord_t>::BoundingBox query_box(hbb.min, hbb.max);
+                    candidates.clear();
+                    AABBTreeIndirect::traverse(
+                        aabb,
+                        [&query_box](const AABBTreeIndirect::Tree<2, coord_t>::Node &n) { return n.bbox.contains(query_box); },
+                        [&](const AABBTreeIndirect::Tree<2, coord_t>::Node &n) {
+                            if (rings[ccw_indices[n.idx]].area > h_abs)
+                                candidates.push_back(n.idx);
+                            return true;
+                        });
+                    std::sort(candidates.begin(), candidates.end(), [&](size_t a, size_t b) {
+                        return rings[ccw_indices[a]].area < rings[ccw_indices[b]].area;
+                    });
+                    for (size_t k : candidates) {
+                        if (simple_ring_encloses(rings[ccw_indices[k]].poly, rings[h_ring].poly)) {
+                            out[base_out + k].holes.emplace_back(std::move(rings[h_ring].poly));
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        for (size_t k = 0; k < ccw_indices.size(); ++k)
+            out[base_out + k].contour = std::move(rings[ccw_indices[k]].poly);
+    }
+    return out;
 }
 
 Polygons top_level_islands(const Slic3r::Polygons &polygons)

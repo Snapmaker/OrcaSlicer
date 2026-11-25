@@ -843,13 +843,13 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
         ret = diff(offset(ret, step_size, jtRound, scaled<float>(0.01)), collision_trimmed());
         // ensure that if many offsets are done the performance does not suffer extremely by the new vertices of jtRound.
         if (i % 10 == 7)
-            ret = polygons_simplify(ret, scaled<double>(0.015));
+            ret = polygons_simplify(ret, scaled<double>(0.015), polygons_strictly_simple);
     }
     // offset the remainder
     float last_offset = distance - steps * step_size;
     if (last_offset > SCALED_EPSILON)
         ret = offset(ret, distance - steps * step_size, jtRound, scaled<float>(0.01));
-    ret = polygons_simplify(ret, scaled<double>(0.015));
+    ret = polygons_simplify(ret, scaled<double>(0.015), polygons_strictly_simple);
 
     if (do_final_difference)
         ret = diff(ret, collision_trimmed());
@@ -1621,7 +1621,7 @@ static Point move_inside_if_outside(const Polygons &polygons, Point from, int di
         }
         if (settings.no_error && settings.move)
             // as jtRound has to be used for offsets this simplify is VERY important for performance.
-            polygons_simplify(increased, scaled<float>(0.025));
+            polygons_simplify(increased, scaled<float>(0.025), polygons_strictly_simple);
     } else
         // if no movement is done the areas keep parent area as no move == offset(0)
         increased = parent.influence_area;
@@ -4048,7 +4048,7 @@ void organic_draw_branches(
                 base_layer_polygons = smooth_outward(union_(base_layer_polygons), config.support_line_width); //FIXME was .smooth(50);
                 //smooth_outward(closing(std::move(bottom), closing_distance + minimum_island_radius, closing_distance, SUPPORT_SURFACES_OFFSET_PARAMETERS), smoothing_distance) :
                 // simplify a bit, to ensure the output does not contain outrageous amounts of vertices. Should not be necessary, just a precaution.
-                base_layer_polygons = polygons_simplify(base_layer_polygons, std::min(scaled<double>(0.03), double(config.resolution)));
+                base_layer_polygons = polygons_simplify(base_layer_polygons, std::min(scaled<double>(0.03), double(config.resolution)), polygons_strictly_simple);
             }
 
             // Subtract top contact layer polygons from support base.

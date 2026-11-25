@@ -160,7 +160,7 @@ inline void polygons_append(Polygons &dst, Polygons &&src)
     }
 }
 
-Polygons polygons_simplify(const Polygons &polys, double tolerance);
+Polygons polygons_simplify(const Polygons &polys, double tolerance, bool strictly_simple = true);
 
 inline void polygons_rotate(Polygons &polys, double angle)
 {

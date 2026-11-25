@@ -679,3 +679,56 @@ TEST_CASE("offset(Polygons) preserves CW contour in concave notch and drops zero
         REQUIRE(total_area > 0.);
     }
 }
+
+TEST_CASE("simplify_polygons, simplify_polygons_ex and polygons_simplify split self-touching contours", "[ClipperUtils]") {
+    auto has_dup_vertex = [](const Polygon &p) {
+        std::set<Point> s;
+        for (const Point &pt : p.points)
+            if (! s.insert(pt).second)
+                return true;
+        return false;
+    };
+
+    SECTION("Vertex-touching hole is split into separate outer contour and CW hole") {
+        const Polygon self_touch_hole({ {0, 0}, {500, 0}, {300, 500}, {700, 500}, {500, 0}, {1000, 0}, {1000, 1000}, {0, 1000} });
+        const Polygons polys = simplify_polygons({ self_touch_hole });
+        REQUIRE(polys.size() == 2);
+        for (const Polygon &p : polys)
+            REQUIRE_FALSE(has_dup_vertex(p));
+
+        const ExPolygons exs = simplify_polygons_ex({ self_touch_hole });
+        REQUIRE(exs.size() == 1);
+        REQUIRE(exs.front().holes.size() == 1);
+        REQUIRE_FALSE(has_dup_vertex(exs.front().contour));
+        REQUIRE_FALSE(has_dup_vertex(exs.front().holes.front()));
+        REQUIRE(exs.front().area() == Catch::Approx(self_touch_hole.area()));
+    }
+
+    SECTION("Half-integer diagonal midpoint re-nests odd-coordinate touching hole accurately") {
+        const Polygon diag_touch({ {0, 0}, {5000, 0}, {1001, 5001}, {5001, 5001}, {5000, 0}, {10001, 0}, {10001, 10001}, {0, 10001} });
+        const ExPolygons exs = simplify_polygons_ex({ diag_touch });
+        REQUIRE(exs.size() == 1);
+        REQUIRE(exs.front().holes.size() == 1);
+        REQUIRE(exs.front().area() == Catch::Approx(diag_touch.area()));
+    }
+
+    SECTION("Self-touching horizontal bowtie splits in simplify_polygons, simplify_polygons_ex and polygons_simplify") {
+        const Polygon hbow({ {0, 0}, {1000, 1000}, {2000, 0}, {2000, 2000}, {1000, 1000}, {0, 2000} });
+        const Polygons sp = simplify_polygons({ hbow });
+        REQUIRE(sp.size() == 2);
+        for (const Polygon &p : sp)
+            REQUIRE_FALSE(has_dup_vertex(p));
+
+        const ExPolygons sp_ex = simplify_polygons_ex({ hbow });
+        REQUIRE(sp_ex.size() == 2);
+        for (const ExPolygon &e : sp_ex) {
+            REQUIRE(e.holes.empty());
+            REQUIRE_FALSE(has_dup_vertex(e.contour));
+        }
+
+        const Polygons ps_strict = polygons_simplify({ hbow }, 1.0);
+        REQUIRE(ps_strict.size() == 2);
+        for (const Polygon &p : ps_strict)
+            REQUIRE_FALSE(has_dup_vertex(p));
+    }
+}

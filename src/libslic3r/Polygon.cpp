@@ -706,7 +706,7 @@ void remove_collinear(Polygons &polys)
 		remove_collinear(poly);
 }
 
-Polygons polygons_simplify(const Polygons &source_polygons, double tolerance)
+Polygons polygons_simplify(const Polygons &source_polygons, double tolerance, bool strictly_simple)
 {
     Polygons out;
     out.reserve(source_polygons.size());
@@ -715,11 +715,11 @@ Polygons polygons_simplify(const Polygons &source_polygons, double tolerance)
         Points simplified = MultiPoint::_douglas_peucker(to_polyline(source_polygon).points, tolerance);
         // then remove the last (repeated) point.
         simplified.pop_back();
-        // Simplify the decimated contour by a union.
+        // Simplify the decimated contour by a union (strictly simple splits self-touching vertices).
         bool ccw = Polygon::area(simplified) > 0.;
         Polygons decimated(1);
         decimated.front().points = std::move(simplified);
-        for (Polygon &polygon : union_(decimated)) {
+        for (Polygon &polygon : (strictly_simple ? simplify_polygons(decimated) : union_(decimated))) {
             if (! ccw)
                 // The union reorients negative area contours to become positive. Reverse holes back to CW.
                 polygon.reverse();

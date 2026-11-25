@@ -112,7 +112,7 @@ TreeModelVolumes::TreeModelVolumes(
         tbb::parallel_for(tbb::blocked_range<size_t>(num_raft_layers, num_layers, std::min<size_t>(1, std::max<size_t>(16, num_layers / (8 * tbb::this_task_arena::max_concurrency())))),
             [&](const tbb::blocked_range<size_t> &range) {
             for (size_t layer_idx = range.begin(); layer_idx < range.end(); ++ layer_idx)
-                outlines[layer_idx] = polygons_simplify(to_polygons(print_object.get_layer(layer_idx - num_raft_layers)->lslices), mesh_settings.resolution);
+                outlines[layer_idx] = polygons_simplify(to_polygons(print_object.get_layer(layer_idx - num_raft_layers)->lslices), mesh_settings.resolution, polygons_strictly_simple);
         });
     }
 #endif
@@ -524,7 +524,7 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                         if (processing_last_mesh) {
                             if (! dst.empty())
                                 collisions = union_(collisions, dst);
-                            dst = polygons_simplify(collisions, min_resolution);
+                            dst = polygons_simplify(collisions, min_resolution, polygons_strictly_simple);
                         } else
                             append(dst, std::move(collisions));
                         if (throw_on_cancel)
@@ -552,7 +552,7 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                         if (processing_last_mesh) {
                             if (! dst.empty())
                                 placable = union_(placable, dst);
-                            dst = polygons_simplify(placable, min_resolution);
+                            dst = polygons_simplify(placable, min_resolution, polygons_strictly_simple);
                         } else
                             append(dst, placable);
                         if (throw_on_cancel)
@@ -602,7 +602,7 @@ void TreeModelVolumes::calculateCollisionHolefree(const std::vector<RadiusLayerP
                     data.emplace_back(RadiusLayerPair(radius, layer_idx), polygons_simplify(
                         offset(union_ex(this->getCollision(m_increase_until_radius, layer_idx, false)),
                             5 - increase_radius_ceil, jtRound, m_min_resolution),
-                        m_min_resolution));
+                        m_min_resolution, polygons_strictly_simple));
                     if (throw_on_cancel)
                         throw_on_cancel();
                 }
@@ -691,7 +691,7 @@ void TreeModelVolumes::calculateAvoidance(const std::vector<RadiusLayerPair> &ke
                             jtRound, m_min_resolution));
                 if (task.to_model)
                     latest_avoidance = diff(latest_avoidance, getPlaceableAreas(task.radius, layer_idx, throw_on_cancel));
-                latest_avoidance = polygons_simplify(latest_avoidance, m_min_resolution);
+                latest_avoidance = polygons_simplify(latest_avoidance, m_min_resolution, polygons_strictly_simple);
                 data.emplace_back(RadiusLayerPair{task.radius, layer_idx}, latest_avoidance);
                 if (throw_on_cancel)
                     throw_on_cancel();
@@ -814,12 +814,12 @@ void TreeModelVolumes::calculateWallRestrictions(const std::vector<RadiusLayerPa
                     data[layer_idx - min_layer_bottom] = polygons_simplify(
                         // radius contains m_current_min_xy_dist_delta already if required
                         intersection(getCollision(0, layer_idx, false), getCollision(radius, layer_idx - 1, true)),
-                        m_min_resolution);
+                        m_min_resolution, polygons_strictly_simple);
                     if (! data_min.empty())
                         data_min[layer_idx - min_layer_bottom] = 
                             polygons_simplify(
                                 intersection(getCollision(0, layer_idx, true), getCollision(radius, layer_idx - 1, true)),
-                                m_min_resolution);
+                                m_min_resolution, polygons_strictly_simple);
                     if (throw_on_cancel)
                         throw_on_cancel();
                 }

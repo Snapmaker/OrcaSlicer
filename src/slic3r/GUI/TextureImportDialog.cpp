@@ -47,6 +47,7 @@
 #include <wx/dc.h>
 #include <wx/dcclient.h>
 #include <wx/dcbuffer.h>
+#include <wx/graphics.h>
 #include <wx/dialog.h>
 #include <wx/display.h>
 #include <wx/event.h>
@@ -152,9 +153,25 @@ static void apply_muted_button_colours(Button* btn)
         std::pair<wxColour, int>(fg, StateColor::Normal)));
 }
 
+// Font point sizes in this dialog were authored against MSW semantics, where
+// a point renders at ~4/3 px (96 DPI): "10pt == 14px design", "9pt == 12px".
+// wxOSX maps a point 1:1 to an AppKit point (1 logical px; system default is
+// 13pt), so the same numbers render 25-30% smaller on macOS. Scale the
+// authored point by 4/3 on Apple so both platforms show the same pixel size;
+// other platforms keep the authored value untouched.
+static int texture_font_pt(int msw_pt)
+{
+#ifdef __APPLE__
+    return std::max(1, (int)std::lround(msw_pt * 4.0 / 3.0));
+#else
+    return msw_pt;
+#endif
+}
+
 static wxFont texture_import_section_title_font(wxWindow* win)
 {
     wxFont font = win ? win->GetFont() : wxSystemSettings::GetFont(wxSYS_DEFAULT_GUI_FONT);
+    font.SetPointSize(texture_font_pt(9));
     font.MakeBold();
     return font;
 }
@@ -210,13 +227,56 @@ static std::string strip_machine_suffix(const std::string& name)
     return (at == std::string::npos) ? name : name.substr(0, at);
 }
 
-// Scale a fractional design pixel (SVG chevron coords 7.5/9.6) to the
-// window DPI, rounding to nearest — replaces FromDIP(n)/d integer division
-// that silently truncated (48/5=9 vs the intended 9.6). Call sites cite
-// their SVG source.
-static int dip_frac(wxWindow* win, double px)
+// Use a continuous floating-point path, not separately rounded line segments.
+static void texture_draw_glyph(wxAutoBufferedPaintDC& dc, wxWindow* win,
+                               double bx, double by, const wxColour& colour,
+                               bool check = false)
 {
-    return (int)std::lround(px * win->FromDIP(10) / 10.0);
+    const double scale = win->FromDIP(100) / 100.0;
+    const double x1 = check ? 2.3 : 3.0, y1 = check ? 5.7 : 6.0;
+    const double x2 = check ? 4.7 : 7.5, y2 = check ? 8.3 : 9.6;
+    const double x3 = check ? 9.7 : 12.0, y3 = check ? 3.9 : 6.0;
+#if wxUSE_GRAPHICS_CONTEXT
+    if (std::unique_ptr<wxGraphicsContext> gc{wxGraphicsContext::Create(dc)}) {
+        gc->SetAntialiasMode(wxANTIALIAS_DEFAULT);
+        gc->SetPen(gc->CreatePen(wxGraphicsPenInfo(colour)
+            .Width((check ? 1.5 : 1.2) * scale).Cap(wxCAP_ROUND).Join(wxJOIN_ROUND)));
+        auto path = gc->CreatePath();
+        path.MoveToPoint(bx + x1 * scale, by + y1 * scale);
+        path.AddLineToPoint(bx + x2 * scale, by + y2 * scale);
+        path.AddLineToPoint(bx + x3 * scale, by + y3 * scale);
+        gc->StrokePath(path);
+        return;
+    }
+#endif
+    auto round = [](double v) { return static_cast<int>(std::lround(v)); };
+    wxPoint points[] = {{round(bx + x1 * scale), round(by + y1 * scale)},
+                        {round(bx + x2 * scale), round(by + y2 * scale)},
+                        {round(bx + x3 * scale), round(by + y3 * scale)}};
+    if (!check) {
+        const int cx = round(bx + 7.5 * scale);
+        const int dx = std::max(1, round(4.5 * scale));
+        points[0].x = cx - dx; points[1].x = cx; points[2].x = cx + dx;
+    }
+    wxPen pen(colour, std::max(1, round((check ? 1.5 : 1.2) * scale)));
+    pen.SetCap(wxCAP_ROUND);
+    pen.SetJoin(wxJOIN_ROUND);
+    dc.SetPen(pen);
+    dc.DrawLines(3, points);
+}
+
+// Draw a 1px border hugging a window's edge. GDI strokes inside the path
+// while CoreGraphics centres the stroke on it, so a naive DrawRect(0,0,w,h)
+// loses its outer half to window clipping on macOS (buttons looked
+// borderless); insetting the path by 1 keeps the full border everywhere.
+// The caller must set the fill brush beforehand; the border pen is set here.
+static void texture_draw_edge_border(wxDC& dc, const wxSize& sz, const wxColour& colour, double radius = 0.0)
+{
+    dc.SetPen(wxPen(colour, 1));
+    if (radius > 0.0)
+        dc.DrawRoundedRectangle(1, 1, sz.x - 2, sz.y - 2, radius);
+    else
+        dc.DrawRectangle(1, 1, sz.x - 2, sz.y - 2);
 }
 
 static bool needs_filament_swatch_border(const wxColour& colour){
@@ -418,6 +478,26 @@ void AccentSlider::OnMouse(wxMouseEvent& evt)
 
 namespace Slic3r { namespace GUI {
 
+static constexpr int kMixModeFontPt = 10;
+
+static void texture_update_mix_mode_metrics(wxWindow* trigger)
+{
+    if (!trigger) return;
+    wxFont font = trigger->GetFont();
+    font.SetPointSize(texture_font_pt(kMixModeFontPt));
+    font.SetWeight(wxFONTWEIGHT_MEDIUM);
+    wxClientDC dc(trigger);
+    dc.SetFont(font);
+    int width = 0, height = 0;
+    for (const wxString& label : {_L("Direct Filament Mapping"), _L("CMYW Auto Mix")}) {
+        const wxSize extent = dc.GetTextExtent(label);
+        width = std::max(width, extent.x);
+        height = std::max(height, extent.y);
+    }
+    trigger->SetMinSize(wxSize(std::max(trigger->FromDIP(149), width + trigger->FromDIP(48)),
+                               std::max(trigger->FromDIP(30), height + trigger->FromDIP(8))));
+}
+
 wxDEFINE_EVENT(EVT_TEXTURE_COMPUTE_DONE, wxCommandEvent);
 wxDEFINE_EVENT(EVT_TEXTURE_COMPUTE_PROGRESS, wxCommandEvent);
 wxDEFINE_EVENT(EVT_TEXTURE_COMPUTE_ERROR, wxCommandEvent);
@@ -600,6 +680,7 @@ public:
                         std::function<void()>                    on_decompose_color,
                         std::function<bool()>                    can_add_filament,
                         std::function<void(bool)>                on_close,
+                        bool                                     allow_mixed,
                         std::vector<int>                         display_numbers)
         : PopupWindow(parent, wxBORDER_NONE | wxPU_CONTAINS_CONTROLS)
         , m_entries(entries)
@@ -643,7 +724,7 @@ public:
         auto add_section_header = [&](const wxString& label) {
             auto* hdr = new wxStaticText(m_content, wxID_ANY, label);
             wxFont hf = hdr->GetFont();
-            hf.SetPointSize(10); // 14px at default MSW DPI
+            hf.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
             hf.SetWeight(wxFONTWEIGHT_MEDIUM);
             hdr->SetFont(hf);
             hdr->SetForegroundColour(header_clr);
@@ -679,8 +760,14 @@ public:
         // -> NewMixed) instead of jumping (e.g. 1,2 -> 7 -> 3,4,5,6 -> 8,9,10).
         add_section(_L("Project Physical Filaments"), TextureFilamentKind::ExistingPhysical);
         add_section(_L("New Physical Filaments"), TextureFilamentKind::NewPhysical);
-        add_section(_L("Project Mixed Filaments"), TextureFilamentKind::ExistingMixed);
-        add_section(_L("New Mixed Filaments"), TextureFilamentKind::NewMixed);
+        if (allow_mixed) {
+            add_section(_L("Project Mixed Filaments"), TextureFilamentKind::ExistingMixed);
+            add_section(_L("New Mixed Filaments"), TextureFilamentKind::NewMixed);
+        }
+        const int visible_count = static_cast<int>(std::count_if(m_entries.begin(), m_entries.end(),
+            [allow_mixed](const TextureFilamentEntry& entry) {
+                return allow_mixed || texture_entry_is_physical(entry.kind);
+            }));
 
         // "+ Add Material" hands the flow to the dialog: it resolves one of the
         // user's CONFIGURED material families (doc §3.3.4) and opens the fork's
@@ -718,7 +805,7 @@ public:
 
             const wxColour fg = add_enabled ? btn_fg_on : btn_fg_off;
             wxFont f = p->GetFont();
-            f.SetPointSize(10); // 14px at default MSW DPI
+            f.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
             f.SetWeight(wxFONTWEIGHT_MEDIUM);
             dc.SetFont(f);
             const wxString text = _L("Add Filament");
@@ -741,9 +828,7 @@ public:
             if (m_can_add_filament && !m_can_add_filament())
                 return;
             auto on_add_request = m_on_add_filament_request;
-            // Close the transient popup before the modal panel opens; only the
-            // copied local is used after Dismiss() destroys us.
-            Dismiss();
+            close_popup(true);
             if (on_add_request) on_add_request();
         });
 
@@ -764,7 +849,7 @@ public:
             header_block += content_items[1]->GetMinSize().y; // divider line
         const int row_step = row_h + FromDIP(12);             // row + its bottom border
         int list_h = header_block
-            + std::min<int>((int)m_colors_rgba.size(), max_visible_rows) * row_step;
+            + std::min(visible_count, max_visible_rows) * row_step;
 
         // Size the card at its DESIGN size first - never pre-shrunk by the
         // surrounding screen space (2026-11 feedback).
@@ -786,7 +871,7 @@ public:
         int height_cap = natural_h;
         if (m_dialog_anchor) {
             wxRect work;
-            const int display_idx = wxDisplay::GetFromWindow(m_dialog_anchor);
+            const int display_idx = wxDisplay::GetFromWindow(m_dialog_anchor.get());
             work = display_idx != wxNOT_FOUND ? wxDisplay(display_idx).GetClientArea()
                                               : wxDisplay().GetClientArea();
             const int anchor_top    = m_dialog_anchor->ClientToScreen(wxPoint(0, 0)).y;
@@ -816,14 +901,41 @@ public:
     // Open direction, decided during construction: true = above the anchor.
     bool place_above() const { return m_place_above; }
 
+    // Explicit Dismiss() need not invoke OnDismiss() on every wx port.
+    void close_popup(bool from_action = false)
+    {
+        if (m_destroy_scheduled)
+            return;
+        m_closing_from_action = from_action;
+        wxWeakRef<FilamentSelectPopup> self(this);
+        Dismiss();
+        if (self.get())
+            self->finish_close();
+    }
+
 private:
     void OnDismiss() override
     {
+        wxPopupTransientWindow::OnDismiss();
+        finish_close();
+    }
+
+    void finish_close()
+    {
+        if (m_destroy_scheduled)
+            return;
         restore_cursor_state();
         if (m_on_close) m_on_close(m_closing_from_action);
         m_closing_from_action = false;
-        wxPopupTransientWindow::OnDismiss();
         schedule_destroy();
+    }
+
+    void choose_filament(int idx)
+    {
+        // Copy before dismissing: the popup owns the original callback.
+        auto on_select = m_on_select;
+        close_popup(true);
+        if (on_select) on_select(idx);
     }
 
     void restore_cursor_state()
@@ -831,8 +943,8 @@ private:
         SetCursor(wxNullCursor);
         if (m_content)
             m_content->SetCursor(wxNullCursor);
-        if (m_dialog_anchor)
-            m_dialog_anchor->SetCursor(wxCursor(wxCURSOR_HAND));
+        if (auto* anchor = m_dialog_anchor.get(); anchor && !anchor->IsBeingDeleted())
+            anchor->SetCursor(wxCursor(wxCURSOR_HAND));
         wxSetCursor(wxNullCursor);
     }
 
@@ -877,11 +989,13 @@ private:
             auto* p = static_cast<wxPanel*>(e.GetEventObject());
             wxAutoBufferedPaintDC dc(p);
             wxSize sz = p->GetClientSize();
+            // Clear the full buffer, including the inset border and rounded corners.
+            dc.SetBackground(wxBrush(p->GetParent()->GetBackgroundColour()));
+            dc.Clear();
 
             bool hovered = (m_hover_idx == (int)idx);
             dc.SetBrush(wxBrush(hovered ? hover_bg : row_bg));
-            dc.SetPen(wxPen(chip_bd, 1));
-            dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, p->FromDIP(4));
+            texture_draw_edge_border(dc, sz, chip_bd, p->FromDIP(4));
 
             int sq_y = (sz.y - sq) / 2;
             wxColour paint_clr = fil_clr;
@@ -891,12 +1005,13 @@ private:
                                      (unsigned char)(m_colors_rgba[idx][2] * 255.f));
             }
             dc.SetBrush(wxBrush(paint_clr));
+            dc.SetPen(*wxTRANSPARENT_PEN);
             dc.DrawRoundedRectangle(sq_x, sq_y, sq, sq, sq_r);
             draw_filament_swatch_border(dc, paint_clr, sq_x, sq_y, sq, sq, sq_r);
 
             {
                 wxFont nf = p->GetFont();
-                nf.SetPointSize(9);
+                nf.SetPointSize(texture_font_pt(9));
                 dc.SetFont(nf);
                 dc.SetTextForeground(paint_clr.GetLuminance() < 0.6 ? *wxWHITE : texture_import_gray9000());
                 wxString ns = wxString::Format("%d", display_number((int)idx));
@@ -907,7 +1022,7 @@ private:
             // Material name
             {
                 wxFont mf = p->GetFont();
-                mf.SetPointSize(10);
+                mf.SetPointSize(texture_font_pt(10));
                 dc.SetFont(mf);
                 dc.SetTextForeground(name_fg);
                 int tx = sq_x + sq + gap1;
@@ -934,9 +1049,7 @@ private:
         });
 
         row->Bind(wxEVT_LEFT_DOWN, [this, idx](wxMouseEvent&) {
-            if (m_on_select) m_on_select((int)idx);
-            m_closing_from_action = true;
-            Dismiss();
+            choose_filament(static_cast<int>(idx));
         });
 
         return row;
@@ -960,13 +1073,15 @@ private:
             auto* p = static_cast<wxPanel*>(e.GetEventObject());
             wxAutoBufferedPaintDC dc(p);
             wxSize sz = p->GetClientSize();
+            // Clear the full buffer, including the inset border and rounded corners.
+            dc.SetBackground(wxBrush(p->GetParent()->GetBackgroundColour()));
+            dc.Clear();
             const bool hovered = (m_hover_idx == idx);
             dc.SetBrush(wxBrush(hovered ? hover_bg : row_bg));
-            dc.SetPen(wxPen(chip_bd, 1));
-            dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, p->FromDIP(4));
+            texture_draw_edge_border(dc, sz, chip_bd, p->FromDIP(4));
 
             wxFont font = p->GetFont();
-            font.SetPointSize(9);
+            font.SetPointSize(texture_font_pt(9));
             dc.SetFont(font);
             int x = p->FromDIP(2);
             const int sw = p->FromDIP(22);
@@ -1026,9 +1141,7 @@ private:
             evt.Skip();
         });
         row->Bind(wxEVT_LEFT_DOWN, [this, idx](wxMouseEvent&) {
-            if (m_on_select) m_on_select(idx);
-            m_closing_from_action = true;
-            Dismiss();
+            choose_filament(idx);
         });
 
         return row;
@@ -1038,7 +1151,7 @@ private:
     std::vector<TextureFilamentEntry>          m_entries;
     std::vector<std::array<float, 4>>          m_colors_rgba;
     std::vector<std::string>                   m_names;
-    wxWindow*                                  m_dialog_anchor = nullptr;
+    wxWeakRef<wxWindow>                       m_dialog_anchor;
     std::function<void(int)>                   m_on_select;
     std::function<void()>                      m_on_add_filament_request;
     std::function<void()>                      m_on_decompose_color;
@@ -2009,6 +2122,7 @@ unsigned int TexturePreviewCanvas::upload_badge_texture(const wxString& text)
         return 0;
 
     wxFont font = GetFont();
+    font.SetPointSize(texture_font_pt(9));
     wxClientDC measure_dc(this);
     measure_dc.SetFont(font);
     const wxSize tsz = measure_dc.GetTextExtent(text);
@@ -2589,7 +2703,7 @@ private:
         auto* select_lbl = new wxStaticText(this, wxID_ANY, _L("Select Filament"));
         {
             wxFont sf = select_lbl->GetFont();
-            sf.SetPointSize(10); // 14px at default MSW DPI
+            sf.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
             sf.SetWeight(wxFONTWEIGHT_MEDIUM);
             select_lbl->SetFont(sf);
         }
@@ -2612,11 +2726,10 @@ private:
             dc.SetBackground(wxBrush(p->GetBackgroundColour()));
             dc.Clear();
             dc.SetBrush(wxBrush(p->GetBackgroundColour()));
-            dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#DBDBDB")), 1));
-            dc.DrawRectangle(0, 0, sz.x, sz.y);
+            texture_draw_edge_border(dc, sz, StateColor::darkModeColorFor(wxColour("#DBDBDB")));
 
             wxFont f = p->GetFont();
-            f.SetPointSize(10); // 14px at default MSW DPI
+            f.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
             f.SetWeight(wxFONTWEIGHT_MEDIUM);
             dc.SetFont(f);
             dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#18181B")));
@@ -2626,11 +2739,9 @@ private:
             const wxSize tsz = dc.GetTextExtent(shown);
             dc.DrawText(shown, p->FromDIP(8), (sz.y - tsz.y) / 2);
 
-            const int cx = sz.x - p->FromDIP(14);
-            const int cy = sz.y / 2;
-            dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#949494")), 1));
-            dc.DrawLine(cx - p->FromDIP(4), cy - p->FromDIP(2), cx, cy + p->FromDIP(2));
-            dc.DrawLine(cx, cy + p->FromDIP(2), cx + p->FromDIP(4), cy - p->FromDIP(2));
+            texture_draw_glyph(dc, p, sz.x - p->FromDIP(22),
+                (sz.y - p->FromDIP(16)) / 2.0,
+                StateColor::darkModeColorFor(wxColour("#949494")));
         });
         m_family_trigger->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) {
             if (m_family_popup) {
@@ -2673,12 +2784,13 @@ private:
         auto* info_sizer = new wxBoxSizer(wxVERTICAL);
         m_name_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
         wxFont name_font = m_name_label->GetFont().Bold();
+        name_font.SetPointSize(texture_font_pt(10));
         m_name_label->SetFont(name_font);
         m_name_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#242424")));
         m_sku_label = new wxStaticText(this, wxID_ANY, wxEmptyString);
         {
             wxFont sf = m_sku_label->GetFont();
-            sf.SetPointSize(10); // 14px at default MSW DPI
+            sf.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
             sf.SetWeight(wxFONTWEIGHT_MEDIUM);
             m_sku_label->SetFont(sf);
         }
@@ -2697,7 +2809,7 @@ private:
         // ---- "Official Filaments" section ----
         m_official_label = new wxStaticText(this, wxID_ANY, _L("Official Filaments"));
         wxFont of = m_official_label->GetFont();
-        of.SetPointSize(10);
+        of.SetPointSize(texture_font_pt(10));
         of.SetWeight(wxFONTWEIGHT_MEDIUM);
         m_official_label->SetFont(of);
         m_official_label->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#18181B")));
@@ -2732,7 +2844,7 @@ private:
             dc.SetBackground(wxBrush(StateColor::darkModeColorFor(wxColour("#EBEBEB"))));
             dc.Clear();
             wxFont f = p->GetFont();
-            f.SetPointSize(10); // 14px at default MSW DPI
+            f.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
             f.SetWeight(wxFONTWEIGHT_MEDIUM);
             dc.SetFont(f);
             dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#18181B")));
@@ -2870,7 +2982,7 @@ private:
                 dc.DrawRectangle(0, 0, sz.x, sz.y);
 
                 wxFont f = p->GetFont();
-                f.SetPointSize(10); // 14px at default MSW DPI
+                f.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
                 f.SetWeight(wxFONTWEIGHT_MEDIUM);
                 dc.SetFont(f);
                 const bool selected = (m_current_family == i);
@@ -2879,11 +2991,9 @@ private:
                 const wxSize tsz = dc.GetTextExtent(label);
                 dc.DrawText(label, p->FromDIP(8), (sz.y - tsz.y) / 2);
                 if (selected) {
-                    dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#009688")), std::max(1, p->FromDIP(2))));
-                    const int cx = sz.x - p->FromDIP(14);
-                    const int cy = sz.y / 2;
-                    dc.DrawLine(cx - p->FromDIP(5), cy, cx - p->FromDIP(1), cy + p->FromDIP(4));
-                    dc.DrawLine(cx - p->FromDIP(1), cy + p->FromDIP(4), cx + p->FromDIP(5), cy - p->FromDIP(4));
+                    texture_draw_glyph(dc, p, sz.x - p->FromDIP(20),
+                        (sz.y - p->FromDIP(12)) / 2.0,
+                        StateColor::darkModeColorFor(wxColour("#009688")), true);
                 }
             });
             row->Bind(wxEVT_MOTION, [this, i, scroll](wxMouseEvent& evt) {
@@ -3819,7 +3929,7 @@ void TextureImportDialog::build_step_indicator(wxSizer* root_sizer)
         const int line_len = FromDIP(20);
 
         wxFont label_font = m_step_indicator->GetFont();
-        label_font.SetPointSize(10); // 14px at default MSW DPI
+        label_font.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
         label_font.SetWeight(wxFONTWEIGHT_MEDIUM);
         wxFont num_font = label_font;
 
@@ -3932,7 +4042,7 @@ void TextureImportDialog::build_preview_panel(wxWindow* parent, wxSizer* sizer)
                                        wxDefaultPosition, wxSize(FromDIP(348), -1),
                                        wxALIGN_CENTRE_HORIZONTAL | wxST_NO_AUTORESIZE);
         wxFont f = count_label->GetFont();
-        f.SetPointSize(9); // 12px at default MSW DPI
+        f.SetPointSize(texture_font_pt(9)); // 12px at default MSW DPI
         count_label->SetFont(f);
         count_label->SetForegroundColour(secondary_fg);
         row->Add(count_label, 0, wxALIGN_CENTER_HORIZONTAL | wxTOP, FromDIP(8));
@@ -3973,7 +4083,7 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
     auto add_param_label = [&](wxWindow* parent_win, const wxString& text) {
         auto* lbl = new wxStaticText(parent_win, wxID_ANY, text);
         wxFont f = lbl->GetFont();
-        f.SetPointSize(10); // 14px at default MSW DPI
+        f.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
         f.SetWeight(wxFONTWEIGHT_MEDIUM);
         lbl->SetFont(f);
         lbl->SetForegroundColour(label_fg);
@@ -4128,7 +4238,7 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
             _L("Tip: parameters changed, click \"Apply\" on the right to take effect"));
         {
             wxFont hf = m_hint_label->GetFont();
-            hf.SetPointSize(9); // 12px at default MSW DPI
+            hf.SetPointSize(texture_font_pt(9)); // 12px at default MSW DPI
             hf.SetWeight(wxFONTWEIGHT_MEDIUM);
             m_hint_label->SetFont(hf);
         }
@@ -4142,7 +4252,7 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
         m_gap_warning_label = new wxStaticText(m_params_panel, wxID_ANY, wxEmptyString);
     {
         wxFont gf = m_gap_warning_label->GetFont();
-        gf.SetPointSize(9); // 12px at default MSW DPI
+        gf.SetPointSize(texture_font_pt(9)); // 12px at default MSW DPI
         gf.SetWeight(wxFONTWEIGHT_MEDIUM);
         m_gap_warning_label->SetFont(gf);
     }
@@ -4152,7 +4262,7 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
     m_smooth_warning_label = new wxStaticText(m_params_panel, wxID_ANY, wxEmptyString);
     {
         wxFont sf = m_smooth_warning_label->GetFont();
-        sf.SetPointSize(9); // 12px at default MSW DPI
+        sf.SetPointSize(texture_font_pt(9)); // 12px at default MSW DPI
         sf.SetWeight(wxFONTWEIGHT_MEDIUM);
         m_smooth_warning_label->SetFont(sf);
     }
@@ -4162,7 +4272,7 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
     m_color_warning_label = new wxStaticText(m_params_panel, wxID_ANY, wxEmptyString);
         {
             wxFont wf = m_color_warning_label->GetFont();
-            wf.SetPointSize(9); // 12px at default MSW DPI
+            wf.SetPointSize(texture_font_pt(9)); // 12px at default MSW DPI
             wf.SetWeight(wxFONTWEIGHT_MEDIUM);
             m_color_warning_label->SetFont(wf);
         }
@@ -4317,7 +4427,7 @@ void TextureImportDialog::build_mapping_panel(wxWindow* parent, wxSizer* sizer)
 
         auto* lbl_matching = new wxStaticText(m_mapping_panel, wxID_ANY, _L("Filament Matching"));
         wxFont hf = lbl_matching->GetFont();
-        hf.SetPointSize(10); // 14px at default MSW DPI
+        hf.SetPointSize(texture_font_pt(10)); // 14px at default MSW DPI
         hf.SetWeight(wxFONTWEIGHT_MEDIUM);
         lbl_matching->SetFont(hf);
         lbl_matching->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#18181B")));
@@ -4329,7 +4439,11 @@ void TextureImportDialog::build_mapping_panel(wxWindow* parent, wxSizer* sizer)
         // design requires the list to always open DOWNWARD.
         // 2026-11 Figma: 149x30, border #DEDEE0, padding 12/16, gap 8.
         m_mix_mode_trigger = new wxPanel(m_mapping_panel, wxID_ANY, wxDefaultPosition,
-                                         wxSize(FromDIP(149), FromDIP(30)), wxTAB_TRAVERSAL);
+                                         wxDefaultSize, wxTAB_TRAVERSAL);
+        // Width follows the longest label: the Figma 149px box fits the zh-CN
+        // text, but "Direct Filament Mapping" at the design size (and wider
+        // locales) needs more room than 149 - 36 - 12, so a fixed width clips.
+        texture_update_mix_mode_metrics(m_mix_mode_trigger);
         m_mix_mode_trigger->SetBackgroundColour(m_mapping_panel->GetBackgroundColour());
         m_mix_mode_trigger->SetBackgroundStyle(wxBG_STYLE_PAINT);
         m_mix_mode_trigger->SetCursor(wxCursor(wxCURSOR_HAND));
@@ -4341,28 +4455,14 @@ void TextureImportDialog::build_mapping_panel(wxWindow* parent, wxSizer* sizer)
             dc.SetBackground(wxBrush(p->GetBackgroundColour()));
             dc.Clear();
             dc.SetBrush(wxBrush(p->GetBackgroundColour()));
-            dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#DEDEE0")), 1));
-            dc.DrawRectangle(0, 0, sz.x, sz.y);
+            texture_draw_edge_border(dc, sz, StateColor::darkModeColorFor(wxColour("#DEDEE0")));
 
-            // Chevron on the LEFT per Icon (4).svg: M3 6 L7.5 9.6 L12 6 in a
-            // 16px box, #949494 round-cap (dots emulate caps on buffered DC).
-            const int bx = FromDIP(12);
-            const int by = (sz.y - FromDIP(16)) / 2;
-            const wxColour chev_clr = StateColor::darkModeColorFor(wxColour("#949494"));
-            const int x1 = bx + FromDIP(3),      y1 = by + dip_frac(p, 6.0);
-            const int x2 = bx + dip_frac(p, 7.5), y2 = by + dip_frac(p, 9.6);
-            const int x3 = bx + FromDIP(12),      y3 = y1;
-            dc.SetPen(wxPen(chev_clr, 1));
-            dc.DrawLine(x1, y1, x2, y2);
-            dc.DrawLine(x2, y2, x3, y3);
-            dc.SetPen(*wxTRANSPARENT_PEN);
-            dc.SetBrush(wxBrush(chev_clr));
-            dc.DrawCircle(x1, y1, 1);
-            dc.DrawCircle(x2, y2, 1);
-            dc.DrawCircle(x3, y3, 1);
+            const int bx = p->FromDIP(12);
+            texture_draw_glyph(dc, p, bx, (sz.y - p->FromDIP(16)) / 2.0,
+                StateColor::darkModeColorFor(wxColour("#949494")));
 
             wxFont tf = p->GetFont();
-            tf.SetPointSize(9); // 12px at default MSW DPI
+            tf.SetPointSize(texture_font_pt(kMixModeFontPt));
             tf.SetWeight(wxFONTWEIGHT_MEDIUM);
             dc.SetFont(tf);
             dc.SetTextForeground(StateColor::darkModeColorFor(wxColour("#18181B")));
@@ -4370,7 +4470,7 @@ void TextureImportDialog::build_mapping_panel(wxWindow* parent, wxSizer* sizer)
                                                          : _L("Direct Filament Mapping");
             const wxSize tsz = dc.GetTextExtent(label);
             // Label right of the chevron box + 8px gap (2026-11 layout).
-            dc.DrawText(label, bx + FromDIP(16) + FromDIP(8), (sz.y - tsz.y) / 2);
+            dc.DrawText(label, bx + p->FromDIP(16) + p->FromDIP(8), (sz.y - tsz.y) / 2);
         });
         m_mix_mode_trigger->Bind(wxEVT_LEFT_DOWN, [this](wxMouseEvent&) {
             if (m_mix_mode_popup) {
@@ -4388,7 +4488,7 @@ void TextureImportDialog::build_mapping_panel(wxWindow* parent, wxSizer* sizer)
         auto* wiki_link = new wxStaticText(m_mapping_panel, wxID_ANY, _L("What is CMYW mixing?"));
         {
             wxFont lf = wiki_link->GetFont();
-            lf.SetPointSize(9); // 12px at default MSW DPI
+            lf.SetPointSize(texture_font_pt(9)); // 12px at default MSW DPI
             wiki_link->SetFont(lf);
         }
         wiki_link->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#00A48E")));
@@ -5524,17 +5624,18 @@ void TextureImportDialog::dismiss_filament_popup()
     FilamentSelectPopup* popup = m_filament_popup;
     m_filament_popup = nullptr;
     m_filament_popup_row = -1;
-    if (popup->IsShown())
-        popup->Dismiss();
-    else
-        popup->Destroy();
+    popup->close_popup();
 }
 
 void TextureImportDialog::select_mix_mode(int index)
 {
     if (index != 0 && index != 1)
         return;
-    m_mix_mode_index = index;
+    // Selecting the active mode must not overwrite the direct-mapping snapshot.
+    if (index == m_mix_mode_index &&
+        (index == 1 ? (m_auto_mix_snapshot.has_value() || m_auto_mix_pending)
+                    : (!m_auto_mix_snapshot && !m_auto_mix_pending)))
+        return;
     set_mix_mode_ui(index);
     // The dismissing popup tears itself down via CallAfter; refresh the
     // trigger again after that lands so its surface is never left stale.
@@ -5604,8 +5705,7 @@ void TextureImportDialog::show_mix_mode_popup()
         dc.SetBackground(wxBrush(pop_bg));
         dc.Clear();
         dc.SetBrush(wxBrush(pop_bg));
-        dc.SetPen(wxPen(StateColor::darkModeColorFor(wxColour("#DBDBDB")), 1));
-        dc.DrawRoundedRectangle(0, 0, sz.x, sz.y, FromDIP(8));
+        texture_draw_edge_border(dc, sz, StateColor::darkModeColorFor(wxColour("#DBDBDB")), FromDIP(8));
     });
 
     const int item_w = m_mix_mode_trigger->GetSize().x;
@@ -5637,31 +5737,14 @@ void TextureImportDialog::show_mix_mode_popup()
             dc.DrawRectangle(0, 0, sz.x, sz.y);
 
             const bool selected = (m_mix_mode_index == i);
-            int text_x = p->FromDIP(12);
+            const int text_x = p->FromDIP(36);
             if (selected) {
-                // Check per Frame 2147224522.svg: 12x12, M2.3 5.7 L4.7 8.3
-                // L9.7 3.9, 1.5px round-cap stroke #7B8282 (dots emulate the
-                // round caps on a buffered DC).
-                const int bx = p->FromDIP(8);
-                const int by = (sz.y - p->FromDIP(12)) / 2;
-                const int x1 = bx + p->FromDIP(23) / 10,  y1 = by + p->FromDIP(57) / 10;
-                const int x2 = bx + p->FromDIP(47) / 10,  y2 = by + p->FromDIP(83) / 10;
-                const int x3 = bx + p->FromDIP(97) / 10,  y3 = by + p->FromDIP(39) / 10;
-                const wxColour check_clr = StateColor::darkModeColorFor(wxColour("#7B8282"));
-                const int pw = std::max(1, p->FromDIP(15) / 10);
-                dc.SetPen(wxPen(check_clr, pw));
-                dc.DrawLine(x1, y1, x2, y2);
-                dc.DrawLine(x2, y2, x3, y3);
-                dc.SetPen(*wxTRANSPARENT_PEN);
-                dc.SetBrush(wxBrush(check_clr));
-                dc.DrawCircle(x1, y1, std::max(1, pw / 2));
-                dc.DrawCircle(x2, y2, std::max(1, pw / 2));
-                dc.DrawCircle(x3, y3, std::max(1, pw / 2));
-                text_x = bx + p->FromDIP(12) + p->FromDIP(10);
+                texture_draw_glyph(dc, p, p->FromDIP(12),
+                    (sz.y - p->FromDIP(12)) / 2.0,
+                    StateColor::darkModeColorFor(wxColour("#7B8282")), true);
             }
-
             wxFont f = p->GetFont();
-            f.SetPointSize(10); // 14px at default MSW DPI
+            f.SetPointSize(texture_font_pt(kMixModeFontPt));
             f.SetWeight(wxFONTWEIGHT_MEDIUM);
             dc.SetFont(f);
             dc.SetTextForeground(StateColor::darkModeColorFor(disabled ? wxColour("#949494") : wxColour("#18181B")));
@@ -5733,6 +5816,9 @@ static bool texture_import_nozzle_08()
 void TextureImportDialog::apply_auto_standard_mix(TextureAutoMixMode mode)
 {
     if (mode != TextureAutoMixMode::CMYW)
+        return;
+    // Keep the first pre-mix snapshot until the user leaves CMYW.
+    if (m_auto_mix_snapshot)
         return;
     if (m_state != TextureImportState::Ready || m_current_matches.empty() || m_mapping_rows.empty())
         return;
@@ -6067,6 +6153,7 @@ void TextureImportDialog::reset_auto_mix()
     }
     m_auto_mix_snapshot.reset();
     m_auto_mix_pending = false;
+    set_mix_mode_ui(0);
 
     rebuild_mapping_rows();
     update_filament_color_map();
@@ -6328,19 +6415,32 @@ void TextureImportDialog::show_filament_popup(size_t row_index)
             ? display_numbers[idx] : idx + 1;
     };
 
-    auto on_select = [this, row_index](int idx) {
-        if (row_index >= m_mapping_rows.size()) return;
-        m_mapping_rows[row_index].target_filament_idx = idx;
-        if (row_index < m_current_matches.size())
-            m_current_matches[row_index].filament_index = idx;
-        // Rebuild the rows so the out-of-range ratio warning under this row
-        // refreshes together with the new target.
-        rebuild_mapping_rows();
-        update_filament_color_map();
+    wxPanel* tp = m_mapping_rows[row_index].target_panel;
+    if (!tp) return;
+    const wxWeakRef<wxWindow> anchor(tp);
+
+    auto on_select = [this, row_index, anchor](int idx) {
+        // Run on the dialog after the popup mouse handler has unwound.
+        CallAfter([this, row_index, anchor, idx]() {
+            if (IsBeingDeleted() || !anchor.get() || anchor->IsBeingDeleted() ||
+                row_index >= m_mapping_rows.size() ||
+                m_mapping_rows[row_index].target_panel != anchor.get() ||
+                row_index >= m_current_matches.size() ||
+                idx < 0 || static_cast<size_t>(idx) >= m_filament_entries.size() ||
+                static_cast<size_t>(idx) >= m_filament_colors_rgba.size())
+                return;
+            assign_filament_to_row(row_index, idx);
+        });
     };
 
-    auto on_add_filament_request = [this, row_index]() {
-        request_add_filament(row_index);
+    auto on_add_filament_request = [this, row_index, anchor]() {
+        CallAfter([this, row_index, anchor]() {
+            if (IsBeingDeleted() || !anchor.get() || anchor->IsBeingDeleted() ||
+                row_index >= m_mapping_rows.size() ||
+                m_mapping_rows[row_index].target_panel != anchor.get())
+                return;
+            request_add_filament(row_index);
+        });
     };
 
     auto on_decompose_color = [this, row_index]() {
@@ -6348,9 +6448,6 @@ void TextureImportDialog::show_filament_popup(size_t row_index)
             add_decomposed_mixed_filament(row_index);
         });
     };
-
-    wxPanel* tp = m_mapping_rows[row_index].target_panel;
-    if (!tp) return;
 
     auto on_close = [this, row_index](bool closed_by_action) {
         if (m_filament_popup_row == (int)row_index) {
@@ -6372,6 +6469,7 @@ void TextureImportDialog::show_filament_popup(size_t row_index)
         on_decompose_color,
         [this]() { return can_add_virtual_filament(); },
         on_close,
+        m_mix_mode_index == 1,
         display_numbers);
 
     // Anchor under the target CHIP (x = swatch 20 + 8 gap), not under the
@@ -6798,20 +6896,132 @@ static constexpr int kTextureAutoMixMinComponentPercent = 15;
 static constexpr int kTextureAutoMixMaxPairComponentPercent = 85;
 static constexpr int kTextureAutoMixMaxMultiComponentPercent = 70;
 
-static bool mixed_ratios_out_of_recommended_range(const TextureFilamentEntry& entry)
+// Return the specific component warnings using the same 1-based display
+// numbers as the mapping chips. Keep the existing inclusive bounds.
+static std::vector<wxString> mixed_ratio_warnings(const TextureFilamentEntry& entry,
+                                                const std::vector<int>& numbers)
 {
-    if (entry.mixed_components.size() < 2 || entry.mixed_components.size() != entry.mixed_ratios.size())
-        return false;
+    std::vector<wxString> warnings;
+    if (!texture_entry_is_mixed(entry.kind) || entry.mixed_components.size() < 2 ||
+        entry.mixed_components.size() != entry.mixed_ratios.size())
+        return warnings;
     const int max_pct = entry.mixed_ratios.size() >= 3 ? kTextureAutoMixMaxMultiComponentPercent
                                                        : kTextureAutoMixMaxPairComponentPercent;
-    for (const int ratio : entry.mixed_ratios)
-        if (ratio < kTextureAutoMixMinComponentPercent || ratio > max_pct)
-            return true;
-    return false;
+    for (size_t i = 0; i < entry.mixed_ratios.size(); ++i) {
+        const unsigned int id = entry.mixed_components[i];
+        if (id == 0 || id > numbers.size() || numbers[id - 1] <= 0)
+            continue;
+        const int number = numbers[id - 1];
+        const int ratio = entry.mixed_ratios[i];
+        if (ratio < kTextureAutoMixMinComponentPercent)
+            warnings.push_back(wxString::Format(_L("Filament %d mix ratio is too low and may affect the mixing result."), number));
+        else if (ratio > max_pct)
+            warnings.push_back(wxString::Format(_L("Filament %d mix ratio is too high and may affect the mixing result."), number));
+    }
+    return warnings;
+}
+
+// Inline warning band aligned with the target chip. The label wraps instead
+// of widening the mapping list when the locale or DPI needs more space.
+static wxPanel* texture_make_ratio_warning(wxWindow* parent, const wxString& message, int width)
+{
+    auto* band = new wxPanel(parent, wxID_ANY);
+    const wxColour bg = StateColor::darkModeColorFor(wxColour("#FFF4E8"));
+    const wxColour fg = StateColor::darkModeColorFor(wxColour("#FF8400"));
+    band->SetBackgroundColour(bg);
+    auto* line = new wxBoxSizer(wxHORIZONTAL);
+    const int icon_size = band->FromDIP(14);
+    const int pad = band->FromDIP(4);
+    auto* icon = new wxPanel(band, wxID_ANY, wxDefaultPosition, wxSize(icon_size, icon_size));
+    icon->SetMinSize(wxSize(icon_size, icon_size));
+    icon->SetBackgroundColour(bg);
+    icon->SetBackgroundStyle(wxBG_STYLE_PAINT);
+    icon->Bind(wxEVT_PAINT, [bg, fg](wxPaintEvent& e) {
+        auto* p = static_cast<wxPanel*>(e.GetEventObject());
+        wxAutoBufferedPaintDC dc(p);
+        dc.SetBackground(wxBrush(bg));
+        dc.Clear();
+        const wxSize sz = p->GetClientSize();
+        // Figma warning SVG: 14x14 viewBox, 6.25 radius, 1.5 stroke.
+        // Keep fractional coordinates through rasterization (including Retina).
+        const double side = std::min(sz.x, sz.y);
+        if (side <= 0.0) return;
+        const double scale = side / 14.0;
+#if wxUSE_GRAPHICS_CONTEXT
+        if (std::unique_ptr<wxGraphicsContext> gc{wxGraphicsContext::Create(dc)}) {
+            gc->SetAntialiasMode(wxANTIALIAS_DEFAULT);
+            gc->Translate((sz.x - side) / 2.0, (sz.y - side) / 2.0);
+            gc->Scale(scale, scale);
+            gc->SetPen(gc->CreatePen(wxGraphicsPenInfo(fg).Width(1.5)));
+            gc->SetBrush(*wxTRANSPARENT_BRUSH);
+            gc->DrawEllipse(0.75, 0.75, 12.5, 12.5);
+            auto mark = gc->CreatePath();
+            mark.MoveToPoint(6.48884, 8.35);
+            mark.AddCurveToPoint(6.51085, 8.47633, 6.57425, 8.59053, 6.66802, 8.67275);
+            mark.AddCurveToPoint(6.76178, 8.75497, 6.87998, 8.8, 7.00203, 8.8);
+            mark.AddCurveToPoint(7.12409, 8.8, 7.24228, 8.75497, 7.33604, 8.67275);
+            mark.AddCurveToPoint(7.42981, 8.59053, 7.49321, 8.47633, 7.51522, 8.35);
+            mark.AddLineToPoint(7.85735, 3.4);
+            mark.AddCurveToPoint(7.85687, 3.16146, 7.7666, 2.93283, 7.6063, 2.76416);
+            mark.AddCurveToPoint(7.446, 2.59548, 7.22873, 2.5005, 7.00203, 2.5);
+            mark.AddCurveToPoint(6.88322, 2.50308, 6.76623, 2.53148, 6.65815, 2.58348);
+            mark.AddCurveToPoint(6.55006, 2.63548, 6.45311, 2.71, 6.37317, 2.80253);
+            mark.AddCurveToPoint(6.29322, 2.89507, 6.23194, 3.0037, 6.19302, 3.12186);
+            mark.AddCurveToPoint(6.15409, 3.24002, 6.13834, 3.36525, 6.14672, 3.49);
+            mark.AddLineToPoint(6.48884, 8.35);
+            mark.CloseSubpath();
+            mark.MoveToPoint(7.00203, 9.7);
+            mark.AddCurveToPoint(6.83287, 9.7, 6.6675, 9.75278, 6.52684, 9.85168);
+            mark.AddCurveToPoint(6.38619, 9.95057, 6.27656, 10.0911, 6.21182, 10.2556);
+            mark.AddCurveToPoint(6.14709, 10.42, 6.13015, 10.601, 6.16315, 10.7756);
+            mark.AddCurveToPoint(6.19615, 10.9502, 6.27761, 11.1105, 6.39723, 11.2364);
+            mark.AddCurveToPoint(6.51685, 11.3623, 6.66925, 11.448, 6.83517, 11.4827);
+            mark.AddCurveToPoint(7.00108, 11.5174, 7.17306, 11.4996, 7.32935, 11.4315);
+            mark.AddCurveToPoint(7.48563, 11.3634, 7.61922, 11.248, 7.7132, 11.1);
+            mark.AddCurveToPoint(7.80718, 10.952, 7.85735, 10.778, 7.85735, 10.6);
+            mark.AddCurveToPoint(7.86424, 10.4799, 7.84684, 10.3597, 7.8063, 10.2472);
+            mark.AddCurveToPoint(7.76575, 10.1347, 7.70299, 10.0326, 7.62215, 9.94749);
+            mark.AddCurveToPoint(7.5413, 9.86242, 7.44423, 9.79638, 7.33733, 9.75371);
+            mark.AddCurveToPoint(7.23043, 9.71105, 7.11615, 9.69274, 7.00203, 9.7);
+            mark.CloseSubpath();
+            gc->SetPen(*wxTRANSPARENT_PEN);
+            gc->SetBrush(wxBrush(fg));
+            gc->FillPath(mark, wxWINDING_RULE);
+            return;
+        }
+#endif
+        // Integer fallback when the graphics backend is unavailable.
+        const int cx = sz.x / 2, cy = sz.y / 2;
+        const int r = std::max(1, static_cast<int>(std::floor(6.25 * scale)));
+        wxPen pen(fg, std::max(1, static_cast<int>(std::lround(1.5 * scale))));
+        pen.SetCap(wxCAP_ROUND);
+        dc.SetPen(pen);
+        dc.SetBrush(*wxTRANSPARENT_BRUSH);
+        dc.DrawCircle(cx, cy, r);
+        dc.DrawLine(cx, cy - p->FromDIP(4), cx, cy + p->FromDIP(1));
+        dc.SetPen(*wxTRANSPARENT_PEN);
+        dc.SetBrush(wxBrush(fg));
+        dc.DrawCircle(cx, cy + p->FromDIP(4), std::max(1, p->FromDIP(1)));
+    });
+    auto* label = new wxStaticText(band, wxID_ANY, message);
+    wxFont font = label->GetFont();
+    font.SetPointSize(texture_font_pt(9));
+    label->SetFont(font);
+    label->SetForegroundColour(fg);
+    label->SetBackgroundColour(bg);
+    label->Wrap(std::max(1, width - icon_size - 3 * pad));
+    line->Add(icon, 0, wxALIGN_TOP | wxLEFT | wxTOP, pad);
+    line->Add(label, 1, wxALIGN_CENTER_VERTICAL | wxALL, pad);
+    band->SetSizer(line);
+    band->SetMinSize(wxSize(width, std::max(band->FromDIP(24), line->GetMinSize().y)));
+    band->SetMaxSize(wxSize(width, -1));
+    return band;
 }
 
 void TextureImportDialog::rebuild_mapping_rows()
 {
+    // Reset, DPI changes and recomputation can also destroy the popup anchor.
+    dismiss_filament_popup();
     m_mapping_scroll->Freeze();
     m_mapping_sizer->Clear(true);
     m_mapping_rows.clear();
@@ -6910,12 +7120,15 @@ void TextureImportDialog::rebuild_mapping_rows()
             // Hex chip: square corners (Figma masks are sharp rects).
             const int chip_x = gap_after_swatch;
             dc.SetBrush(wxBrush(row_bg));
+            // Inset y/height by 1 like texture_draw_edge_border: the chip's
+            // top/bottom stroke would be half-clipped at the row edges on
+            // macOS; chip_x is already interior so only the vertical needs it.
             dc.SetPen(wxPen(chip_bd, 1));
-            dc.DrawRectangle(chip_x, 0, chip_w, sz.y);
+            dc.DrawRectangle(chip_x, 1, chip_w, sz.y - 2);
 
             {
                 wxFont hf = p->GetFont();
-                hf.SetPointSize(10);
+                hf.SetPointSize(texture_font_pt(10));
                 dc.SetFont(hf);
                 dc.SetTextForeground(hex_fg);
                 const wxString hex_str = wxString::Format("#%s", m_mapping_rows[ci].source_hex.substr(1));
@@ -6983,7 +7196,7 @@ void TextureImportDialog::rebuild_mapping_rows()
             dc.DrawRectangle(0, sy, swatch, swatch);
             {
                 wxFont nf = p->GetFont();
-                nf.SetPointSize(10);
+                nf.SetPointSize(texture_font_pt(10));
                 dc.SetFont(nf);
                 dc.SetTextForeground(fil_clr.GetLuminance() < 0.6 ? *wxWHITE : texture_import_gray9000());
                 const wxString ns = wxString::Format("%d", display_number(fil_idx));
@@ -6994,8 +7207,10 @@ void TextureImportDialog::rebuild_mapping_rows()
             // Chip (square corners per Figma SVG)
             const int chip_x = gap_after_swatch;
             dc.SetBrush(wxBrush(row_bg));
+            // Same 1px vertical inset as the hex chip: keeps the top/bottom
+            // stroke inside the row on macOS (see texture_draw_edge_border).
             dc.SetPen(wxPen(chip_bd, 1));
-            dc.DrawRectangle(chip_x, 0, tgt_chip_w, sz.y);
+            dc.DrawRectangle(chip_x, 1, tgt_chip_w, sz.y - 2);
 
             const bool is_mixed = (fil_idx >= 0 && fil_idx < (int)m_filament_entries.size()
                                    && texture_entry_is_mixed(m_filament_entries[fil_idx].kind));
@@ -7009,7 +7224,7 @@ void TextureImportDialog::rebuild_mapping_rows()
                 // separators, plus a "New" tag on freshly added mixes.
                 const TextureFilamentEntry& entry = m_filament_entries[fil_idx];
                 wxFont mf = p->GetFont();
-                mf.SetPointSize(10);
+                mf.SetPointSize(texture_font_pt(10));
                 dc.SetFont(mf);
                 for (size_t mi = 0; mi < entry.mixed_components.size() && mi < entry.mixed_ratios.size(); ++mi) {
                     if (x > x_max) break;
@@ -7069,7 +7284,7 @@ void TextureImportDialog::rebuild_mapping_rows()
             } else {
                 // Physical material: ellipsized name + down chevron
                 wxFont nf2 = p->GetFont();
-                nf2.SetPointSize(10);
+                nf2.SetPointSize(texture_font_pt(10));
                 dc.SetFont(nf2);
                 dc.SetTextForeground(name_fg);
                 wxString name_str = get_filament_label(fil_idx);
@@ -7079,23 +7294,9 @@ void TextureImportDialog::rebuild_mapping_rows()
 
             }
 
-            // Chevron for BOTH branches (physical and mixed — CMYW result rows
-            // carry it too): Figma Icon M3 6 L7.5 9.6 L12 6 in a 16px box,
-            // round caps #949494, right padding 12; dots emulate round caps.
-            const int bx = chip_x + tgt_chip_w - p->FromDIP(28);
-            const int by = (sz.y - p->FromDIP(16)) / 2;
-            const wxColour chev_clr = StateColor::darkModeColorFor(wxColour("#949494"));
-            const int cx1 = bx + p->FromDIP(3),      cy1 = by + dip_frac(p, 6.0);
-            const int cx2 = bx + dip_frac(p, 7.5),   cy2 = by + dip_frac(p, 9.6);
-            const int cx3 = bx + p->FromDIP(12),     cy3 = cy1;
-            dc.SetPen(wxPen(chev_clr, 1));
-            dc.DrawLine(cx1, cy1, cx2, cy2);
-            dc.DrawLine(cx2, cy2, cx3, cy3);
-            dc.SetPen(*wxTRANSPARENT_PEN);
-            dc.SetBrush(wxBrush(chev_clr));
-            dc.DrawCircle(cx1, cy1, 1);
-            dc.DrawCircle(cx2, cy2, 1);
-            dc.DrawCircle(cx3, cy3, 1);
+            texture_draw_glyph(dc, p, chip_x + tgt_chip_w - p->FromDIP(28),
+                (sz.y - p->FromDIP(16)) / 2.0,
+                StateColor::darkModeColorFor(wxColour("#949494")));
         });
 
         row.target_panel->Bind(wxEVT_LEFT_DOWN, [this, ci](wxMouseEvent&) {
@@ -7116,21 +7317,18 @@ void TextureImportDialog::rebuild_mapping_rows()
         // carries the warning right below it instead (same thresholds as the
         // manual batch dialog's ratio guard).
         const bool last_row = (ci + 1 == m_current_matches.size());
-        const bool ratio_warning = row.target_filament_idx >= 0 &&
-                                    row.target_filament_idx < (int)m_filament_entries.size() &&
-                                    mixed_ratios_out_of_recommended_range(m_filament_entries[row.target_filament_idx]);
+        std::vector<wxString> warnings;
+        if (row.target_filament_idx >= 0 && row.target_filament_idx < (int)m_filament_entries.size())
+            warnings = mixed_ratio_warnings(m_filament_entries[row.target_filament_idx], display_numbers);
         m_mapping_sizer->Add(row_panel, 0, wxEXPAND | wxBOTTOM,
-                             ratio_warning ? FromDIP(4) : (last_row ? 0 : FromDIP(20)));
-
-        if (ratio_warning) {
-            auto* warn = new wxStaticText(m_mapping_scroll, wxID_ANY,
-                _L("The mix ratio is outside the recommended range. Adjust the ratios manually for better results."));
-            wxFont wf = warn->GetFont();
-            wf.SetPointSize(9);
-            warn->SetFont(wf);
-            warn->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#FF6F00")));
-            m_mapping_sizer->Add(warn, wxSizerFlags().Border(wxLEFT, src_group_w + FromDIP(12) + gap_after_swatch)
-                                                     .Border(wxBOTTOM, last_row ? 0 : FromDIP(20)));
+                             !warnings.empty() ? FromDIP(4) : (last_row ? 0 : FromDIP(20)));
+        for (size_t wi = 0; wi < warnings.size(); ++wi) {
+            auto* band = texture_make_ratio_warning(m_mapping_scroll, warnings[wi], tgt_chip_w);
+            auto* warning_row = new wxBoxSizer(wxHORIZONTAL);
+            warning_row->AddSpacer(src_group_w + FromDIP(12) + gap_after_swatch);
+            warning_row->Add(band, 0);
+            m_mapping_sizer->Add(warning_row, 0, wxBOTTOM,
+                wi + 1 < warnings.size() ? FromDIP(4) : (last_row ? 0 : FromDIP(20)));
         }
     }
 
@@ -7678,6 +7876,10 @@ void TextureImportDialog::on_apply_clicked(wxCommandEvent&)
     // slider syncs to the merged result.
     const double cap = m_keep_colors ? gap_preview().max_merge_percent : kGapAreaMaxPercent;
     set_gap_value(std::min(m_param_gap_area, cap), true);
+    // A changed palette invalidates the saved pre-mix mapping. Restore it
+    // before remapping so a later mode switch cannot restore stale clusters.
+    if (m_auto_mix_snapshot || m_auto_mix_pending)
+        reset_auto_mix();
     apply_gap_area();
     commit_gap_area_to_painted();
     // Same value as the clustering output when Keep Colors is on (no change).
@@ -7918,6 +8120,7 @@ void TextureImportDialog::on_dpi_changed(const wxRect&)
         }
     }
 
+    texture_update_mix_mode_metrics(m_mix_mode_trigger);
     apply_preview_metrics();
 
     // Badge textures were rasterized at the old scale (fonts + px measure);

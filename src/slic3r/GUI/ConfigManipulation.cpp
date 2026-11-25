@@ -870,6 +870,8 @@ void ConfigManipulation::toggle_print_fff_options(DynamicPrintConfig *config, co
     toggle_line("single_extruder_multi_material_priming", !bSEMM && have_prime_tower && !is_BBL_Printer);
 
     toggle_line("prime_volume",have_prime_tower && (!purge_in_primetower || !bSEMM));
+    // The filament floor it lifts applies only to the Type 2 tower, where the prime volume is in use.
+    toggle_line("prime_tower_ignore_filament_minimal_purge", have_prime_tower && !is_BBL_Printer && (!purge_in_primetower || !bSEMM));
 
     for (auto el : {"flush_into_infill", "flush_into_support", "flush_into_objects"})
         toggle_field(el, have_prime_tower);

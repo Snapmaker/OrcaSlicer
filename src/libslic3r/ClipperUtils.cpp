@@ -447,45 +447,18 @@ static void c2_tree_to_paths(const C2::PolyPath64 &node, C2::Paths64 &out, bool 
         c2_tree_to_paths(*child, out, repeated);
 }
 
-// Whether the point lies on the edge. Both are in doubled coordinates, so the orientation predicate is exact.
-static bool c2_on_edge_doubled(const Point &pt, const Point &a, const Point &b)
-{
-    return int128::orient(a, b, pt) == 0 && pt.x() >= std::min(a.x(), b.x()) && pt.x() <= std::max(a.x(), b.x()) &&
-           pt.y() >= std::min(a.y(), b.y()) && pt.y() <= std::max(a.y(), b.y());
-}
-
-// Where the point is to the contour: 1 inside, 0 on the boundary, -1 outside. The coordinates are doubled, so that the
-// middle of an edge of odd coordinates lands on the grid, and the orientation predicate is exact, whatever their size.
-static int c2_classify_doubled(const Polygon &contour, const Point &pt)
-{
-    int result = 0;
-    for (size_t i = 0, j = contour.size() - 1; i < contour.size(); j = i ++) {
-        const Point a(2 * contour[j].x(), 2 * contour[j].y());
-        const Point b(2 * contour[i].x(), 2 * contour[i].y());
-        if (c2_on_edge_doubled(pt, a, b))
-            return 0;
-        if ((a.y() > pt.y()) != (b.y() > pt.y()))
-            // The sign of (pt - a) x (b - a), as the ray casts it.
-            if ((int128::orient(a, pt, b) > 0) == (b.y() > a.y()))
-                result = 1 - result;
-    }
-    return result ? 1 : -1;
-}
-
 // Whether the loop lies inside the contour. Loops of one result only touch, so the middle of an edge of the loop that is
-// clear of the contour decides for the whole loop. A middle on the boundary decides nothing: the next edge is tried.
+// clear of the contour decides for the whole loop.
 static bool c2_loop_inside(const Polygon &contour, const Polygon &loop)
 {
     for (size_t i = 0; i < loop.size(); ++ i) {
         const Point &a = loop[i];
         const Point &b = loop[(i + 1) % loop.size()];
-        // Doubled, so that the middle of an edge whose ends have odd coordinates is a point of the grid.
-        const Point middle(a.x() + b.x(), a.y() + b.y());
-        switch (c2_classify_doubled(contour, middle)) {
-        case  1: return true;
-        case -1: return false;
-        default: break;
-        }
+        const Point  middle((a.x() + b.x()) / 2, (a.y() + b.y()) / 2);
+        if (contains(contour, middle, false))
+            return true;
+        if (! contains(contour, middle, true))
+            return false;
     }
     // The loop runs along the contour: go by the bounding boxes.
     return contour.bounding_box().contains(loop.bounding_box());
@@ -518,16 +491,12 @@ static ExPolygons c2_loops_to_expolygons(Polygons &&loops)
             }
 
     ExPolygons out;
-    // The orientation of the loops, taken before the points of any of them move to the output below.
-    std::vector<bool> counter_clockwise(loops.size());
-    for (size_t i = 0; i < loops.size(); ++ i)
-        counter_clockwise[i] = loops[i].is_counter_clockwise();
     // The expolygon whose contour is the loop, for the counter-clockwise loops.
     std::vector<size_t> owner(loops.size(), size_t(-1));
     for (const Loop &loop : sorted) {
         const size_t p = parent[loop.idx];
         // A clockwise loop inside a counter-clockwise one is its hole, anything else is an expolygon of its own.
-        if (p != size_t(-1) && ! counter_clockwise[loop.idx] && counter_clockwise[p])
+        if (p != size_t(-1) && ! loops[loop.idx].is_counter_clockwise() && loops[p].is_counter_clockwise())
             out[owner[p]].holes.push_back(std::move(loops[loop.idx]));
         else {
             out.emplace_back().contour = std::move(loops[loop.idx]);

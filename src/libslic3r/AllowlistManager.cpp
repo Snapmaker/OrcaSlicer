@@ -16,13 +16,14 @@ constexpr const char* g_allowlist_file_name = "filament_allow_list.json";
 constexpr const char* g_snapmaker_vendor_name = "Snapmaker";
 constexpr int         g_schema_version = 1;
 
-std::filesystem::path allowlist_path()
+std::filesystem::path user_allowlist_path()
 {
-    std::filesystem::path system_path = std::filesystem::u8path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR /
-                                        g_snapmaker_vendor_name / "filament" / g_allowlist_file_name;
-    if (std::filesystem::exists(system_path))
-        return system_path;
+    return std::filesystem::u8path(Slic3r::data_dir()) / PRESET_SYSTEM_DIR / g_snapmaker_vendor_name / "filament" /
+           g_allowlist_file_name;
+}
 
+std::filesystem::path resource_allowlist_path()
+{
     return std::filesystem::u8path(Slic3r::resources_dir()) / "profiles" / g_snapmaker_vendor_name / "filament" /
            g_allowlist_file_name;
 }
@@ -70,7 +71,9 @@ void AllowlistManager::init()
     if (m_state != State::Uninitialized)
         return;
 
-    const std::filesystem::path path = allowlist_path();
+    const std::filesystem::path user_path     = user_allowlist_path();
+    const std::filesystem::path resource_path = resource_allowlist_path();
+    const std::filesystem::path path          = std::filesystem::exists(user_path) ? user_path : resource_path;
     Sections                   sections;
     std::string                error;
 
@@ -162,6 +165,60 @@ void AllowlistManager::init()
         m_state = State::Failed;
         BOOST_LOG_TRIVIAL(error) << "AllowlistManager failed to load " << path.u8string() << ": " << error;
         return;
+    }
+
+    if (path == user_path)
+    {
+        // A deployed user copy can predate newly added sections/keys. Keep its
+        // existing values authoritative, but inherit missing entries from the
+        // bundled allow-list.
+        auto merge_missing_entries = [&](const std::filesystem::path& fallback_path) {
+            std::ifstream stream(fallback_path);
+            if (!stream)
+                return;
+
+            nlohmann::json root = nlohmann::json::parse(stream, nullptr, false);
+            if (root.is_discarded() || !root.is_object())
+                return;
+
+            auto sections_node = root.find("sections");
+            if (sections_node == root.end() || !sections_node->is_object())
+                return;
+
+            auto read_list = [](const nlohmann::json& value) {
+                StringList values;
+                for (const auto& item : value) {
+                    if (item.is_string())
+                        values.emplace_back(item.get_ref<const std::string&>());
+                }
+                return values;
+            };
+
+            for (const auto& section_item : sections_node->items())
+            {
+                if (!section_item.value().is_object())
+                    continue;
+
+                auto section_it = m_sections.find(section_item.key());
+                if (section_it == m_sections.end()) {
+                    Section lists;
+                    for (const auto& list_item : section_item.value().items()) {
+                        if (list_item.value().is_array())
+                            lists.emplace(list_item.key(), read_list(list_item.value()));
+                    }
+                    m_sections.emplace(section_item.key(), std::move(lists));
+                    continue;
+                }
+
+                for (const auto& list_item : section_item.value().items())
+                {
+                    if (!list_item.value().is_array() || section_it->second.find(list_item.key()) != section_it->second.end())
+                        continue;
+                    section_it->second.emplace(list_item.key(), read_list(list_item.value()));
+                }
+            }
+        };
+        merge_missing_entries(resource_path);
     }
 
     BOOST_LOG_TRIVIAL(info) << "AllowlistManager loaded: " << path.u8string();

@@ -20,6 +20,7 @@
 #include "libslic3r/LocalesUtils.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Print.hpp"
+#include "libslic3r/SupportFilamentRules.hpp"
 #include "libslic3r/FilamentColorLibrary.hpp" // GetFilamentMatchName (family preset scan)
 
 namespace Slic3r { namespace GUI {
@@ -1232,9 +1233,18 @@ static bool is_category_compatible(FilamentCategory a, FilamentCategory b)
 struct ResolvedFilamentCategory {
     unsigned int     filament_id;
     FilamentCategory category;
+    std::string      type;
 };
 
+static bool is_resolved_filament_compatible(const ResolvedFilamentCategory& a, const ResolvedFilamentCategory& b)
+{
+    if (a.category == FilamentCategory::SUPPORT && b.category == FilamentCategory::SUPPORT)
+        return support_filament_types_compatible(a.type, b.type);
+    return is_category_compatible(a.category, b.category);
+}
+
 static FilamentCategory get_filament_category(const std::string& filament_type);
+static std::string      normalize_filament_type(const std::string& type);
 
 // Resolves a set of 0-based filament IDs into their (id, category) pairs.
 // Skips IDs that cannot be resolved (out of range, missing preset, missing type).
@@ -1256,8 +1266,15 @@ static std::vector<ResolvedFilamentCategory> resolve_filament_categories(
         auto* type_opt = dynamic_cast<const ConfigOptionStrings*>(preset->config.option("filament_type"));
         if (!type_opt || type_opt->values.empty()) continue;
 
-        FilamentCategory cat = get_filament_category(type_opt->values[0]);
-        result.push_back({id, cat});
+        const std::string filament_type = normalize_filament_type(type_opt->values[0]);
+        const SupportFilamentKind support_kind = classify_support_filament(preset->config);
+        // A support preset is a support material even when its filament_type is
+        // not in the category map. Keep support/model pairs incompatible, and let
+        // support/support pairs be checked by exact filament type below.
+        FilamentCategory cat = support_kind == SupportFilamentKind::None ?
+            get_filament_category(filament_type) :
+            FilamentCategory::SUPPORT;
+        result.push_back({id, cat, filament_type});
     }
     return result;
 }
@@ -1336,13 +1353,9 @@ bool is_filament_compatible(const std::vector<unsigned int>& filament_ids)
 
     if (resolved.size() <= 1) return true;
 
-    if (std::all_of(resolved.begin() + 1, resolved.end(),
-                    [&](const ResolvedFilamentCategory& r) { return r.category == resolved[0].category; }))
-        return true;
-
     for (size_t i = 0; i < resolved.size(); ++i) {
         for (size_t j = i + 1; j < resolved.size(); ++j) {
-            if (!is_category_compatible(resolved[i].category, resolved[j].category)) {
+            if (!is_resolved_filament_compatible(resolved[i], resolved[j])) {
                 BOOST_LOG_TRIVIAL(info) << "Incompatible filament categories: '"
                                         << k_category_names[static_cast<size_t>(resolved[i].category)]
                                         << "' vs '"
@@ -1443,13 +1456,9 @@ std::optional<std::pair<unsigned int, unsigned int>> find_incompatible_filament_
 
     if (resolved.size() <= 1) return std::nullopt;
 
-    if (std::all_of(resolved.begin() + 1, resolved.end(),
-                    [&](const ResolvedFilamentCategory& r) { return r.category == resolved[0].category; }))
-        return std::nullopt;
-
     for (size_t i = 0; i < resolved.size(); ++i) {
         for (size_t j = i + 1; j < resolved.size(); ++j) {
-            if (!is_category_compatible(resolved[i].category, resolved[j].category))
+            if (!is_resolved_filament_compatible(resolved[i], resolved[j]))
                 return std::make_pair(
                     resolved[i].filament_id + 1,
                     resolved[j].filament_id + 1);

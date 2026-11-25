@@ -549,69 +549,51 @@ void c2_offset_setup(C2::ClipperOffset &co, float delta, JoinType joinType, doub
     }
 }
 
-// Whether the edges share a point: they cross, or an end of one lies on the other, or they are along one line and overlap.
-static bool c2_edges_touch(const C2::Point64 &a0, const C2::Point64 &a1, const C2::Point64 &b0, const C2::Point64 &b1)
+// Whether a vertex of the path lies in the solid of the other paths, counted with the winding numbers the group offset
+// uses. A clockwise contour in a notch of another contour has the bounding box of a hole but lies outside the solid, and
+// offset as a hole it shrinks away. A vertex on the border of another path decides nothing and is skipped.
+static bool c2_path_in_solid(const C2::Paths64 &paths, const std::vector<C2::Rect64> &bounds, const std::vector<double> &areas, size_t idx)
 {
-    const Vec2crd a[2] = { Vec2crd(a0.x, a0.y), Vec2crd(a1.x, a1.y) }, b[2] = { Vec2crd(b0.x, b0.y), Vec2crd(b1.x, b1.y) };
-    const int     ends_of_b[2] = { int128::orient(a[0], a[1], b[0]), int128::orient(a[0], a[1], b[1]) };
-    const int     ends_of_a[2] = { int128::orient(b[0], b[1], a[0]), int128::orient(b[0], b[1], a[1]) };
-    if (ends_of_b[0] * ends_of_b[1] > 0 || ends_of_a[0] * ends_of_a[1] > 0)
-        // The two ends of one edge lie strictly on the same side of the other one.
-        return false;
-    if (ends_of_b[0] != 0 || ends_of_b[1] != 0)
-        return true;
-    // Along one line: they share a point if they overlap.
-    return std::max(a0.x, a1.x) >= std::min(b0.x, b1.x) && std::max(b0.x, b1.x) >= std::min(a0.x, a1.x) &&
-           std::max(a0.y, a1.y) >= std::min(b0.y, b1.y) && std::max(b0.y, b1.y) >= std::min(a0.y, a1.y);
-}
-
-// Whether the boundaries of the two paths share a point: they cross, or they touch or coincide along a stretch.
-static bool c2_paths_touch(const C2::Path64 &a, const C2::Path64 &b)
-{
-    for (size_t i = 0; i < a.size(); ++ i) {
-        const C2::Point64 &a0 = a[i], &a1 = a[(i + 1) % a.size()];
-        const int64_t      a_left = std::min(a0.x, a1.x), a_right = std::max(a0.x, a1.x), a_top = std::min(a0.y, a1.y), a_bottom = std::max(a0.y, a1.y);
-        for (size_t j = 0; j < b.size(); ++ j) {
-            const C2::Point64 &b0 = b[j], &b1 = b[(j + 1) % b.size()];
-            // Only edges with bounding boxes around one another can share a point.
-            if (std::max(b0.x, b1.x) < a_left || std::min(b0.x, b1.x) > a_right || std::max(b0.y, b1.y) < a_top || std::min(b0.y, b1.y) > a_bottom)
+    bool on_border_only = true;
+    for (const C2::Point64 &pt : paths[idx]) {
+        int  winding   = 0;
+        bool on_border = false;
+        for (size_t j = 0; j < paths.size() && ! on_border; ++ j) {
+            if (j == idx || ! bounds[j].Contains(bounds[idx]))
                 continue;
-            if (c2_edges_touch(a0, a1, b0, b1))
-                return true;
+            switch (C2::PointInPolygon(pt, paths[j])) {
+            case C2::PointInPolygonResult::IsOn:     on_border = true; break;
+            case C2::PointInPolygonResult::IsInside: winding += areas[j] > 0. ? 1 : -1; break;
+            default:                                 break;
+            }
         }
+        if (on_border)
+            continue;
+        on_border_only = false;
+        if (winding != 0)
+            return true;
     }
-    return false;
+    // Every vertex lies on the border of another path: take it for a hole, as the bounding boxes alone did.
+    return on_border_only;
 }
 
-// A single group offsets like Clipper1's path by path offset only if every CW path is a hole of a CCW path. Such a path
-// touches no other path, and lies in the solid of the paths around it. A clockwise contour in a notch of another one
-// touches it, so it goes to the path by path offset with the whole batch, where it is offset as a contour of its own.
+// A single group offsets like Clipper1's path by path offset only if every CW path is a hole of a CCW path.
 bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &areas)
 {
     std::vector<C2::Rect64> bounds;
     bounds.reserve(paths.size());
     for (const C2::Path64 &path : paths)
         bounds.emplace_back(C2::GetBounds(path));
-    std::vector<size_t> candidates;
     for (size_t i = 0; i < paths.size(); ++ i) {
         if (areas[i] >= 0.)
             continue;
-        // The paths this one touches or lies in: those with a bounding box around its bounding box.
-        candidates.clear();
+        bool around = false;
         for (size_t j = 0; j < paths.size(); ++ j)
-            if (j != i && bounds[j].Intersects(bounds[i]))
-                candidates.emplace_back(j);
-        for (size_t j : candidates)
-            if (c2_paths_touch(paths[i], paths[j]))
-                return false;
-        // No boundary of another path crosses this path, so all of it lies the same way to them: one vertex tells.
-        const C2::Point64 &pt     = paths[i].front();
-        int                winding = 0;
-        for (size_t j : candidates)
-            if (C2::PointInPolygon(pt, paths[j]) == C2::PointInPolygonResult::IsInside)
-                winding += areas[j] > 0. ? 1 : -1;
-        // Not in the solid of the other paths: offset it on its own.
-        if (winding == 0)
+            if (areas[j] > 0. && bounds[j].left < bounds[i].left && bounds[j].right > bounds[i].right && bounds[j].top < bounds[i].top &&
+                bounds[j].bottom > bounds[i].bottom)
+                around = true;
+        // Not inside the bounding box of a contour, or not in the solid of the other paths: offset it on its own.
+        if (! around || ! c2_path_in_solid(paths, bounds, areas, i))
             return false;
     }
     return true;

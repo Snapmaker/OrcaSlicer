@@ -7216,11 +7216,16 @@ static std::string serialize_gcode_config_option(const DynamicPrintConfig &confi
 
     const auto *volume_types = config.option<ConfigOptionEnumsGeneric>("filament_volume_type");
     const auto *step_sizes   = config.option<ConfigOptionInts>("filament_flow_step_size");
+    const auto *diameters    = config.option<ConfigOptionFloats>("filament_diameter");
+    // filament_volume_type / filament_flow_step_size keep a single entry when the filament presets do not carry them
+    // (#1068), so count filaments by the widest of these; get_config_idx() already defaults the missing entries.
     size_t filament_count = 0;
-    if (volume_types != nullptr && !volume_types->values.empty())
-        filament_count = volume_types->values.size();
-    else if (step_sizes != nullptr)
-        filament_count = step_sizes->values.size();
+    if (volume_types != nullptr)
+        filament_count = std::max(filament_count, volume_types->values.size());
+    if (step_sizes != nullptr)
+        filament_count = std::max(filament_count, step_sizes->values.size());
+    if (filament_count > 0 && diameters != nullptr)
+        filament_count = std::max(filament_count, diameters->values.size());
     if (filament_count == 0)
         return config.opt_serialize(key);
 

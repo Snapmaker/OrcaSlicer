@@ -777,3 +777,16 @@ TEST_CASE("A clockwise contour touching the contour around it is offset on its o
         CHECK(std::abs(shrunk_hole.area()) == 6400.);
     }
 }
+
+TEST_CASE("The square caps of an open offset follow the shortest segment of the polyline", "[ClipperUtils]") {
+    // 0.0212 mm long: shorter than 0.005 x 5 mm, so its end was dropped and both caps went around the first point.
+    const Polyline stroke{ { 20000000, 20000000 }, { 20015000, 20015000 } };
+    // The stroke becomes 10 mm wide and 5 mm longer at both ends, all of it turned 45 degrees: the box is
+    // (length of the stroke + 20 mm) / sqrt(2) across, as the one of the SVG stroke of the same shape.
+    BoundingBox box = get_extents(offset(stroke, 5000000.f, jtMiter, 2., etOpenSquare, 0.));
+    CHECK(box.size().x() == Catch::Approx(14157136).margin(4));
+    CHECK(box.size().y() == Catch::Approx(14157136).margin(4));
+    // With the decimation of the slicing, the end of the stroke goes and the caps sit around its start.
+    box = get_extents(offset(stroke, 5000000.f, jtMiter, 2., etOpenSquare));
+    CHECK(box.size().x() == Catch::Approx(10000000).margin(4));
+}

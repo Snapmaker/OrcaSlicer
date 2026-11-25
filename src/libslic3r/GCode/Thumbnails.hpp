@@ -46,7 +46,8 @@ inline void export_thumbnails_to_file(ThumbnailsGeneratorCallback&              
                                       int                                                         plate_id,
                                       const std::vector<std::pair<GCodeThumbnailsFormat, Vec2d>>& thumbnails_list,
                                       WriteToOutput                                               output,
-                                      ThrowIfCanceledCallback                                     throw_if_canceled)
+                                      ThrowIfCanceledCallback                                     throw_if_canceled,
+                                      bool                                                        snapmaker_header = false)
 {
     // Write thumbnails using base64 encoding
     if (thumbnail_cb == nullptr)
@@ -58,16 +59,16 @@ inline void export_thumbnails_to_file(ThumbnailsGeneratorCallback&              
         ThumbnailsList                thumbnails     = thumbnail_cb(ThumbnailsParams{{size}, true, true, true, true, plate_id});
         for (const ThumbnailData &data : thumbnails) {
             if (data.is_valid()) {
-                auto compressed = compress_thumbnail(data, format);
+                auto compressed = compress_thumbnail(data, snapmaker_header ? GCodeThumbnailsFormat::PNG : format);
                 if (compressed->data && compressed->size) {
-                    if (format == GCodeThumbnailsFormat::BTT_TFT) {
+                    if (!snapmaker_header && format == GCodeThumbnailsFormat::BTT_TFT) {
                         // write BTT_TFT header
                         output((";" + rjust(get_hex(data.width), 4, '0') + rjust(get_hex(data.height), 4, '0') + "\r\n").c_str());
                         output((char *) compressed->data);
                         if (i == (thumbnails_list.size() - 1))
                             output("; bigtree thumbnail end\r\n\r\n");
                     }
-                    else if (format == GCodeThumbnailsFormat::ColPic) {
+                    else if (!snapmaker_header && format == GCodeThumbnailsFormat::ColPic) {
                         if (first_ColPic) {
                             output((boost::format("\n\n;gimage:%s\n\n") % reinterpret_cast<char*>(compressed->data)).str().c_str());
                         } else {
@@ -76,11 +77,16 @@ inline void export_thumbnails_to_file(ThumbnailsGeneratorCallback&              
                         first_ColPic = false;
                     } 
                     else {
-                        output("; THUMBNAIL_BLOCK_START\n");
                         std::string encoded;
                         encoded.resize(boost::beast::detail::base64::encoded_size(compressed->size));
                         encoded.resize(boost::beast::detail::base64::encode((void *) encoded.data(), (const void *) compressed->data,
-                                                                            compressed->size));                        
+                                                                            compressed->size));
+                        if (snapmaker_header) {
+                            output((";thumbnail: data:image/png;base64," + encoded + "\n").c_str());
+                            throw_if_canceled();
+                            return;
+                        }
+                        output("; THUMBNAIL_BLOCK_START\n");
                         output((boost::format("\n;\n; %s begin %dx%d %d\n") % compressed->tag() % data.width % data.height % encoded.size())
                                    .str()
                                    .c_str());                        

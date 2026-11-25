@@ -414,7 +414,7 @@ static void clean_polygon(Points &points, double distance)
     auto distance_from_line2 = [](const Point &pt, const Point &ln1, const Point &ln2) {
         const double A = double(ln1.y() - ln2.y());
         const double B = double(ln2.x() - ln1.x());
-        const double C = A * pt.x() + B * pt.y() - (A * ln1.x() + B * ln1.y());
+        const double C = A * double(pt.x() - ln1.x()) + B * double(pt.y() - ln1.y());
         return (C * C) / (A * A + B * B);
     };
     auto slopes_near_collinear = [&distance_from_line2](const Point &pt1, const Point &pt2, const Point &pt3, double dist2) {

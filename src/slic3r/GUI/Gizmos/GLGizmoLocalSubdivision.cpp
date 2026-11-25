@@ -540,7 +540,16 @@ void GLGizmoLocalSubdivision::update_preview()
 
     // Grow the caches level by level. The region faces of one iteration occupy the
     // front of the result face list, so they are the selection of the next iteration.
-    for (Preview& p : m_previews) {
+    // A region of ZERO faces means every painted face of this volume was filtered
+    // (zero-area): the volume has nothing to subdivide, so its whole preview is
+    // dropped - keeping it would register a phantom "completed level" whose empty
+    // GLModel::init_from asserts in debug, whose apply pass would reset the
+    // volume's annotations for nothing, and whose stuck cache level would be
+    // misreported as a non-manifold failure blocking the other volumes.
+    const int grow_active_instance = m_c->selection_info()->get_active_instance();
+    for (size_t pi = 0; pi < m_previews.size();) {
+        Preview& p = m_previews[pi];
+        bool dropped = false;
         while (int(p.meshes.size()) <= m_subdiv_level && ! p.next_facets.empty()) {
             const int next_level = int(p.meshes.size());
             if (p.failed_level == next_level)
@@ -552,6 +561,15 @@ void GLGizmoLocalSubdivision::update_preview()
             indexed_triangle_set        next  = TriangleMeshDeal::smooth_triangle_mesh_local_its(src, p.next_facets, ok, &failure, &region);
             if (! ok) {
                 p.failed_level = next_level;
+                break;
+            }
+            if (region == 0) {
+                // Nothing to subdivide on this volume: drop the preview. Unhide
+                // first (restore_preview's per-volume form) - the entry may have
+                // been hiding the volume at a lower shown level.
+                if (p.hidden)
+                    m_parent.toggle_model_objects_visibility(true, mo, grow_active_instance, p.volume);
+                dropped = true;
                 break;
             }
             // The region boundary comes from the algorithm, not subtraction: the
@@ -567,6 +585,11 @@ void GLGizmoLocalSubdivision::update_preview()
             p.region_counts.push_back(region);
             changed = true;
         }
+        if (dropped) {
+            m_previews.erase(m_previews.begin() + pi);
+            continue; // the next entry has shifted into this slot
+        }
+        ++pi;
     }
 
     // A region that cannot be subdivided stops growing at the level where it failed
@@ -616,6 +639,8 @@ void GLGizmoLocalSubdivision::update_preview()
                 continue;
 
             const size_t         region    = p.region_counts[size_t(level)];
+            if (region == 0)
+                continue; // defensive: empty-region previews are dropped at grow time
             const auto&          level_its = p.meshes[size_t(level)];
 
             // Region geometry, rendered by the gizmo with the level-0 painting color.

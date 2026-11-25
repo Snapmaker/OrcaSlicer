@@ -343,13 +343,8 @@ Slic3r::Polygons offset(const Slic3r::Polygon &polygon, const float delta, JoinT
 // offset Polylines
 // Wherever applicable, please use the expand() / shrink() variants instead, they convey their purpose better.
 // Input polygons for negative offset shall be "normalized": There must be no overlap / intersections between the input polygons.
-// Before the offset, a vertex closer to the previous one kept than shortest_edge_factor x |delta| is dropped, as the offsets
-// of closed paths drop one closer than ClipperOffsetShortestEdgeFactor x |delta|. With 0 only a vertex at the same place as
-// the previous one is dropped: every direction of the polyline stays, whatever short its segments are.
-Slic3r::Polygons   offset(const Slic3r::Polyline &polyline, const float delta, JoinType joinType = DefaultLineJoinType, double miterLimit = DefaultLineMiterLimit, EndType end_type = DefaultEndType,
-                          double shortest_edge_factor = ClipperOffsetShortestEdgeFactor);
-Slic3r::Polygons   offset(const Slic3r::Polylines &polylines, const float delta, JoinType joinType = DefaultLineJoinType, double miterLimit = DefaultLineMiterLimit, EndType end_type = DefaultEndType,
-                          double shortest_edge_factor = ClipperOffsetShortestEdgeFactor);
+Slic3r::Polygons   offset(const Slic3r::Polyline &polyline, const float delta, JoinType joinType = DefaultLineJoinType, double miterLimit = DefaultLineMiterLimit, EndType end_type = DefaultEndType);
+Slic3r::Polygons   offset(const Slic3r::Polylines &polylines, const float delta, JoinType joinType = DefaultLineJoinType, double miterLimit = DefaultLineMiterLimit, EndType end_type = DefaultEndType);
 Slic3r::Polygons   offset(const Slic3r::Polygons &polygons, const float delta, JoinType joinType = DefaultJoinType, double miterLimit = DefaultMiterLimit);
 Slic3r::Polygons   offset(const Slic3r::ExPolygon &expolygon, const float delta, JoinType joinType = DefaultJoinType, double miterLimit = DefaultMiterLimit);
 Slic3r::Polygons   offset(const Slic3r::ExPolygons &expolygons, const float delta, JoinType joinType = DefaultJoinType, double miterLimit = DefaultMiterLimit);

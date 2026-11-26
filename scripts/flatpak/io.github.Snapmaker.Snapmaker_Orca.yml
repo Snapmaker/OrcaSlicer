@@ -273,6 +273,9 @@ modules:
         set -euo pipefail
         export CMAKE_POLICY_VERSION_MINIMUM=3.5
         export FLATPAK_BUILDER_N_JOBS="${FLATPAK_BUILDER_N_JOBS:-4}"
+        if [ -f snaplog_public_hmac_secret.txt ]; then
+          export SNAP_LOG_PUBLIC_HMAC_SECRET="$(cat snaplog_public_hmac_secret.txt)"
+        fi
         test -f /app/include/openvdb/version.h
         test -f /app/lib/libopenvdb.a -o -f /app/lib64/libopenvdb.a
         mkdir -p build_flatpak

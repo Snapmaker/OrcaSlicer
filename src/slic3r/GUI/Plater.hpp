@@ -399,7 +399,7 @@ public:
     // To be called when providing a list of files to the GUI slic3r on command line.
     std::vector<size_t> load_files(const std::vector<std::string>& input_files, LoadStrategy strategy = LoadStrategy::LoadModel | LoadStrategy::LoadConfig,  bool ask_multi = false);
     // to be called on drag and drop
-    bool load_files(const wxArrayString& filenames);
+    bool load_files(const wxArrayString& filenames, const std::string& telemetry_source);
 
     const wxString& get_last_loaded_gcode() const { return m_last_loaded_gcode; }
 
@@ -522,7 +522,7 @@ public:
     void reload_all_from_disk();
     bool has_toolpaths_to_export() const;
     void export_toolpaths_to_obj() const;
-    bool reslice();
+    bool reslice(const std::string& trigger = "manual");
     void record_slice_preset(std::string action);
     void reslice_SLA_supports(const ModelObject &object, bool postpone_error_messages = false);
     void reslice_SLA_hollowing(const ModelObject &object, bool postpone_error_messages = false);

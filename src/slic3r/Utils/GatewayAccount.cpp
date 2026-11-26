@@ -27,7 +27,7 @@ std::optional<bool> get_bool(const nlohmann::json& frame, std::initializer_list<
     return std::nullopt;
 }
 
-// The wrapped /api/account shape carries the cloud profile, where the user id is a JSON number.
+// The wrapped /api/account/profile shape carries the cloud profile, where the user id is a JSON number.
 std::string get_string_or_number(const nlohmann::json& frame, std::initializer_list<const char*> keys)
 {
     for (const char* key : keys) {
@@ -68,17 +68,18 @@ bool GatewayAccount::parse(const nlohmann::json& frame, AccountSnapshot& out)
     if (!frame.is_object())
         return false;
 
-    // Legacy CLI builds answer /api/account with {code, data:{...cloud profile}}
+    // Legacy CLI builds answer /api/account/profile with {code, data:{...cloud profile}}
     // instead of the documented flat frame. Unwrap it first.
     const auto wrapped_data = frame.find("data");
     if (wrapped_data != frame.end() && wrapped_data->is_object()) {
         AccountSnapshot snapshot;
-        snapshot.token    = get_string(*wrapped_data, {"accessToken", "access_token", "token"});
         snapshot.userid   = get_string_or_number(*wrapped_data, {"userid", "uid", "id"});
         snapshot.nickname = get_string(*wrapped_data, {"nickname"});
         snapshot.account  = get_string(*wrapped_data, {"account"});
         snapshot.email    = get_string(*wrapped_data, {"email"});
-        snapshot.is_login = wrapped_code_succeeded(frame).value_or(true) && (!snapshot.token.empty() || !snapshot.userid.empty());
+        const std::string status         = get_string(*wrapped_data, {"status", "stauts"});
+        const bool        status_online  = status.empty() || status == "online";
+        snapshot.is_login                = wrapped_code_succeeded(frame).value_or(true) && status_online && !snapshot.userid.empty();
         out               = std::move(snapshot);
         return true;
     }
@@ -86,7 +87,6 @@ bool GatewayAccount::parse(const nlohmann::json& frame, AccountSnapshot& out)
     AccountSnapshot snapshot;
     snapshot.is_login = get_bool(frame, {"is_login", "isLogin"}).value_or(status_is_online(frame));
     snapshot.userid   = get_string(frame, {"userid", "id", "uid"});
-    snapshot.token    = get_string(frame, {"token", "access_token", "accessToken"});
     snapshot.nickname = get_string(frame, {"nickname"});
     snapshot.account  = get_string(frame, {"account"});
     snapshot.email    = get_string(frame, {"email"});

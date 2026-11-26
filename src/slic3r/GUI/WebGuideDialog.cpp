@@ -641,9 +641,11 @@ int GuideFrame::SaveProfile()
     //     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "privacyuse", "0");
     m_MainPtr->app_config->set("app", PRIVACY_POLICY_FLAGS, PrivacyUse);
     BOOST_LOG_TRIVIAL(warning) << "SaveProfile changed the privacy policy with: " << (PrivacyUse ? "true" : "false");
-    wxGetApp().user_update_privacy_notify(PrivacyUse);
     m_MainPtr->app_config->set("region", m_Region);
     m_MainPtr->app_config->set_bool("stealth_mode", StealthMode);
+    // A later wizard run can change the region; keep the live endpoint in sync.
+    wxGetApp().reconfigure_snaplog_site();
+    wxGetApp().user_update_privacy_notify(PrivacyUse);
 
     //finish
     m_MainPtr->app_config->set(std::string(m_SectionName.mb_str()), "finish", "1");

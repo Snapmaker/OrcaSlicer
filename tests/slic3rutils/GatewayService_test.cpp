@@ -47,7 +47,7 @@ struct FakeHttp final : public HttpTransport
         }
         if (url.find("/api/cache/all") != std::string::npos)
             return {200, R"({"devices":[{"sn":"A1"}]})", {}};
-        if (url.find("/api/account") != std::string::npos)
+        if (url.find("/api/account/profile") != std::string::npos)
             return {200, R"({"user":"u"})", {}};
         return {404, {}, "not found"};
     }
@@ -248,7 +248,7 @@ TEST_CASE("GatewayService connects, handles device watch, and calls HTTP APIs", 
     GatewayService                            service(GatewayService::Config{}, make_dependencies(process, http, websocket));
 
     std::atomic<int> account_changes{0};
-    service.set_notification_handler("notify.account.changed", [&](const nlohmann::json&) { account_changes += 1; });
+    service.set_notification_handler("notify.account.profile_changed", [&](const nlohmann::json&) { account_changes += 1; });
     REQUIRE(service.start("zh-CN"));
     REQUIRE(wait_for_state(service, ConnectionState::Connected));
     REQUIRE(service.port() == 8888);
@@ -310,7 +310,7 @@ TEST_CASE("GatewayService connects, handles device watch, and calls HTTP APIs", 
     REQUIRE(invalid_request.error.code == GatewayErrorCode::InvalidRequest);
     REQUIRE(http->posts.size() == 4);
 
-    websocket->notify("notify.account.changed", {{"reason", "login"}});
+    websocket->notify("notify.account.profile_changed", {{"reason", "login"}});
     REQUIRE(account_changes.load() == 1);
 
     service.stop();

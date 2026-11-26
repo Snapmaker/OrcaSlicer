@@ -16,16 +16,15 @@ struct AccountSnapshot
     std::string nickname;
     std::string account;
     std::string email;
-    std::string token;
 };
 
 // Account-facing parsing for the connection gateway. Both the cold-start
-// GET /api/account response and the notify.account.changed params use the same
+// GET /api/account/profile response and the notify.account.profile_changed params use the same
 // flat frame with alias fields from different client generations.
 class GatewayAccount
 {
 public:
-    // frame: /api/account response body or notify.account.changed params.
+    // frame: /api/account/profile response body or notify.account.profile_changed params.
     // Accepts both the documented flat frame and the legacy {code, data}
     // wrapper emitted by current CLI builds. Returns false when the frame is
     // not a JSON object; individual fields fall back to their aliases and then

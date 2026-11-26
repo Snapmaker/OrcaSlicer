@@ -393,7 +393,7 @@ static void report_mix_color_used(const std::string& entry)
 {
     const SnapLog::v1::SnapLogExt ext{{
         {"entry", entry},
-        {"printer_model", telemetry_printer_model()},
+        {"printerModel", telemetry_printer_model()},
     }};
     SNAP_LOG_INFO(SnapLog::v1::SnapEvent::MIX_COLOR_USED, ext, "mix color used");
 }

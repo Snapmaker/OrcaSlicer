@@ -323,6 +323,7 @@ private:
     bool            m_app_conf_exists{ false };
     bool            m_pending_app_launch{ false };
     std::vector<std::pair<std::string, std::string>> m_pending_app_launch_ext;
+    void            report_app_launch();
     EAppMode        m_app_mode{ EAppMode::Editor };
     // Short rebuild flag consumed by other components during teardown.
     bool            m_is_recreating_gui{ false };

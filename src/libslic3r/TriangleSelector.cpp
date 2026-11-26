@@ -3166,9 +3166,12 @@ public:
         // Calculate the centroid of the triangle
         const Vec3f center = (pv0 + pv1 + pv2) / 3.f;
 
-        // Calculate the min distance from the centroid to every edges
-        const float radius = std::max(std::min(std::min(point_to_line_dist(center, pv0, pv1), point_to_line_dist(center, pv0, pv2)),
-                                      point_to_line_dist(center, pv1, pv2)), 0.1f);
+        // Derive remap precision from this decoded source leaf. A fixed
+        // mesh-unit floor makes a fine stroke on a small, enlarged mesh paint
+        // entire coarse target faces at the subdivision limit.
+        const float radius = std::min({point_to_line_dist(center, pv0, pv1),
+                                       point_to_line_dist(center, pv0, pv2),
+                                       point_to_line_dist(center, pv1, pv2)});
 
         return std::make_unique<TriangleCursor>(center, center + normal, radius, Transform3d::Identity(), TriangleSelector::ClippingPlane(),
                                                 std::array<const Vec3f, 3>{pv0, pv1, pv2});
@@ -3342,25 +3345,16 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting(
     if (source_painting.bitstream.empty())
         return result;
 
-    // Identical geometry, corner order and an identity relative transform:
-    // return the source painting unchanged instead of re-deriving it through
-    // subdivision (which drifts boundaries at the resolution limit). With an
-    // existing painting, the merge keeps the existing data and replaces the
-    // faces the source covers with the source's exact subtree.
-    if (target_to_source.isApprox(Transform3d::Identity()) && source_its.vertices == target_its.vertices &&
-        source_its.indices == target_its.indices) {
+    // Identical geometry and an identity transform can copy a replacement
+    // exactly. With existing painting, use the region overlay below instead:
+    // deserialize() replaces whole root subtrees, including NONE leaves, and
+    // therefore cannot merge disjoint strokes on the same root face. The
+    // generic path only writes non-NONE source leaves (new source wins overlaps).
+    if (!existing_painting && target_to_source.isApprox(Transform3d::Identity()) &&
+        source_its.vertices == target_its.vertices && source_its.indices == target_its.indices) {
         if (stats)
             stats->identity_path = true;
-        if (!existing_painting) {
-            result = source_painting;
-        } else {
-            TriangleMesh merge_mesh(target_its);
-            TriangleSelector merge_selector(merge_mesh);
-            merge_selector.deserialize(existing_painting->get(), false);
-            merge_selector.deserialize(source_painting, false);
-            result = merge_selector.serialize();
-        }
-        return result;
+        return source_painting;
     }
 
     // 1. Deserialize source painting

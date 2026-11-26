@@ -1955,3 +1955,74 @@ TEST_CASE("Global smooth preserves a world-sized stroke on differently scaled st
         }
     }
 }
+
+TEST_CASE("Split preserves a world-sized stroke on a small stored mesh", "[PaintRemap][MergeScaleRegression]")
+{
+    for (float unit : {1.f, 0.001f}) {
+        Model model;
+        auto* obj = model.add_object();
+        TriangleMesh both(box_mesh(0, 10, 10, 10));
+        both.merge(TriangleMesh(box_mesh(30, 40, 10, 10)));
+        both.scale(unit);
+        auto* volume = obj->add_volume(std::move(both));
+        obj->add_instance();
+        volume->set_scaling_factor(Vec3d::Constant(1.0 / unit));
+        const Transform3d placement = volume->get_matrix();
+        const Vec3f center = unit * Vec3f(7, 3, 10) - volume->mesh().get_init_shift().cast<float>();
+        TriangleSelector selector(volume->mesh());
+        auto cursor = TriangleSelector::SinglePointCursor::cursor_factory(
+            center, center + Vec3f::UnitZ(), 1.f, TriangleSelector::CursorType::CIRCLE,
+            placement, TriangleSelector::ClippingPlane());
+        selector.select_patch(2, std::move(cursor), EnforcerBlockerType::Extruder3, placement, true);
+        const double baseline = painted_area_and_centroid(selector.get_facets(EnforcerBlockerType::Extruder3)).first / (unit * unit);
+        REQUIRE(baseline > 1.0);
+        volume->mmu_segmentation_facets.set(selector);
+        REQUIRE(volume->split(4, true) == 2);
+        double area = 0;
+        int painted_parts = 0;
+        for (auto* part : obj->volumes) {
+            const double a = painted_area_and_centroid(part->mmu_segmentation_facets.get_facets(*part, EnforcerBlockerType::Extruder3)).first / (unit * unit);
+            area += a;
+            if (a > 0) ++painted_parts;
+        }
+        INFO("unit=" << unit << " baseline=" << baseline << " remapped=" << area);
+        CHECK(painted_parts == 1);
+        CHECK_THAT(area, WithinAbs(baseline, baseline * 0.05));
+    }
+}
+
+TEST_CASE("Same-mesh paint merging preserves disjoint strokes and source wins overlaps", "[PaintRemap][MergeScaleRegression]")
+{
+    indexed_triangle_set its;
+    its.vertices = {Vec3f(0, 0, 0), Vec3f(20, 0, 0), Vec3f(0, 20, 0)};
+    its.indices.emplace_back(0, 1, 2);
+    TriangleMesh mesh(its);
+    auto first = paint_brush_stroke(mesh, Vec3f(4, 4, 0), 1.f, EnforcerBlockerType::Extruder3);
+    auto second = paint_brush_stroke(mesh, Vec3f(12, 4, 0), 1.f, EnforcerBlockerType::Extruder4);
+    const float first_area = painted_area_and_centroid(painted_facets(mesh, first, EnforcerBlockerType::Extruder3)).first;
+    const float second_area = painted_area_and_centroid(painted_facets(mesh, second, EnforcerBlockerType::Extruder4)).first;
+    REQUIRE(first_area > 1.f);
+    REQUIRE(second_area > 1.f);
+    const auto merged = TriangleSelector::remap_painting(its, second, its, Transform3d::Identity(), std::cref(first));
+    CHECK_THAT(painted_area_and_centroid(painted_facets(mesh, merged, EnforcerBlockerType::Extruder3)).first,
+               WithinAbs(first_area, first_area * 0.05f));
+    CHECK_THAT(painted_area_and_centroid(painted_facets(mesh, merged, EnforcerBlockerType::Extruder4)).first,
+               WithinAbs(second_area, second_area * 0.05f));
+    // Equivalent triangle with a cyclic corner permutation takes the generic
+    // path. Merging must not depend on this storage-only representation.
+    auto permuted = its;
+    permuted.indices[0] = stl_triangle_vertex_indices(1, 2, 0);
+    // Paint the source against its own corner order for the equivalence check.
+    const TriangleMesh permuted_mesh(permuted);
+    const auto permuted_second = paint_brush_stroke(permuted_mesh, Vec3f(12, 4, 0), 1.f, EnforcerBlockerType::Extruder4);
+    const auto equivalent = TriangleSelector::remap_painting(permuted, permuted_second, its, Transform3d::Identity(), std::cref(first));
+    for (auto state : {EnforcerBlockerType::Extruder3, EnforcerBlockerType::Extruder4})
+        CHECK_THAT(painted_area_and_centroid(painted_facets(mesh, equivalent, state)).first,
+                   WithinAbs(painted_area_and_centroid(painted_facets(mesh, merged, state)).first, 0.15f));
+    // A new non-NONE stroke has precedence where the two sources overlap.
+    const auto overlapping = paint_brush_stroke(mesh, Vec3f(4, 4, 0), 1.f, EnforcerBlockerType::Extruder4);
+    const auto overwritten = TriangleSelector::remap_painting(its, overlapping, its, Transform3d::Identity(), std::cref(first));
+    CHECK(painted_area_and_centroid(painted_facets(mesh, overwritten, EnforcerBlockerType::Extruder3)).first < 0.15f);
+    CHECK_THAT(painted_area_and_centroid(painted_facets(mesh, overwritten, EnforcerBlockerType::Extruder4)).first,
+               WithinAbs(first_area, first_area * 0.05f));
+}

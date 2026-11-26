@@ -196,11 +196,11 @@ template<typename CollisionPolyType>
             steps = distance / step_size;
     }
     for (int i = 0; i < steps; ++i) {
-        ret = diff_ex(offset_ex(ret, step_size, ClipperLib::jtRound, scaled<float>(0.01)), collision_trimmed());
+        ret = diff_ex(offset_ex(ret, step_size, jtRound, scaled<float>(0.01)), collision_trimmed());
         if (i % 10 == 7) ret = expolygons_simplify(ret, scaled<double>(0.015));
     }
     float last_offset = distance - steps * step_size;
-    if (last_offset > SCALED_EPSILON) ret = offset_ex(ret, distance - steps * step_size, ClipperLib::jtRound, scaled<float>(0.01));
+    if (last_offset > SCALED_EPSILON) ret = offset_ex(ret, distance - steps * step_size, jtRound, scaled<float>(0.01));
     ret = expolygons_simplify(ret, scaled<double>(0.015));
 
     if (do_final_difference) ret = diff_ex(ret, collision_trimmed());

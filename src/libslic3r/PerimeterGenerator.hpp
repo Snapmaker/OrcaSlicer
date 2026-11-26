@@ -5,6 +5,7 @@
 #include <vector>
 #include "Layer.hpp"
 #include "Flow.hpp"
+#include "ClipperZUtils.hpp"
 #include "Polygon.hpp"
 #include "PrintConfig.hpp"
 #include "SurfaceCollection.hpp"
@@ -58,6 +59,17 @@ template<> struct hash<Slic3r::FuzzySkinConfig>
 } // namespace std
 
 namespace Slic3r {
+
+namespace Arachne {
+struct WallSupportPaths
+{
+    ClipperZUtils::ZPaths supported;
+    ClipperZUtils::ZPaths overhang;
+};
+
+// The Z coordinate stores the extrusion width at each junction, including new cut points.
+WallSupportPaths split_wall_by_support(const ClipperZUtils::ZPath& wall, const Polygons& support);
+} // namespace Arachne
 
 class PerimeterGenerator {
 public:

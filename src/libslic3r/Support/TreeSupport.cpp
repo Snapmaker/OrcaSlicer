@@ -641,7 +641,7 @@ TreeSupport::TreeSupport(PrintObject& object, const SlicingParameters &slicing_p
 }
 
 
-#define SUPPORT_SURFACES_OFFSET_PARAMETERS ClipperLib::jtSquare, 0.
+#define SUPPORT_SURFACES_OFFSET_PARAMETERS jtSquare, 0.
 
 // Ported from Bambu 976b5062c.
 // Adds an overhang to both loverhangs and loverhangs_with_type, tagging it with a type.
@@ -2679,7 +2679,7 @@ void TreeSupport::draw_circles()
                                 Point   direction = normal(pt_on_expoly - pt_on_poly, line_width_scaled / 2);
                                 hole_lower.translate(direction);
                                 // note to expand a hole, we need to do negative offset
-                                auto hole_expanded = offset(hole_lower, -line_width_scaled / 4, ClipperLib::JoinType::jtSquare);
+                                auto hole_expanded = offset(hole_lower, -line_width_scaled / 4, jtSquare);
                                 if (!hole_expanded.empty()) {
                                     base_area_lower.holes.push_back(std::move(hole_expanded[0]));
                                     holePropagationInfos.insert({ &base_area_lower.holes.back(), {25, direction, pt_far_on_poly} });
@@ -2692,7 +2692,7 @@ void TreeSupport::draw_circles()
                                 auto&& direction = std::get<1>(holePropagationInfos[&hole]);
                                 hole_lower.translate(direction);
                                 // note to shrink a hole, we need to do positive offset
-                                auto  hole_expanded = offset(hole_lower, line_width_scaled / 2, ClipperLib::JoinType::jtSquare);
+                                auto  hole_expanded = offset(hole_lower, line_width_scaled / 2, jtSquare);
                                 Point farPoint = std::get<2>(holePropagationInfos[&hole]) + direction * 2;
                                 if (!hole_expanded.empty()) {
                                     base_area_lower.holes.push_back(std::move(hole_expanded[0]));

@@ -66,7 +66,6 @@ set(TEST_LINK_LIBS
     TBB::tbb
     TBB::tbbmalloc
     OpenSSL::Crypto
-    clipper
     qhull
     mcut
     glu-libtess

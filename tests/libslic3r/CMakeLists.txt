@@ -24,6 +24,7 @@ add_executable(${_TEST_NAME}_tests
 	test_local_z_order_optimizer.cpp
 	test_placeholder_parser.cpp
 	test_polygon.cpp
+	test_region_expansion.cpp
 	test_profile_load_util.cpp
 	test_mutable_polygon.cpp
 	test_mutable_priority_queue.cpp
@@ -48,6 +49,8 @@ add_executable(${_TEST_NAME}_tests
 	test_calib.cpp
 	test_variable_width.cpp
 	test_arachne.cpp
+	test_line_split.cpp
+	test_svg.cpp
     ../libnest2d/printer_parts.cpp
 	)
 

@@ -248,10 +248,14 @@ wxBoxSizer *PreferencesDialog::create_item_language_combobox(
     });
 
     combobox->Bind(wxEVT_COMBOBOX, [this, param, vlist, combobox](wxCommandEvent &e) {
-        if (combobox->GetSelection() == m_current_language_selected)
+        const int selected_language_index = combobox->GetSelection();
+        if (selected_language_index < 0 || selected_language_index >= static_cast<int>(vlist.size()))
+            return;
+        if (selected_language_index == m_current_language_selected)
             return;
 
-        if (e.GetString().mb_str() != app_config->get(param)) {
+        const std::string selected_language = vlist[selected_language_index]->CanonicalName.ToUTF8().data();
+        if (selected_language != app_config->get(param)) {
             {
                 //check if the project has changed
                 if (wxGetApp().plater()->is_project_dirty()) {
@@ -285,13 +289,16 @@ wxBoxSizer *PreferencesDialog::create_item_language_combobox(
 
             m_current_language_selected = combobox->GetSelection();
             if (m_current_language_selected >= 0 && m_current_language_selected < vlist.size()) {
-                app_config->set(param, vlist[m_current_language_selected]->CanonicalName.ToUTF8().data());
+                m_pending_language = vlist[m_current_language_selected]->CanonicalName.ToUTF8().data();
+                m_recreate_GUI = true;
 
-                wxGetApp().load_language(vlist[m_current_language_selected]->CanonicalName, false);
-                Close();
-                // Reparent(nullptr);
-                GetParent()->RemoveChild(this);
-                wxGetApp().recreate_GUI(_L("Changing application language"));
+                // The custom dropdown is still unwinding its selection event when this
+                // handler runs. Ending the modal dialog now can destroy the dialog and
+                // dropdown before their event handlers finish. GUI_App::open_preferences()
+                // applies the language change after this stack dialog is destroyed.
+                CallAfter([this]() {
+                    EndModal(wxID_OK);
+                });
             }
         }
 

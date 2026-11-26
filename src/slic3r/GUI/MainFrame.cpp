@@ -680,7 +680,6 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
         {
             // Orca: Use GUI_App::open_preferences instead of direct call so windows associations are updated on exit
             wxGetApp().open_preferences();
-            plater()->get_current_canvas3D()->force_set_focus();
             return;
         }
 
@@ -3043,7 +3042,6 @@ void MainFrame::init_menubar_as_editor()
         [this](wxCommandEvent &) {
             // Orca: Use GUI_App::open_preferences instead of direct call so windows associations are updated on exit
             wxGetApp().open_preferences();
-            plater()->get_current_canvas3D()->force_set_focus();
         },
         "", nullptr, []() { return true; }, this);
 

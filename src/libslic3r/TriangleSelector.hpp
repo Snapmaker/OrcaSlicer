@@ -512,6 +512,12 @@ public:
         const std::optional<std::reference_wrapper<const TriangleSplittingData>>& existing_painting,
         RemapStats* stats = nullptr);
 
+    // Connected-component splits retain source face identity. Copy the complete
+    // painting subtree without spatial queries; account for split() winding correction.
+    static TriangleSplittingData remap_painting_split(
+        const indexed_triangle_set& source_its, const TriangleSplittingData& source_painting,
+        const indexed_triangle_set& target_its, const TriangleMesh::SplitProvenance& provenance);
+
     // Transfer painting across one Loop subdivision (global smooth): the output
     // faces carry (original source face, child ordinal 0..3) origins produced by
     // TriangleMeshDeal::smooth_triangle_mesh(). Loop moves vertices and changes

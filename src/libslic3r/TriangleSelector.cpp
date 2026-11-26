@@ -11,6 +11,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <stdexcept>
 #include <tbb/parallel_for.h>
 
 #ifndef NDEBUG
@@ -3498,6 +3499,114 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting(
     }
 
     return target_selector.serialize();
+}
+
+// Copy painting through a topology-preserving component split. Positions are
+// deliberately unused: centering, instance scale and close/coincident shells
+// cannot change which source face owns a target face.
+TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_split(const indexed_triangle_set&          source_its,
+                                                                               const TriangleSplittingData&         source_painting,
+                                                                               const indexed_triangle_set&          target_its,
+                                                                               const TriangleMesh::SplitProvenance& provenance)
+{
+    if (provenance.source_faces.size() != target_its.indices.size())
+        throw std::invalid_argument("Split painting requires one source face per output face");
+    for (size_t source_face : provenance.source_faces)
+        if (source_face >= source_its.indices.size())
+            throw std::out_of_range("Split painting source face is out of range");
+    if (source_painting.bitstream.empty())
+        return {};
+
+    TriangleMesh     source_mesh(source_its), target_mesh(target_its);
+    TriangleSelector source(source_mesh), target(target_mesh);
+    source.deserialize(source_painting, false);
+
+    // Integer barycentric labels describe just ONE split. Reinitialize them at
+    // every recursion: no floating tolerance or depth-dependent rounding.
+    using Region           = std::array<Vec3i32, 3>;
+    const Region canonical = {Vec3i32(2, 0, 0), Vec3i32(0, 2, 0), Vec3i32(0, 0, 2)};
+    auto         children  = [](const Region& p, int count, int side) -> std::vector<Region> {
+        const Vec3i32 a = p[side], b = p[(side + 1) % 3], c = p[(side + 2) % 3];
+        const Vec3i32 ab = (a + b) / 2, bc = (b + c) / 2, ca = (c + a) / 2;
+        if (count == 1)
+            return {{a, b, bc}, {bc, c, a}};
+        if (count == 2)
+            return {{a, ab, ca}, {ab, b, ca}, {b, c, ca}};
+        return {{a, ab, ca}, {ab, b, bc}, {bc, c, ca}, {ab, bc, ca}};
+    };
+    auto split = [&](int node, int count, int side) {
+        target.PrepareForLeafIdentityChange();
+        const int root = target.m_triangles[node].source_triangle;
+        target.m_triangles[node].set_division(count, side);
+        target.perform_split(node, Vec3i32(-1, -1, -1), EnforcerBlockerType::NONE);
+        target.NotifyTopologyMutation(root);
+    };
+    auto permutation = [](const Region& from, const Region& to, std::array<int, 3>& map) {
+        for (int j = 0; j < 3; ++j) {
+            int k = 0;
+            while (k < 3 && from[k] != to[j])
+                ++k;
+            if (k == 3)
+                return false;
+            map[j] = k;
+        }
+        return true;
+    };
+    std::function<void(int, int, const std::array<int, 3>&)> copy = [&](int src, int dst, const std::array<int, 3>& map) {
+        const Triangle tr = source.m_triangles[src];
+        if (!tr.is_split()) {
+            target.CollapseSubtreeToState(dst, tr.get_state());
+            return;
+        }
+        const int    count = tr.number_of_split_sides(), side = tr.special_side();
+        const auto   src_regions = children(canonical, count, side);
+        const Region dst_region  = {canonical[map[0]], canonical[map[1]], canonical[map[2]]};
+        auto         corner      = [&](int src_corner) { return int(std::find(map.begin(), map.end(), src_corner) - map.begin()); };
+        std::vector<std::pair<int, Region>> dst_regions;
+        if (count == 2 && provenance.reversed) {
+            // A two-side split's quadrilateral diagonal is not reflection
+            // invariant. Express its exact three regions as two median splits
+            // instead; merely reversing special_side would move the stroke.
+            const int dst_side = corner((side + 1) % 3);
+            split(dst, 1, dst_side);
+            const auto    halves = children(dst_region, 1, dst_side);
+            const Vec3i32 ca     = (canonical[side] + canonical[(side + 2) % 3]) / 2;
+            for (int j = 0; j < 2; ++j) {
+                const int          child = target.m_triangles[dst].children[j];
+                std::array<int, 3> unused;
+                if (permutation(src_regions[2], halves[j], unused)) {
+                    dst_regions.emplace_back(child, halves[j]);
+                } else {
+                    int median = 0;
+                    while (halves[j][median] != ca)
+                        ++median;
+                    split(child, 1, median);
+                    const auto quarters = children(halves[j], 1, median);
+                    for (int k = 0; k < 2; ++k)
+                        dst_regions.emplace_back(target.m_triangles[child].children[k], quarters[k]);
+                }
+            }
+        } else {
+            const int dst_side = count == 3 ? 0 : corner(side);
+            split(dst, count, dst_side);
+            const auto regions = children(dst_region, count, dst_side);
+            for (int j = 0; j <= count; ++j)
+                dst_regions.emplace_back(target.m_triangles[dst].children[j], regions[j]);
+        }
+        for (const auto& child : dst_regions) {
+            std::array<int, 3> next_map;
+            int                j = 0;
+            while (j <= count && !permutation(src_regions[j], child.second, next_map))
+                ++j;
+            if (j > count)
+                throw std::logic_error("Split painting child correspondence is invalid");
+            copy(tr.children[j], child.first, next_map);
+        }
+    };
+    const std::array<int, 3> root_map = provenance.reversed ? std::array<int, 3>{0, 2, 1} : std::array<int, 3>{0, 1, 2};
+    for (size_t face = 0; face < provenance.source_faces.size(); ++face)
+        copy(int(provenance.source_faces[face]), int(face), root_map);
+    return target.serialize();
 }
 
 // Loop child regions in the PARENT face's barycentric domain, matching the

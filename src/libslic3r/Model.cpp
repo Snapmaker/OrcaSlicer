@@ -2198,6 +2198,22 @@ void ModelVolume::restore_painting_on_centered_result(const std::optional<Triang
     restore_painting(saved, inverse_composite * Geometry::translation_transform(mesh().get_init_shift()), keep_existing_paint);
 }
 
+void ModelVolume::restore_painting_split(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                         const TriangleMesh::SplitProvenance&                  provenance)
+{
+    reset_extra_facets();
+    if (!saved)
+        return;
+    auto remap_one = [&](const TriangleSelector::TriangleSplittingData& data, FacetsAnnotation& facets) {
+        if (!data.bitstream.empty())
+            facets.set_data(TriangleSelector::remap_painting_split(saved->mesh.its, data, mesh().its, provenance));
+    };
+    remap_one(saved->supported, supported_facets);
+    remap_one(saved->seam, seam_facets);
+    remap_one(saved->mmu, mmu_segmentation_facets);
+    remap_one(saved->fuzzy, fuzzy_skin_facets);
+}
+
 void ModelVolume::restore_painting_smooth(const std::optional<TriangleSelector::SavedPainting>& saved,
                                           const std::vector<std::pair<int, int>>& target_origins)
 {
@@ -2328,6 +2344,7 @@ static double bbox_overlap_volume(const BoundingBoxf3& a, const BoundingBoxf3& b
 void ModelObject::split(ModelObjectPtrs* new_objects, const bool remap_paint)
 {
     std::vector<TriangleMesh> all_meshes;
+    std::vector<TriangleMesh::SplitProvenance> all_origins;
     std::vector<Transform3d> all_transfos;
     std::vector<std::pair<int, int>> volume_mesh_counts;
     all_meshes.reserve(this->volumes.size() * 5);
@@ -2383,13 +2400,17 @@ void ModelObject::split(ModelObjectPtrs* new_objects, const bool remap_paint)
                 saved_painting = volume->save_painting();
             }
             //BBS: not multi volume object, then split mesh.
-            std::vector<TriangleMesh> volume_meshes = volume->mesh().split();
+            std::vector<TriangleMesh::SplitProvenance> origins;
+            std::vector<TriangleMesh>                  volume_meshes = volume->mesh().split(remap_paint ? &origins : nullptr);
             int mesh_count = 0;
-            for (TriangleMesh& mesh : volume_meshes) {
+            for (size_t part = 0; part < volume_meshes.size(); ++part) {
+                TriangleMesh& mesh = volume_meshes[part];
                 if (mesh.facets_count() < 3)
                     continue;
 
                 all_meshes.emplace_back(std::move(mesh));
+                if (remap_paint)
+                    all_origins.emplace_back(std::move(origins[part]));
                 all_transfos.emplace_back(volume->get_matrix());
                 mesh_count++;
             }
@@ -2416,10 +2437,12 @@ void ModelObject::split(ModelObjectPtrs* new_objects, const bool remap_paint)
         for (int mesh_idx = volume_mesh_begin; mesh_idx < volume_mesh_begin + mesh_info.second; mesh_idx++) {
             meshes.emplace_back(std::move(all_meshes[mesh_idx]));
         }
+        const int origins_begin = volume_mesh_begin;
         volume_mesh_begin += mesh_info.second;
 
         size_t counter = 1;
-        for (TriangleMesh& mesh : meshes) {
+        for (size_t part = 0; part < meshes.size(); ++part) {
+            TriangleMesh& mesh = meshes[part];
             // FIXME: crashes if not satisfied
             if (mesh.facets_count() < 3)
                 continue;
@@ -2465,10 +2488,9 @@ void ModelObject::split(ModelObjectPtrs* new_objects, const bool remap_paint)
                 COPY_FACETS(mmu_segmentation_facets);
                 COPY_FACETS(fuzzy_skin_facets);
             } else if (saved_painting) {
-                // add_volume(*volume, mesh) re-centered the piece, so the piece's
-                // stored coordinates differ from the snapshot's by the piece
-                // centering (init_shift); the helper compensates it.
-                new_vol->restore_painting_on_centered_result(saved_painting, Transform3d::Identity());
+                // Centering preserves face/corner identity. Only this component's
+                // source roots may contribute, regardless of scale or shell gap.
+                new_vol->restore_painting_split(saved_painting, all_origins[origins_begin + part]);
             }
 
             // BBS: clear volume's config, as we already set them into object
@@ -3221,7 +3243,8 @@ std::string ModelVolume::type_to_string(const ModelVolumeType t)
 // This is useful to assign different materials to different volumes of an object.
 size_t ModelVolume::split(unsigned int max_extruders, bool remap_paint)
 {
-    std::vector<TriangleMesh> meshes = this->mesh().split();
+    std::vector<TriangleMesh::SplitProvenance> origins;
+    std::vector<TriangleMesh>                  meshes = this->mesh().split(remap_paint ? &origins : nullptr);
     if (meshes.size() <= 1)
         return 1;
 
@@ -3239,7 +3262,8 @@ size_t ModelVolume::split(unsigned int max_extruders, bool remap_paint)
     unsigned int extruder_counter = 0;
     const Vec3d offset = this->get_offset();
 
-    for (TriangleMesh &mesh : meshes) {
+    for (size_t part = 0; part < meshes.size(); ++part) {
+        TriangleMesh& mesh = meshes[part];
         if (mesh.empty())
             // Repair may have removed unconnected triangles, thus emptying the mesh.
             continue;
@@ -3267,7 +3291,10 @@ size_t ModelVolume::split(unsigned int max_extruders, bool remap_paint)
         this->object->volumes[ivolume]->config.set("extruder", this->extruder_id());
         //this->object->volumes[ivolume]->config.set("extruder", auto_extruder_id(max_extruders, extruder_counter));
         this->object->volumes[ivolume]->m_is_splittable = 0;
-        this->object->volumes[ivolume]->restore_painting_on_centered_result(saved_painting, Transform3d::Identity());
+        if (remap_paint)
+            this->object->volumes[ivolume]->restore_painting_split(saved_painting, origins[part]);
+        else
+            this->object->volumes[ivolume]->reset_extra_facets();
 
         ++ idx;
     }

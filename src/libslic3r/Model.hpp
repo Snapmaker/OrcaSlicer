@@ -963,6 +963,9 @@ public:
     void restore_painting_on_centered_result(const std::optional<TriangleSelector::SavedPainting>& saved,
                                              const Transform3d& inverse_composite, bool keep_existing_paint = false);
 
+    void restore_painting_split(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                const TriangleMesh::SplitProvenance& provenance);
+
     // Restore painting across one global-smooth subdivision (see
     // TriangleSelector::remap_painting_smooth). `target_origins` maps every face
     // of this volume's mesh to (source face, child ordinal) as produced by

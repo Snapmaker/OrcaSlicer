@@ -2078,3 +2078,125 @@ TEST_CASE("Smooth median coverage is symmetric under side and corner order chang
         }
     }
 }
+
+TEST_CASE("Split carries exact painted roots to stacked components at either storage scale", "[PaintRemap][SplitOrigins]")
+{
+    const std::array<FacetsAnnotation ModelVolume::*, 4> channels = {&ModelVolume::supported_facets, &ModelVolume::seam_facets,
+                                                                     &ModelVolume::mmu_segmentation_facets,
+                                                                     &ModelVolume::fuzzy_skin_facets};
+    for (bool objects : {false, true})
+        for (float unit : {1.f, 0.001f})
+            for (bool local : {false, true})
+                for (bool reversed : {false, true}) {
+                    Model        model;
+                    auto*        obj = model.add_object();
+                    TriangleMesh both(box_mesh(0, 10, 10, 1));
+                    TriangleMesh upper(box_mesh(0, 10, 10, 1));
+                    upper.translate(Vec3f(0, 0, 5));
+                    both.merge(upper);
+                    both.scale(unit);
+                    if (reversed)
+                        both.flip_triangles();
+                    auto* volume = obj->add_volume(std::move(both));
+                    obj->add_instance();
+                    volume->set_scaling_factor(Vec3d::Constant(1.0 / unit));
+                    TriangleSelector selector(volume->mesh());
+                    if (local) {
+                        const Vec3f center = unit * Vec3f(7, 3, 1) - volume->mesh().get_init_shift().cast<float>();
+                        auto        cursor = TriangleSelector::SinglePointCursor::cursor_factory(center,
+                                                                                                 center + unit * (reversed ? -10.f : 10.f) *
+                                                                                                              Vec3f::UnitZ(),
+                                                                                                 1.f, TriangleSelector::CursorType::CIRCLE,
+                                                                                                 volume->get_matrix(),
+                                                                                                 TriangleSelector::ClippingPlane());
+                        selector.select_patch(2, std::move(cursor), EnforcerBlockerType::ENFORCER, volume->get_matrix(), true);
+                    } else {
+                        selector.set_facet(2, EnforcerBlockerType::ENFORCER);
+                        selector.set_facet(3, EnforcerBlockerType::ENFORCER);
+                    }
+                    const auto source_data                  = selector.serialize();
+                    const auto [source_area, source_center] = painted_area_and_centroid(selector.get_facets(EnforcerBlockerType::ENFORCER));
+                    const double expected                   = source_area / (unit * unit);
+                    REQUIRE(expected > 1.0);
+                    for (auto channel : channels)
+                        (volume->*channel).set_data(TriangleSelector::TriangleSplittingData(source_data));
+                    ModelObjectPtrs out;
+                    if (objects)
+                        obj->split(&out, true);
+                    else {
+                        REQUIRE(volume->split(4, true) == 2);
+                        out.push_back(obj);
+                    }
+                    std::vector<ModelVolume*> parts;
+                    for (auto* o : out)
+                        for (auto* part : o->volumes)
+                            parts.push_back(part);
+                    REQUIRE(parts.size() == 2);
+                    INFO("objects=" << objects << " unit=" << unit << " local=" << local << " reversed=" << reversed);
+                    for (auto channel : channels) {
+                        double area_sum      = 0.;
+                        int    colored_parts = 0;
+                        for (auto* part : parts) {
+                            const auto [area, center] = painted_area_and_centroid(
+                                (part->*channel).get_facets(*part, EnforcerBlockerType::ENFORCER));
+                            if (area > 0) {
+                                ++colored_parts;
+                                // The original lower plate carries the stroke on its TOP.
+                                CHECK_THAT(center.z() / unit, WithinAbs(0.5f, 0.0001f));
+                                CHECK_THAT(center.x() / unit, WithinAbs(source_center.x() / unit, 0.0001f));
+                                CHECK_THAT(center.y() / unit, WithinAbs(source_center.y() / unit, 0.0001f));
+                                CHECK_THAT(area / (unit * unit), WithinAbs(expected, expected * 0.0001));
+                            }
+                            area_sum += area / (unit * unit);
+                        }
+                        CHECK(colored_parts == 1);
+                        CHECK_THAT(area_sum, WithinAbs(expected, expected * 0.0001));
+                    }
+                }
+}
+
+TEST_CASE("Split subtree transfer preserves each split layout after winding correction", "[PaintRemap][SplitOrigins]")
+{
+    indexed_triangle_set source;
+    source.vertices = {Vec3f(0, 0, 0), Vec3f(6, 0, 0), Vec3f(1, 3, 0)};
+    source.indices.emplace_back(0, 1, 2);
+    const TriangleMesh source_mesh(source);
+    for (int count : {1, 2, 3})
+        for (int side = 0; side < (count == 3 ? 1 : 3); ++side)
+            for (bool reversed : {false, true}) {
+                TriangleSelector::TriangleSplittingData data;
+                data.triangles_to_split.emplace_back(0, 0);
+                auto nibble = [&](int value) {
+                    for (int bit = 0; bit < 4; ++bit)
+                        data.bitstream.push_back((value >> bit) & 1);
+                };
+                nibble(count | (side << 2));
+                // Include differently painted leaves and an unpainted gap. A nested
+                // two-side child also exercises corner permutations recursively.
+                for (int child = count; child >= 0; --child) {
+                    if (child == 0) {
+                        nibble(2 | (2 << 2));
+                        nibble(0);
+                        nibble(8);
+                        nibble(4);
+                    } else {
+                        nibble((child % 3) << 2);
+                    }
+                }
+                data.used_states[0] = data.used_states[1] = data.used_states[2] = true;
+                auto target_its                                                 = source;
+                if (reversed)
+                    std::swap(target_its.indices[0][1], target_its.indices[0][2]);
+                const TriangleMesh            target_mesh(target_its);
+                TriangleMesh::SplitProvenance origin{{0}, reversed};
+                const auto                    result = TriangleSelector::remap_painting_split(source, data, target_its, origin);
+                INFO("split sides=" << count << " special=" << side << " reversed=" << reversed);
+                for (auto state : {EnforcerBlockerType::NONE, EnforcerBlockerType::ENFORCER, EnforcerBlockerType::BLOCKER}) {
+                    const auto [expected_area, expected_center] = painted_area_and_centroid(painted_facets(source_mesh, data, state));
+                    const auto [area, center]                   = painted_area_and_centroid(painted_facets(target_mesh, result, state));
+                    CHECK_THAT(area, WithinAbs(expected_area, 0.00001f));
+                    if (area > 0)
+                        CHECK((center - expected_center).norm() < 0.00001f);
+                }
+            }
+}

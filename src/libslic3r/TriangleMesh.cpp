@@ -387,18 +387,26 @@ bool TriangleMesh::is_splittable() const
     return its_is_splittable(this->its);
 }
 
-std::vector<TriangleMesh> TriangleMesh::split() const
+std::vector<TriangleMesh> TriangleMesh::split(std::vector<SplitProvenance>* provenance) const
 {
-    std::vector<indexed_triangle_set> itss = its_split(this->its);
+    std::vector<indexed_triangle_set> itss;
+    std::vector<std::vector<size_t>> source_faces;
+    its_split(this->its, std::back_inserter(itss), provenance ? &source_faces : nullptr);
+    if (provenance) {
+        provenance->clear();
+        provenance->reserve(itss.size());
+    }
     std::vector<TriangleMesh> out;
     out.reserve(itss.size());
     for (indexed_triangle_set &m : itss) {
         // The TriangleMesh constructor shall fill in the mesh statistics including volume.
         out.emplace_back(std::move(m));
-        if (TriangleMesh &triangle_mesh = out.back(); triangle_mesh.volume() < 0)
+        const bool reversed = out.back().volume() < 0;
+        if (reversed)
             // Some source mesh parts may be incorrectly oriented. Correct them.
-            triangle_mesh.flip_triangles();
-
+            out.back().flip_triangles();
+        if (provenance)
+            provenance->push_back({std::move(source_faces[out.size() - 1]), reversed});
     }
     return out;
 }

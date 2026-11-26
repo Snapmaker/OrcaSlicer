@@ -1918,3 +1918,40 @@ TEST_CASE("Intersection remap keeps positive-area terminal overlaps in either wi
         }
     }
 }
+
+TEST_CASE("Global smooth preserves a world-sized stroke on differently scaled stored meshes", "[PaintRemap][Smooth][SmoothScaleRegression]")
+{
+    for (float stored_scale : {0.1f, 1.f, 100.f}) {
+        indexed_triangle_set sheet;
+        sheet.vertices = {Vec3f(0, 0, 0), Vec3f(stored_scale, 0, 0),
+                          Vec3f(stored_scale, stored_scale, 0), Vec3f(0, stored_scale, 0)};
+        sheet.indices = {stl_triangle_vertex_indices(0, 1, 2), stl_triangle_vertex_indices(0, 2, 3)};
+        const TriangleMesh mesh(sheet);
+        const double world_scale = 100.0 / stored_scale;
+        const Transform3d placement = scale_transform(Vec3d::Constant(world_scale));
+        for (auto state : {EnforcerBlockerType::ENFORCER, EnforcerBlockerType::BLOCKER,
+                           EnforcerBlockerType::Extruder3, EnforcerBlockerType::Extruder4}) {
+            TriangleSelector selector(mesh);
+            const Vec3f center = stored_scale * Vec3f(0.55f, 0.45f, 0);
+            auto cursor = TriangleSelector::SinglePointCursor::cursor_factory(
+                center, center + stored_scale * Vec3f::UnitZ(), 3.f, TriangleSelector::CursorType::CIRCLE,
+                placement, TriangleSelector::ClippingPlane());
+            selector.select_patch(0, std::move(cursor), state, placement, true);
+            const auto [baseline, baseline_center] = painted_area_and_centroid(selector.get_facets(state));
+            REQUIRE(baseline * world_scale * world_scale > 5.f);
+            bool ok = false;
+            std::vector<std::pair<int, int>> origins;
+            const auto smoothed = TriangleMeshDeal::smooth_triangle_mesh(mesh, ok, &origins);
+            REQUIRE(ok);
+            const auto data = TriangleSelector::remap_painting_smooth(sheet, selector.serialize(), smoothed.its, origins, std::nullopt);
+            const auto [area, centroid] = painted_area_and_centroid(painted_facets(smoothed, data, state));
+            INFO("stored scale=" << stored_scale << " state=" << int(state)
+                 << " world area=" << area * world_scale * world_scale << " baseline=" << baseline * world_scale * world_scale);
+            // The stroke is strictly inside the central child of its parent.
+            // That child's edge-midpoint vertices stay in place under Loop on
+            // this planar sheet, so its expected painted area is unchanged.
+            CHECK_THAT(area, WithinAbs(baseline, baseline * 0.05f));
+            CHECK((centroid - baseline_center).norm() * world_scale < 0.2);
+        }
+    }
+}

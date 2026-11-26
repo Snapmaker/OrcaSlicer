@@ -3545,7 +3545,7 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
     {
         std::array<Vec2f, 3> lam;    // (lambda0, lambda1) corners
         EnforcerBlockerType state;
-        float               scale;   // mean 3D edge length of the leaf
+        float               scale;   // mean edge length in the parent barycentric domain
     };
     auto gather_leaves = [&source_selector](int parent) {
         std::vector<SourceLeaf> leaves;
@@ -3576,7 +3576,7 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
                 SourceLeaf leaf;
                 leaf.lam   = { to_lam(v0), to_lam(v1), to_lam(v2) };
                 leaf.state = tr.get_state();
-                leaf.scale = ((v1 - v0).norm() + (v2 - v1).norm() + (v0 - v2).norm()) / 3.f;
+                leaf.scale = ((leaf.lam[1] - leaf.lam[0]).norm() + (leaf.lam[2] - leaf.lam[1]).norm() + (leaf.lam[0] - leaf.lam[2]).norm()) / 3.f;
                 leaves.push_back(leaf);
             }
         };
@@ -3649,16 +3649,14 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
             return;
         }
 
-        // Conflict: descend while the region is still larger than the local
-        // painting scale. At the limit the sub-face stays as it is (blank
-        // unless existing data painted it) - never expands blank regions.
-        const Triangle& cur = target_selector.m_triangles[facet_idx];
-        const Vec3f a = target_selector.m_vertices[cur.verts_idxs[0]].v;
-        const Vec3f b = target_selector.m_vertices[cur.verts_idxs[1]].v;
-        const Vec3f c = target_selector.m_vertices[cur.verts_idxs[2]].v;
-        const float longest = std::max({ (b - a).norm(), (c - b).norm(), (a - c).norm() });
+        // Resolve the boundary in the SAME parameter domain as the source
+        // painting. A fixed mesh-unit floor loses world-sized strokes on small
+        // meshes displayed at a large scale. Two extra refinements relative to
+        // the source leaf scale bound boundary quantization independently of
+        // object placement and of the smoothed surface's geometric distortion.
+        const float longest = std::max({ (S[1] - S[0]).norm(), (S[2] - S[1]).norm(), (S[0] - S[2]).norm() });
         constexpr int max_depth = 16;
-        if (depth < max_depth && longest > std::max(local_scale, 0.05f) && try_subdivide(facet_idx)) {
+        if (depth < max_depth && longest > 0.25f * local_scale && try_subdivide(facet_idx)) {
             const Triangle split_tr        = target_selector.m_triangles[facet_idx]; // copy: recursion may reallocate
             const int       num_of_children = split_tr.number_of_split_sides() + 1;
             // Child regions of a full split (perform_split case 3):
@@ -3671,6 +3669,12 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
             };
             for (int i = 0; i < num_of_children; ++i)
                 resolve(split_tr.children[i], child_S[i], depth + 1, leaves);
+        } else if (leaf_c >= 0) {
+            // A terminal boundary cell still needs a state. Leaving it blank
+            // systematically erodes strokes (and can erase small ones). Use
+            // the source leaf at its parameter-space centroid, including NONE
+            // for erased regions, at the source-relative resolution above.
+            target_selector.CollapseSubtreeToState(facet_idx, leaves[leaf_c].state);
         }
     };
 

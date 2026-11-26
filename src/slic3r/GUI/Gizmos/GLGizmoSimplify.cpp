@@ -13,6 +13,7 @@
 
 #include <GL/glew.h>
 
+#include <boost/log/trivial.hpp>
 #include <thread>
 
 namespace Slic3r::GUI {
@@ -528,19 +529,70 @@ void GLGizmoSimplify::process()
     }, std::move(its));
 }
 
+// Exact comparison of the simplification result against the current mesh:
+// identical vertex positions and identical face indices in the same order mean
+// the simplification changed nothing. Any actual change (position or topology)
+// counts as a change - face count alone is not enough. The simplification result
+// is an indexed_triangle_set (m_state.result), the current mesh a TriangleMesh.
+static bool meshes_identical(const TriangleMesh& a, const indexed_triangle_set& b)
+{
+    if (a.its.vertices.size() != b.vertices.size() || a.its.indices.size() != b.indices.size())
+        return false;
+    for (size_t i = 0; i < a.its.vertices.size(); ++i)
+        if (a.its.vertices[i] != b.vertices[i])
+            return false;
+    for (size_t i = 0; i < a.its.indices.size(); ++i)
+        if (a.its.indices[i] != b.indices[i])
+            return false;
+    return true;
+}
+
 void GLGizmoSimplify::apply_simplify() {
 
     const Selection& selection = m_parent.get_selection();
     int object_idx = selection.get_object_idx();
 
-    auto plater = wxGetApp().plater();
-    plater->take_snapshot(GUI::format("Simplify %1%", m_volume->name));
-    plater->clear_before_change_mesh(object_idx);
-
     ModelVolume* mv = get_model_volume(selection, wxGetApp().model());
     assert(mv == m_volume);
 
-    mv->set_mesh(std::move(*m_state.result));
+    // No-change protection: when the simplifier produced exactly the current mesh
+    // (repeated simplify, 0% / no-op run), keep mesh and painting untouched - a
+    // remap onto an identical mesh could only drift at resolution-limit boundaries.
+    if (meshes_identical(mv->mesh(), *m_state.result)) {
+        BOOST_LOG_TRIVIAL(info) << "apply_simplify: result mesh is identical to the current one; mesh and painting kept as-is";
+        m_state.result.reset();
+        close();
+        return;
+    }
+
+    auto plater = wxGetApp().plater();
+    plater->take_snapshot(GUI::format("Simplify %1%", m_volume->name));
+    const bool keep_painting = GUI::wxGetApp().app_config->get_bool("keep_painting");
+    BOOST_LOG_TRIVIAL(info) << "apply_simplify: keep_painting=" << (keep_painting ? "true" : "false")
+                            << ", object_idx=" << object_idx
+                            << ", painting_before=" << (m_volume->is_any_painted() ? "present" : "none")
+                            << ", geometry_faces=" << m_state.result->indices.size()
+                            << " (was " << mv->mesh().its.indices.size() << ")";
+    if (!keep_painting) {
+        plater->clear_before_change_mesh(object_idx);
+    }
+
+    // Save paint
+    std::optional<TriangleSelector::SavedPainting> saved_painting = keep_painting ? mv->save_painting() :
+                                                                                    std::optional<TriangleSelector::SavedPainting>{};
+    mv->set_mesh_preserving_init_shift(std::move(*m_state.result));
+    // Remap paint. Simplification moves the surface away from the original one, so
+    // the intersection-based remap would leave fragmented gaps; use the projection
+    // state-query transfer instead (the painting is re-established over the
+    // simplified surface as one continuous region assignment). Both meshes share
+    // the volume's stored coordinate space, so the relative transform is the
+    // identity (a pure translation, as before, is equivalent). The helper above
+    // keeps the source-file centering shift (init_shift) on the rebuilt mesh, so
+    // a later reload from disk / replace with STL still relinks the painting at
+    // the right offset.
+    mv->restore_painting(saved_painting, Transform3d::Identity(), false, /*transfer_by_projection=*/true);
+    BOOST_LOG_TRIVIAL(info) << "apply_simplify: snapshot=" << (saved_painting ? "captured" : "none")
+                            << ", painting_after_restore=" << (mv->is_any_painted() ? "present" : "LOST");
     m_state.result.reset();
     mv->calculate_convex_hull();
     mv->invalidate_convex_hull_2d();

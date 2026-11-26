@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <set>
 #include <utility>
@@ -19,7 +20,7 @@ std::atomic<uint64_t> s_local_its_call_count{0};
 } // namespace
 
 namespace Slic3r {
-TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok)
+TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bool& ok, std::vector<std::pair<int, int>>* out_origins)
 {
     if (mesh.its.vertices.empty() || mesh.its.indices.empty())
     {
@@ -38,17 +39,26 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
     // edge pairing inside the subdivision until it runs out of bounds. No menu check
     // stops such input - repeated faces keep open_edges at 0, because the
     // opposite-direction edge pairs still match.
+    // The first occurrence of a duplicated face is kept; kept_to_original maps the
+    // kept face index back to the ORIGINAL input face index (paint remapping needs
+    // that reference - faces are never reordered afterwards, vertex compaction only
+    // renumbers vertices).
+    std::vector<int> kept_to_original;
     {
         std::set<std::array<int, 3>>             seen_faces;
         std::vector<stl_triangle_vertex_indices> unique_faces;
         unique_faces.reserve(input.indices.size());
-        for (const auto& face : input.indices) {
+        kept_to_original.reserve(input.indices.size());
+        for (int face_idx = 0; face_idx < int(input.indices.size()); ++face_idx) {
+            const auto& face = input.indices[face_idx];
             // Sort the three indexes so the key matches a face regardless of rotation
             // and winding: both kinds of repeat make the edges non-manifold for igl::loop().
             std::array<int, 3> key = {face(0), face(1), face(2)};
             std::sort(key.begin(), key.end());
-            if (seen_faces.insert(key).second)
+            if (seen_faces.insert(key).second) {
                 unique_faces.push_back(face);
+                kept_to_original.push_back(face_idx);
+            }
         }
         input.indices = std::move(unique_faces);
     }
@@ -113,6 +123,16 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh(const TriangleMesh& mesh, bo
     {
         // Same as above for the face indices.
         its.indices.push_back(F.row(i).transpose());
+    }
+
+    // igl::loop() writes the four children of input face c to output rows 4c..4c+3
+    // in a fixed layout (see deps_src/libigl/igl/loop.cpp); map every output face
+    // back to its ORIGINAL input face and child ordinal.
+    if (out_origins) {
+        out_origins->clear();
+        out_origins->reserve(size_t(face_num));
+        for (int i = 0; i < face_num; ++i)
+            out_origins->emplace_back(kept_to_original[i / 4], i % 4);
     }
 
     TriangleMesh result_mesh(its);
@@ -797,6 +817,37 @@ TriangleMesh TriangleMeshDeal::smooth_triangle_mesh_local(const TriangleMesh& or
     // Build the full stats (neighbour graph, volume, bounding box, ...) only here,
     // when the result is actually applied, not during previewing.
     return TriangleMesh(smooth_triangle_mesh_local_its(origin_mesh.its, facet_indices, ok));
+}
+
+bool TriangleMeshDeal::estimated_local_subdivision_face_count(size_t total_faces, size_t painted_faces, int level, size_t &out)
+{
+    if (level <= 0 || painted_faces == 0) {
+        out = total_faces;
+        return true;
+    }
+    // Every step replaces each region face with at most 4 children.
+    size_t growth = 1;
+    for (int i = 0; i < level; ++i) {
+        if (growth > std::numeric_limits<size_t>::max() / 4)
+            return false;
+        growth *= 4;
+    }
+    const size_t added = growth - 1;
+    if (painted_faces > std::numeric_limits<size_t>::max() / added)
+        return false;
+    const size_t grown = painted_faces * added;
+    if (total_faces > std::numeric_limits<size_t>::max() - grown)
+        return false;
+    out = total_faces + grown;
+    return true;
+}
+
+bool TriangleMeshDeal::local_subdivision_exceeds_face_budget(size_t total_faces, size_t painted_faces, int level, size_t face_budget)
+{
+    size_t estimated = 0;
+    if (! estimated_local_subdivision_face_count(total_faces, painted_faces, level, estimated))
+        return true;
+    return estimated > face_budget;
 }
 
 uint64_t TriangleMeshDeal::smooth_triangle_mesh_local_its_call_count()

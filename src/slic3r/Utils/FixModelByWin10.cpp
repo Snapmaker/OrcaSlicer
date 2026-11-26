@@ -321,7 +321,7 @@ public:
 // returt FALSE, if fixing was canceled
 // fix_result is empty, if fixing finished successfully
 // fix_result containes a message if fixing failed
-bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::ProgressDialog& progress_dialog, const wxString& msg_header, std::string& fix_result)
+bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::ProgressDialog& progress_dialog, const wxString& msg_header, std::string& fix_result, bool keep_painting)
 {
     std::mutex mtx;
     std::condition_variable condition;
@@ -332,6 +332,10 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 	} progress;
 	std::atomic<bool>				canceled = false;
 	std::atomic<bool>				finished = false;
+	// 0 = running, 1 = committed, 2 = canceled, 3 = failed. Written only by the
+	// worker; read by the UI after `finished`, so the return value matches what
+	// was actually written back even when the cancel request raced the commit.
+	std::atomic<int>				result_status = 0;
 
 	std::vector<ModelVolume*> volumes;
 	if (volume_idx == -1)
@@ -341,7 +345,6 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 
 	// Executing the calculation in a background thread, so that the COM context could be created with its own threading model.
 	// (It seems like wxWidgets initialize the COM contex as single threaded and we need a multi-threaded context).
-	bool   success = false;
 	size_t ivolume = 0;
 	auto on_progress = [&mtx, &condition, &ivolume, &volumes, &progress](const char *msg, unsigned prcnt) {
 	    std::unique_lock<std::mutex> lock(mtx);
@@ -350,7 +353,24 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 		progress.updated = true;
 	    condition.notify_all();
 	};
-	auto worker_thread = boost::thread([&model_object, &volumes, &ivolume, on_progress, &success, &canceled, &finished]() {
+	auto worker_thread = boost::thread([&model_object, &volumes, &ivolume, on_progress, &result_status, &canceled, &finished,
+	                                    &progress, &mtx, &condition, keep_painting]() {
+		// Publish the final outcome. Ordering matters: the message is written
+		// into `progress` under the mutex FIRST, then the status, and only then
+		// `finished` - the UI observes `finished` as the release point, so it can
+		// never read a half-written final message. Every termination path must
+		// publish exactly once through this helper.
+		auto publish_final = [&](int status, std::string message) {
+			{
+				std::unique_lock<std::mutex> lock(mtx);
+				progress.message = std::move(message);
+				progress.percent = 100;
+				progress.updated = true;
+			}
+			condition.notify_all();
+			result_status = status;
+			finished      = true;
+		};
 		try {
 			std::vector<TriangleMesh> meshes_repaired;
 			meshes_repaired.reserve(volumes.size());
@@ -399,27 +419,35 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 	 				throw Slic3r::RuntimeError(L("Repaired 3mf file contains more than one volume"));
 	 			meshes_repaired.emplace_back(std::move(model.objects.front()->volumes.front()->mesh()));
 			}
-			for (size_t i = 0; i < volumes.size(); ++ i) {
-				volumes[i]->set_mesh(std::move(meshes_repaired[i]));
-				volumes[i]->calculate_convex_hull();
-				volumes[i]->invalidate_convex_hull_2d();
-				volumes[i]->set_new_unique_id();
+				// Two-phase commit: prepare the painting remaps with cancel checks
+				// between volumes, then apply all meshes and paintings together.
+				// Once the commit starts, no further cancel checks run, so the
+				// returned status always matches what was actually written back.
+				std::vector<ModelObject::RepairCommitItem> items;
+				items.reserve(volumes.size());
+				for (size_t i = 0; i < volumes.size(); ++i)
+					items.push_back({ volumes[i], std::move(meshes_repaired[i]) });
+				std::string commit_error;
+				const ModelObject::RepairCommitResult commit_result = model_object.commit_repaired_meshes_with_painting(
+				    items, keep_painting, [&canceled]() { return canceled.load(); }, &commit_error);
+				if (commit_result == ModelObject::RepairCommitResult::Canceled) {
+					publish_final(2, L("Repair canceled"));
+				} else if (commit_result == ModelObject::RepairCommitResult::Failed) {
+					publish_final(3, commit_error.empty() ? std::string("Repair failed") : commit_error);
+				} else {
+					--ivolume;
+					publish_final(1, L("Repair finished"));
+				}
+			} catch (RepairCanceledException & /* ex */) {
+				publish_final(2, L("Repair canceled"));
+			} catch (const std::exception &ex) {
+				publish_final(3, ex.what());
+			} catch (...) {
+				// A non-standard exception would otherwise leave `finished` unset
+				// and the UI would wait forever.
+				publish_final(3, L("Repair failed with an unknown exception"));
 			}
-			model_object.invalidate_bounding_box();
-			-- ivolume;
-			on_progress(L("Repair finished"), 100);
-			success  = true;
-			finished = true;
-		} catch (RepairCanceledException & /* ex */) {
-			canceled = true;
-			finished = true;
-			on_progress(L("Repair canceled"), 100);
-		} catch (std::exception &ex) {
-			success = false;
-			finished = true;
-			on_progress(ex.what(), 100);
-		}
-	});
+		});
     while (! finished) {
 		std::unique_lock<std::mutex> lock(mtx);
 		condition.wait_for(lock, std::chrono::milliseconds(250), [&progress]{ return progress.updated; });
@@ -431,15 +459,25 @@ bool fix_model_by_win10_sdk_gui(ModelObject &model_object, int volume_idx, GUI::
 		progress.updated = false;
     }
 
-	if (canceled) {
+	// The worker wrote the final message before publishing `finished`; read it
+	// under the same mutex anyway, so the access pattern stays uniform.
+	std::string final_message;
+	{
+		std::unique_lock<std::mutex> lock(mtx);
+		final_message = progress.message;
+	}
+	if (result_status == 2) {
 		// Nothing to show.
-	} else if (success) {
+	} else if (result_status == 1) {
 		fix_result = "";
-	} else {
-		fix_result = progress.message;
+	} else if (result_status == 3) {
+		fix_result = final_message;
 	}
 	worker_thread.join();
-	return !canceled;
+	// A cancel request that arrived while the commit was already running did
+	// not stop the commit (and must not report a cancellation): the result
+	// status, not the request flag, decides the return value.
+	return result_status != 2;
 }
 
 } // namespace Slic3r

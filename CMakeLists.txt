@@ -121,9 +121,15 @@ else()
         endif()
 endif()
 
-set(SNAP_LOG_HMAC_SECRET "c25hcG1ha2VyLU9yY2E" CACHE STRING
-    "Public SnapLog gateway signing key (not a user credential)")
-add_definitions("-DSNAP_LOG_HMAC_SECRET=\"${SNAP_LOG_HMAC_SECRET}\"")
+unset(SNAP_LOG_PUBLIC_HMAC_SECRET CACHE)
+set(SNAP_LOG_PUBLIC_HMAC_SECRET "$ENV{SNAP_LOG_PUBLIC_HMAC_SECRET}")
+if(SNAP_LOG_PUBLIC_HMAC_SECRET MATCHES "[^A-Za-z0-9+/=_-]")
+    message(FATAL_ERROR "SNAP_LOG_PUBLIC_HMAC_SECRET contains characters that cannot be passed safely as a compile definition")
+endif()
+
+function(snapmaker_orca_apply_snaplog_definitions target)
+    target_compile_definitions(${target} PRIVATE SNAP_LOG_PUBLIC_HMAC_SECRET="${SNAP_LOG_PUBLIC_HMAC_SECRET}")
+endfunction()
 
 option(SLIC3R_STATIC 			"Compile Snapmaker_Orca with static libraries (Boost, TBB, glew)" ${SLIC3R_STATIC_INITIAL})
 option(SLIC3R_GUI    			"Compile Snapmaker_Orca with GUI components (OpenGL, wxWidgets)" 1)

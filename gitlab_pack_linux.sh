@@ -693,7 +693,9 @@ pack_flatpak() {
     cleanup_flatpak_artifacts() {
         rm -f "${FLATPAK_LOCAL_MANIFEST}"
         rm -rf "${FLATPAK_LOCAL_STUBS_DIR}"
+        rm -f "${REPO_DIR}/snaplog_public_hmac_secret.txt"
     }
+    trap cleanup_flatpak_artifacts EXIT
 
     local MANIFEST_TO_USE="$MANIFEST_REL"
 
@@ -820,6 +822,16 @@ EOF
     [[ "$FLATPAK_ENABLE_CCACHE" == true ]] && BUILDER_ARGS+=(--ccache)
 
     echo -e "${BLUE}Running flatpak-builder (sandbox compile; often 30+ minutes)...${NC}"
+    # The Flatpak sandbox does not inherit the host environment; the manifest
+    # reads this file inside the sandbox. A previous run killed by SIGKILL/OOM
+    # can leave a stale file behind; never let it leak into this build.
+    rm -f "$REPO_DIR/snaplog_public_hmac_secret.txt"
+    if [[ -n "${SNAP_LOG_PUBLIC_HMAC_SECRET:-}" ]]; then
+        printf '%s' "$SNAP_LOG_PUBLIC_HMAC_SECRET" > "$REPO_DIR/snaplog_public_hmac_secret.txt"
+        chmod 600 "$REPO_DIR/snaplog_public_hmac_secret.txt"
+    else
+        echo -e "${YELLOW}SNAP_LOG_PUBLIC_HMAC_SECRET is empty; SnapLog upload will be disabled${NC}"
+    fi
     flatpak-builder "${BUILDER_ARGS[@]}" "$FLATPAK_BUILD_DIR/build-dir" "$MANIFEST_TO_USE"
 
     if [[ ! -d "$FLATPAK_BUILD_DIR/repo" ]]; then

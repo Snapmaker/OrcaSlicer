@@ -100,7 +100,7 @@ public:
         std::string                     health_path{"/api/health"};
         std::string                     websocket_path{"/ws"};
         std::string                     device_path{"/api/cache/all"};
-        std::string                     account_path{"/api/account"};
+        std::string                     account_path{"/api/account/profile"};
         std::string                     store_path{"/api/store"};
         std::string                     region_path{"/api/region"};
         std::string                     app_config_path{"/api/config"};

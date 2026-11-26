@@ -66,6 +66,27 @@ wxDECLARE_EVENT(EVT_VOLUME_DETACHED, VolumeDetachedEvent);
 
 wxTopLevelWindow* find_toplevel_parent(wxWindow *window);
 
+// Register/unregister the global wxModalDialogHook used to track hooked modal
+// ShowModal() scopes (including non-DPIAware wxDialogs, native OS dialogs such as
+// wxMessageDialog / wxFileDialog that call WX_HOOK_MODAL_DIALOG(), and unwinding
+// GTK/macOS frames where EndModal() clears IsModal() before ShowModal() returns).
+// GUI thread only.
+void register_modal_dialog_hook();
+void unregister_modal_dialog_hook();
+
+// Return the innermost live top-level wxDialog currently inside ShowModal(), or
+// nullptr if none or if the innermost modal is a native OS dialog not registered
+// in wxTopLevelWindows (never falls through to an outer wxDialog beneath it).
+// GUI thread only.
+wxDialog* top_active_modal_dialog();
+
+// End only the innermost active wxDialog with wxID_CANCEL (wxEventLoopBase::Exit
+// only succeeds on the currently running innermost loop, and using wxID_CANCEL ensures
+// callers treat forced abort identically to user cancellation without side effects).
+// Returns true if EndModal was invoked; returns false if no modal is active or the
+// innermost modal is a non-abortable native OS dialog. GUI thread only.
+bool abort_top_modal_dialog();
+
 void on_window_geometry(wxTopLevelWindow *tlw, std::function<void()> callback);
 
 

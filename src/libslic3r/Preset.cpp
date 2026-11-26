@@ -2696,6 +2696,14 @@ const Preset* PresetCollection::get_preset_parent(const Preset& child) const
             preset;
 }
 
+const DynamicPrintConfig& PresetCollection::get_config_for_preset(const Preset& preset) const
+{
+    // The filament tab edits a live preset. Callers that classify a preset by
+    // name must see those unsaved changes when it is the current edited preset.
+    const Preset& edited_preset = get_edited_preset();
+    return edited_preset.name == preset.name ? edited_preset.config : preset.config;
+}
+
 const Preset *PresetCollection::get_preset_base(const Preset &child) const
 {
     if (child.is_system || child.is_default)

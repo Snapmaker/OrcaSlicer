@@ -137,12 +137,12 @@ TEST_CASE("JSON-RPC frames are classified and requests are built", "[gateway][pr
     REQUIRE(result_frame.id == 7);
 
     const RpcFrame notification_frame = classify_jsonrpc_message(
-        json{{"jsonrpc", "2.0"}, {"method", "notify.account.changed"}, {"params", json{{"user", "u"}}}});
+        json{{"jsonrpc", "2.0"}, {"method", "notify.account.profile_changed"}, {"params", json{{"user", "u"}}}});
     REQUIRE(notification_frame.type == RpcFrameType::Notification);
-    REQUIRE(notification_frame.method == "notify.account.changed");
+    REQUIRE(notification_frame.method == "notify.account.profile_changed");
     REQUIRE(notification_frame.params == json{{"user", "u"}});
 
-    const RpcFrame notification_without_params = classify_jsonrpc_message(json{{"jsonrpc", "2.0"}, {"method", "notify.account.changed"}});
+    const RpcFrame notification_without_params = classify_jsonrpc_message(json{{"jsonrpc", "2.0"}, {"method", "notify.account.profile_changed"}});
     REQUIRE(notification_without_params.type == RpcFrameType::Notification);
     REQUIRE(notification_without_params.params == json::object());
 

@@ -43,7 +43,6 @@
 #include <thread>
 #include <string_view>
 #include <cstdio>
-#include <random>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/filesystem/fstream.hpp>
 #include <boost/algorithm/string.hpp>
@@ -1054,7 +1053,7 @@ void GUI_App::post_init()
                     input_files.push_back(wxString::FromUTF8(file));
                 }
                 this->plater()->set_project_filename(_L("Untitled"));
-                this->plater()->load_files(input_files);
+                this->plater()->load_files(input_files, "command_line");
                 try {
                     if (!input_files.empty()) {
                         std::string           file_path = input_files.front().ToStdString();
@@ -2471,6 +2470,7 @@ int GUI_App::OnExit()
     m_uninstall_watcher_registration.stop();
 #endif
     WidgetInspector::disable();
+    GUI::unregister_modal_dialog_hook();
 
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
 
@@ -2543,6 +2543,55 @@ class wxBoostLog : public wxLog
     }
 };
 
+void GUI_App::initialize_snaplog()
+{
+    namespace snap = ::Slic3r::SnapLog::v1;
+    snap::SnapLogConfig snap_cfg;
+    const std::string snap_cc = app_config ? app_config->get_country_code() : "";
+    snap::apply_production_snaplog_site(snap_cfg, snap_cc);
+    snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
+    // Prefer the OS/hardware machine id so SnapLog and Sentry identify the
+    // same physical machine. getMachineId() is empty on Linux and can fail on
+    // Windows/macOS; fall back to the per-install instance id so X-Client-Id
+    // stays non-empty and uploads keep working.
+    std::string machine_id = common::getMachineId();
+    while (!machine_id.empty() && (machine_id.back() == '\0' || machine_id.back() == '\r' || machine_id.back() == '\n' ||
+                                   machine_id.back() == ' ' || machine_id.back() == '\t'))
+        machine_id.pop_back();
+    if (machine_id.empty() && app_config) {
+        machine_id = ::Slic3r::instance_id::ensure(*app_config);
+    }
+
+    snap::SnapLogDeps deps;
+    deps.do_request            = snap::make_production_do_request(snap_cfg);
+    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
+    deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
+    deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
+    deps.now_ms                = []() -> int64_t {
+        return static_cast<int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    };
+
+    snap_cfg.app_version = SLIC3R_BUILD_ID;
+    snap_cfg.profile_version = common::get_profile_version();
+    snap_cfg.control_version = read_cli_version_from_resources();
+    const wxScopedCharBuffer os_buffer = wxGetOsDescription().ToUTF8();
+    snap_cfg.os_version.assign(os_buffer.data(), os_buffer.length());
+    snap_cfg.process_id = std::to_string(get_current_pid());
+    snap_cfg.home_for_redact = data_dir();
+    snap_cfg.public_hmac_secret = SNAP_LOG_PUBLIC_HMAC_SECRET;
+    snap_cfg.now_ms = deps.now_ms;
+
+    snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
+}
+
+void GUI_App::reconfigure_snaplog_site()
+{
+    if (!app_config)
+        return;
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().reconfigure_site(app_config->get_country_code());
+}
+
 bool GUI_App::on_init_inner()
 {
 #if defined(__linux__) || defined(__LINUX__)
@@ -2586,6 +2635,8 @@ bool GUI_App::on_init_inner()
     CBaseException::set_log_folder(data_dir());
 #endif
 
+    GUI::register_modal_dialog_hook();
+
 #ifdef __WINDOWS__
     m_session_end_reset_timer.SetOwner(this);
     Bind(wxEVT_TIMER, [this](wxTimerEvent&) { reset_session_end(); }, m_session_end_reset_timer.GetId());
@@ -2610,8 +2661,7 @@ bool GUI_App::on_init_inner()
                 return;
             }
         }
-        for (auto d : dialogStack)
-            d->EndModal(wxID_ABORT);
+        GUI::abort_all_modal_dialogs();
     });
 #endif
 
@@ -2877,14 +2927,16 @@ bool GUI_App::on_init_inner()
                 wxString      description_text = wxString::FromUTF8(this->app_config->get("upgrade", "description"));
                 std::string   download_url = this->app_config->get("upgrade", "url");
                 wxString tips = wxString::Format(_L("Click to download new version in default browser: %s"), version_str);
-                DownloadDialog dialog(this->mainframe,
-                    tips,
-                    _L("The Snapmaker Orca needs an upgrade"),
-                    false,
-                    wxCENTER | wxICON_INFORMATION);
-                dialog.SetExtendedMessage(description_text);
-
-                int result = dialog.ShowModal();
+                int result = wxID_CANCEL;
+                {
+                    DownloadDialog dialog(this->mainframe,
+                        tips,
+                        _L("The Snapmaker Orca needs an upgrade"),
+                        false,
+                        wxCENTER | wxICON_INFORMATION);
+                    dialog.SetExtendedMessage(description_text);
+                    result = dialog.ShowModal();
+                }
                 switch (result)
                 {
                  case wxID_YES:
@@ -3111,6 +3163,7 @@ bool GUI_App::on_init_inner()
             for (const auto& url : m_pending_mac_open_urls)
                 start_download(into_u8(url));
             m_pending_mac_open_urls.clear();
+            report_app_launch();
 #endif // __APPLE__
 
             update_publish_status();
@@ -3136,63 +3189,69 @@ bool GUI_App::on_init_inner()
                        "configuration file.\nPlease note, application settings will be lost, but printer profiles will not be affected."));
     }
 
-    namespace snap = ::Slic3r::SnapLog::v1;
-    snap::SnapLogConfig snap_cfg;
-    std::string snap_cc   = app_config ? app_config->get_country_code() : "";
-    snap_cfg.gateway_base = (snap_cc.find("CN") != std::string::npos) ?
-                                "https://api.snapmaker.cn"
-                                :
-                                "https://api.snapmaker.com";
-    snap_cfg.hmac_secret = SNAP_LOG_HMAC_SECRET;
-    snap_cfg.spool_dir = (boost::filesystem::path(data_dir()) / "log_upload_spool").string();
-    std::string machine_id;
-    if (app_config) {
-        machine_id = ::Slic3r::instance_id::ensure(*app_config);
-    }
-
-    snap::SnapLogDeps deps;
-    deps.do_request            = snap::make_production_do_request(snap_cfg);
-    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
-    deps.consent_ok            = [privacy_consent]() { return privacy_consent; };
-    deps.machine_id            = [mid = std::move(machine_id)]() -> std::string { return mid; };
-    deps.now_ms                = []() -> int64_t {
-        return static_cast<int64_t>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    };
-
-    snap_cfg.app_version = SLIC3R_BUILD_ID;
-    snap_cfg.app_build   = GIT_COMMIT_HASH;
-#if defined(_WIN32)
-    snap_cfg.platform = "Windows";
-#elif defined(__APPLE__)
-    snap_cfg.platform = "macOS";
-#elif defined(__linux__)
-    snap_cfg.platform = "Linux";
-#else
-    snap_cfg.platform = "Unknown";
-#endif
-    snap_cfg.os_version  = wxGetOsDescription().ToUTF8().data();
-    {
-        std::random_device                          rd;
-        std::uniform_int_distribution<unsigned int> dist(0, 255);
-        char                                        hex[33];
-        for (int i = 0; i < 16; ++i) {
-            std::snprintf(hex + i * 2, 3, "%02x", dist(rd));
-        }
-        snap_cfg.session_id.assign(hex, 32);
-    }
-    snap_cfg.process_id = std::to_string(get_current_pid());
-    if (app_config) {
-        snap_cfg.region = app_config->get_country_code();
-    }
-    snap_cfg.home_for_redact = data_dir();
-
-    snap::SnapLogClient::instance().init(std::move(deps), std::move(snap_cfg));
+    initialize_snaplog();
     BOOST_LOG_TRIVIAL(info) << "SnapLogClient initialized";
+
+#ifndef __APPLE__
+    // macOS reports after pending MacOpenURLs are consumed in the idle handler.
+    report_app_launch();
+#endif
 
     profiler.mark("on_init_inner return");
 
     return true;
+}
+
+void GUI_App::report_app_launch()
+{
+    const bool  launched_with_file = this->init_params && !this->init_params->input_files.empty();
+    std::string launch_file_type   = "none";
+    std::string open_method        = "normal";
+    if (launched_with_file) {
+        const std::string& first_file = this->init_params->input_files.front();
+        const bool         is_url     = is_supported_open_protocol(first_file) || boost::algorithm::starts_with(first_file, "http://") ||
+                                        boost::algorithm::starts_with(first_file, "https://");
+        open_method                   = is_url ? "url" : "file";
+        if (!is_url) {
+            const std::string filename = boost::to_lower_copy(boost::filesystem::path(first_file).filename().string());
+            static const std::vector<std::string_view> allowed_extensions = {"3mf", "stl",   "oltp",      "stp",     "step", "svg", "amf",
+                                                                             "obj", "gcode", "gcode.3mf", "zip.amf", "xml",  "ply"};
+            for (const auto allowed : allowed_extensions) {
+                if (filename.size() >= allowed.size()) {
+                    const size_t pos = filename.size() - allowed.size();
+                    if ((pos == 0 || filename[pos - 1] == '.') && filename.compare(pos, allowed.size(), allowed) == 0) {
+                        launch_file_type = std::string(allowed);
+                        break;
+                    }
+                }
+            }
+            if (launch_file_type == "none")
+                launch_file_type = "unknown";
+        }
+    }
+#ifdef __APPLE__
+    if (m_url_open_pending) {
+        open_method      = "url";
+        launch_file_type = "none";
+    }
+#endif
+
+    const SnapLog::v1::SnapLogExt ext{{
+        {"firstLaunch", m_app_conf_exists ? "false" : "true"},
+        {"openMethod", open_method},
+        {"launchFileType", launch_file_type},
+        {"language", into_u8(current_language_code_safe())},
+        {"userMode", get_mode_str()},
+    }};
+    // On first run the privacy wizard grants consent after on_init_inner,
+    // so keep the launch payload until consent becomes true.
+    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
+    if (privacy_consent) {
+        SNAP_LOG_INFO(SnapLog::v1::SnapEvent::APP_LAUNCH, ext, "app launch");
+    } else {
+        m_pending_app_launch     = true;
+        m_pending_app_launch_ext = ext;
+    }
 }
 
 void GUI_App::copy_network_if_available()
@@ -4623,8 +4682,19 @@ void GUI_App::apply_gateway_account(const Gateway::AccountSnapshot& snapshot)
     BOOST_LOG_TRIVIAL(info) << "[gateway][account] " << (login_changed ? "login state changed: " : "account updated: ")
                             << (snapshot.is_login ? "online" : "offline") << ", userid=" << snapshot.userid
                             << ", nickname_present=" << std::boolalpha << !snapshot.nickname.empty();
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_token(snapshot.token);
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(snapshot.userid);
+    // An offline frame is anonymous even if it carries a stale userid.
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_user_id(snapshot.is_login ? snapshot.userid : std::string{});
+
+    if (login_changed) {
+        if (snapshot.is_login) {
+            SNAP_LOG_INFO(SnapLog::v1::SnapEvent::USER_LOGIN_RESULT,
+                {
+                    {"source", "gateway"},
+                    {"success", "true"},
+                },
+                "user login success");
+        }
+    }
 }
 
 void GUI_App::refresh_gateway_account()
@@ -4640,14 +4710,14 @@ void GUI_App::refresh_gateway_account()
             if (m_is_closing || generation != m_gateway_account_refresh_generation.load())
                 return;
             if (result.error) {
-                BOOST_LOG_TRIVIAL(warning) << "[gateway][account] GET /api/account failed: " << result.error.message;
+                BOOST_LOG_TRIVIAL(warning) << "[gateway][account] GET /api/account/profile failed: " << result.error.message;
                 return;
             }
             Gateway::AccountSnapshot snapshot;
             if (Gateway::GatewayAccount::parse(result.value, snapshot))
                 apply_gateway_account(snapshot);
             else
-                BOOST_LOG_TRIVIAL(warning) << "[gateway][account] invalid /api/account response";
+                BOOST_LOG_TRIVIAL(warning) << "[gateway][account] invalid /api/account/profile response";
         });
     });
 }
@@ -5575,33 +5645,11 @@ void GUI_App::request_version_from_config(bool show_tips, bool by_user)
 
     auto http = Http::post(url);
     http.header("Content-Type", "application/json");
-    // Gateway auth (snapmaker-config): the SM account JWT goes in Authorization as a raw
-    // token, no "Bearer " prefix — same convention as the SM login requests. The gateway
-    // resolves the gray-rule variable userId from it; anonymous requests stay valid
-    // (update check must work without login) and rules evaluate with userId = nil.
-    // The account token must never travel over plaintext http — the orca_config_api_url
-    // override can point at any URL. Internal testing builds are the only exception,
-    // because the dev gateway has no TLS.
-    bool allow_http_auth = false;
-#if BBL_INTERNAL_TESTING
-    allow_http_auth = true;
-#endif
-    bool with_auth = false;
-    const Gateway::AccountSnapshot& account = m_gateway_account;
-    if (account.is_login) {
-        const std::string& auth_token = account.token;
-        if (!auth_token.empty()) {
-            if (url.rfind("https://", 0) == 0 || allow_http_auth) {
-                http.header("Authorization", auth_token);
-                with_auth = true;
-            } else {
-                BOOST_LOG_TRIVIAL(warning) << "config/get: refusing to send Authorization over non-https URL";
-            }
-        }
-    }
+    // The account profile no longer carries a token, so config/get is anonymous.
+    // The gateway resolves the gray-rule userId from its own session.
     // Normal-path diagnostics stay at info so the release warning stream is reserved
     // for anomalies; failure paths log at warning.
-    BOOST_LOG_TRIVIAL(info) << format("config/get: posting to `%1%` %2%, deviceId `%3%`", url, with_auth ? "with Authorization" : "anonymously", req["deviceId"].get<std::string>());
+    BOOST_LOG_TRIVIAL(info) << format("config/get: posting to `%1%` anonymously, deviceId `%2%`", url, req["deviceId"].get<std::string>());
     http.set_post_body(req_body)
         .timeout_connect(TIMEOUT_CONNECT)
         // Total timeout: a stalled transfer after a successful connect must still
@@ -6303,8 +6351,10 @@ void GUI_App::query_gateway_current_device()
                                    }
                                    m_gateway_device.serial_number = current_device->serial_number;
                                    m_gateway_device.connected     = true;
+                                   ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn(m_gateway_device.serial_number);
                                    BOOST_LOG_TRIVIAL(info)
-                                       << "[gateway][device-status] current device applied, sn=" << m_gateway_device.serial_number;
+                                       << "[gateway][device-status] current device applied, sn_present="
+                                       << !m_gateway_device.serial_number.empty();
 
                                    if (mainframe != nullptr && mainframe->plater() != nullptr)
                                        mainframe->plater()->sidebar().update_all_preset_comboboxes(false);
@@ -6316,15 +6366,13 @@ void GUI_App::query_gateway_current_device()
                                    m_gateway_device.watched_serial_number = serial_number;
                                    m_gateway_service->watch_device(nlohmann::json{{"sn", serial_number}},
                                                                    [serial_number](Gateway::GatewayError watch_error,
-                                                                                   const nlohmann::json& watch_result) {
+                                                   const nlohmann::json& /*watch_result*/) {
                                                                        if (watch_error)
                                                                            BOOST_LOG_TRIVIAL(warning)
-                                                                               << "[gateway][device-status] failed to watch device "
-                                                                               << serial_number << ": " << watch_error.message;
+                                                                               << "[gateway][device-status] failed to watch device: " << watch_error.message;
                                                                        else
                                                                            BOOST_LOG_TRIVIAL(info)
-                                                                               << "[gateway][device-status] watching device "
-                                                                               << serial_number << ", result=" << watch_result.dump();
+                                                                               << "[gateway][device-status] watch device succeeded";
                                                                    });
                                });
 }
@@ -6384,9 +6432,12 @@ void GUI_App::query_gateway_device_objects()
 void GUI_App::clear_gateway_device()
 {
     const bool          had_slots  = preset_bundle != nullptr && !preset_bundle->m_connect_machine_info_list.empty();
+    const bool          gateway_had_device = m_gateway_device.connected && !m_gateway_device.serial_number.empty();
     const std::uint64_t generation = m_gateway_device.generation + 1;
     m_gateway_device               = GatewayDeviceState{};
     m_gateway_device.generation    = generation;
+    if (gateway_had_device)
+        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
     if (preset_bundle != nullptr)
         clear_gateway_machine_slots();
     if (had_slots)
@@ -6421,15 +6472,21 @@ void GUI_App::register_gateway_notifications()
     if (!m_gateway_service)
         return;
 
-    m_gateway_service->set_notification_handler("notify.account.changed", [this](const nlohmann::json& params) {
+    m_gateway_service->set_notification_handler("notify.account.profile_changed", [this](const nlohmann::json& params) {
         Gateway::AccountSnapshot snapshot;
         if (!Gateway::GatewayAccount::parse(params, snapshot)) {
-            BOOST_LOG_TRIVIAL(warning) << "[gateway][account] ignored invalid notify.account.changed frame";
+            BOOST_LOG_TRIVIAL(warning) << "[gateway][account] ignored invalid notify.account.profile_changed frame";
+            return;
+        }
+        const bool has_identity = params.contains("is_login") || params.contains("isLogin") || params.contains("status") ||
+                                  params.contains("stauts") || params.contains("userid");
+        if (!has_identity) {
+            // Some CLI builds send only {reason}; without identity fields this
+            // is a change signal, not a logout. Re-read the authoritative profile.
+            refresh_gateway_account();
             return;
         }
         apply_gateway_account(snapshot);
-        if (snapshot.is_login && snapshot.token.empty())
-            refresh_gateway_account();
     });
 
     m_gateway_service->set_notification_handler("notify.device.connected",
@@ -7046,33 +7103,30 @@ void  GUI_App::show_ip_address_enter_dialog_handler(wxCommandEvent& evt)
 void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_option)
 {
     bool app_layout_changed = false;
+    bool need_recreate_gui = false;
+    std::string pending_language;
     {
-        // the dialog needs to be destroyed before the call to recreate_GUI()
-        // or sometimes the application crashes into wxDialogBase() destructor
-        // so we put it into an inner scope
+        // Keep PreferencesDialog in an inner scope. It must be destroyed before
+        // recreate_GUI() destroys the old MainFrame and its child windows.
         PreferencesDialog dlg(mainframe, open_on_tab, highlight_option);
         dlg.ShowModal();
-        GLCanvas3D* canvas = this->plater_->get_current_canvas3D();
-        if (canvas)
-            canvas->force_set_focus();
-        // BBS
-        //app_layout_changed = dlg.settings_layout_changed();
-        // GPU accel toggle: applied once after the dialog closes instead of
-        // rebuilding the toolpaths inside every checkbox click. The full
-        // reload subsumes the seq-view refresh below, so run that only when
-        // the GPU toggle did not change (avoids a double rebuild).
-        if (dlg.gcode_gpu_accel_changed())
-            this->plater_->reload_gcode_preview();
+        need_recreate_gui = dlg.recreate_GUI();
+        pending_language = dlg.pending_language();
+
+        if (!need_recreate_gui) {
+            GLCanvas3D* canvas = this->plater_->get_current_canvas3D();
+            if (canvas)
+                canvas->force_set_focus();
+
+            if (dlg.gcode_gpu_accel_changed())
+                this->plater_->reload_gcode_preview();
 #if ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-        else if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
+            else if (dlg.seq_top_layer_only_changed() || dlg.seq_seq_top_gcode_indices_changed())
 #else
-        else if (dlg.seq_top_layer_only_changed())
-#endif // ENABLE_GCODE_LINES_ID_IN_H_SLIDER
-            this->plater_->refresh_print();
-        // GPU accel toggle: applied once after the dialog closes instead of
-        // rebuilding the toolpaths inside every checkbox click
-        if (dlg.gcode_gpu_accel_changed())
-            this->plater_->reload_gcode_preview();
+            else if (dlg.seq_top_layer_only_changed())
+#endif
+                this->plater_->refresh_print();
+        }
 #ifdef _WIN32
         if (is_editor()) {
             if (app_config->get("associate_3mf") == "true")
@@ -7090,17 +7144,20 @@ void GUI_App::open_preferences(size_t open_on_tab, const std::string& highlight_
             if (app_config->get("associate_gcode") == "true")
                 associate_files(L"gcode");
         }
-#endif // _WIN32
+#endif
     }
 
-    // BBS
-    /*
-    if (app_layout_changed) {
-        // hide full main_sizer for mainFrame
-        mainframe->GetSizer()->Show(false);
-        mainframe->update_layout();
-        mainframe->select_tab(size_t(0));
-    }*/
+    if (!pending_language.empty()) {
+        const std::string previous_language = app_config->get("language");
+        app_config->set("language", pending_language);
+        if (!load_language(wxString::FromUTF8(pending_language), false)) {
+            app_config->set("language", previous_language);
+            return;
+        }
+    }
+
+    if (need_recreate_gui)
+        recreate_GUI(_L("Changing application language"));
 }
 
 bool GUI_App::has_unsaved_preset_changes() const
@@ -7536,7 +7593,7 @@ void GUI_App::MacOpenFiles(const wxArrayString &fileNames)
                 for (size_t i = 0; i < non_gcode_files.size(); ++i) {
                     input_files.push_back(non_gcode_files[i]);
                 }
-                this->plater()->load_files(input_files);
+                this->plater()->load_files(input_files, "file_association");
             } else {
                 for (size_t i = 0; i < files.size(); ++i) {
                     this->init_params->input_files.emplace_back(files[i]);
@@ -8095,6 +8152,11 @@ void GUI_App::user_update_privacy_notify(const bool& res)
 {
     set_privacy_policy(res);
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_consent(res);
+    if (res && m_pending_app_launch) {
+        m_pending_app_launch = false;
+        SNAP_LOG_INFO(SnapLog::v1::SnapEvent::APP_LAUNCH, m_pending_app_launch_ext, "app launch");
+        m_pending_app_launch_ext.clear();
+    }
 
     json data;
 
@@ -8576,8 +8638,8 @@ bool check_pla_petg_support_pair(int extruder_id)
     if (filament == nullptr)
         return false;
 
-    const ConfigOptionStrings *ft_opt =
-        filament->config.option<ConfigOptionStrings>("filament_type");
+    const DynamicPrintConfig&  config = preset_bundle->filaments.get_config_for_preset(*filament);
+    const ConfigOptionStrings* ft_opt = config.option<ConfigOptionStrings>("filament_type");
     if (ft_opt == nullptr || ft_opt->values.empty())
         return false;
 

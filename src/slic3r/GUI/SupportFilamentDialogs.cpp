@@ -32,6 +32,7 @@ constexpr int TABLE_WIDTH        = 490;
 constexpr int FIRST_COLUMN_WIDTH = 190;
 constexpr int VALUE_COLUMN_WIDTH = 150;
 constexpr int TABLE_ROW_HEIGHT   = 24;
+constexpr int TABLE_CELL_PADDING = 6;
 
 wxColour table_heading_background()
 {
@@ -104,10 +105,10 @@ wxPanel* CreateTableCell(wxWindow* parent, int width, const wxString& text, bool
     label->Wrap(-1);
     if (heading) {
         text_sizer->AddStretchSpacer();
-        text_sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, parent->FromDIP(6));
+        text_sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, parent->FromDIP(TABLE_CELL_PADDING));
         text_sizer->AddStretchSpacer();
     } else {
-        text_sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, parent->FromDIP(6));
+        text_sizer->Add(label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT | wxRIGHT, parent->FromDIP(TABLE_CELL_PADDING));
     }
     cell_sizer->Add(text_sizer, 1, wxALIGN_CENTER_VERTICAL, 0);
     cell->SetSizer(cell_sizer);
@@ -192,6 +193,11 @@ SupportParameterDiffDialog::SupportParameterDiffDialog(Mode mode, std::vector<It
     Layout();
     Fit();
     Center(wxBOTH);
+    Bind(wxEVT_SHOW, [yes_button](wxShowEvent& event) {
+        event.Skip();
+        if (event.IsShown())
+            yes_button->CallAfter([yes_button]() { yes_button->SetFocus(); });
+    });
     wxGetApp().UpdateDlgDarkUI(this);
 }
 

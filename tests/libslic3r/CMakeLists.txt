@@ -9,6 +9,7 @@ add_executable(${_TEST_NAME}_tests
 	test_clipper_utils.cpp
 	test_config.cpp
 	test_support_filament_rules.cpp
+	test_preset_collection.cpp
 	test_custom_gcode.cpp
 	test_gcode_layer_count.cpp
 	test_elephant_foot_compensation.cpp

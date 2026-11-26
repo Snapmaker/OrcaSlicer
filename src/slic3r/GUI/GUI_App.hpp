@@ -41,6 +41,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
@@ -320,6 +321,9 @@ private:
     std::vector<wxString> m_pending_mac_open_urls;
 #endif // __APPLE__
     bool            m_app_conf_exists{ false };
+    bool            m_pending_app_launch{ false };
+    std::vector<std::pair<std::string, std::string>> m_pending_app_launch_ext;
+    void            report_app_launch();
     EAppMode        m_app_mode{ EAppMode::Editor };
     // Short rebuild flag consumed by other components during teardown.
     bool            m_is_recreating_gui{ false };
@@ -506,6 +510,8 @@ private:
     std::string     get_local_models_path();
     bool            OnInit() override;
     int             OnExit() override;
+    void            initialize_snaplog();
+    void            reconfigure_snaplog_site();
     bool            initialized() const { return m_initialized; }
     inline bool     is_enable_multi_machine() { return this->app_config&& this->app_config->get("enable_multi_machine") == "true"; }
 
@@ -642,7 +648,7 @@ private:
     bool            is_user_login();
 
     // SM login state is owned by the connection gateway. The app only mirrors
-    // GET /api/account / notify.account.changed frames for native consumers
+    // GET /api/account/profile / notify.account.profile_changed frames for native consumers
     // (currently SnapLog identity and the region-switch hint).
     const Gateway::AccountSnapshot& gateway_account() const { return m_gateway_account; }
     void                            apply_gateway_account(const Gateway::AccountSnapshot& snapshot);

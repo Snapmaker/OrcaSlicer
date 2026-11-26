@@ -6,8 +6,9 @@
  * kept compact because the dialog content area is only 560px wide.
  *
  * The table rules are required by Feishu-exported markdown: GFM tables are split into
- * plain <table>s by markdown-it and their merged cells are rebuilt by fixFeishuMerges()
- * in releasenote.html. Do not switch the table to a fixed layout or to flex/grid.
+ * plain <table>s by markdown-it and their merged cells (colSpan/rowSpan) are rebuilt
+ * by fixFeishuMerges() in releasenote.html. Do not switch the table to a fixed layout
+ * or to flex/grid.
  */
 body {
     margin: 0;
@@ -22,10 +23,13 @@ body {
     overflow-wrap: break-word;
 }
 
-/* The dialog palette is fixed light regardless of OS theme. Declaring it here
-   stops WebView2's dark PreferredColorScheme (WebView.cpp SetUserAgent "dark")
-   from auto-darkening the page, which mutates declared colors and text
-   decorations such as strikethrough lines. */
+/* The dialog palette is dual-mode: light by default, with an explicit dark
+   palette applied when releasenote.html toggles the "dark" class on <html>
+   (SwitchDarkMode()). color-scheme stays light in both modes: it stops
+   WebView2's dark PreferredColorScheme (WebView.cpp SetUserAgent "dark") from
+   auto-darkening the page, which would mutate the declared colors and text
+   decorations such as strikethrough lines. The dark colors are declared
+   explicitly in the html.dark overrides below instead. */
 :root {
     color-scheme: light;
 }
@@ -137,8 +141,8 @@ body {
 }
 
 /* Feishu-exported tables: GFM has no merged cells, so fixFeishuMerges() rebuilds the
-   rowSpans after rendering. Cells must keep border-collapse and wrapping so long
-   parameter descriptions stay inside the 560px dialog. */
+   colSpans/rowSpans after rendering. Cells must keep border-collapse and wrapping so
+   long parameter descriptions stay inside the 560px dialog. */
 #contents table {
     max-width: 100%;
     margin: 8px auto;
@@ -184,4 +188,119 @@ body {
     background: #FDECEA;
     border-left: 3px solid #E53935;
     color: #B71C1C;
+}
+
+/* Dark-mode overrides activated by SwitchDarkMode() in releasenote.html: they
+   only add dark colors, so every light rule above keeps its value and the light
+   computed styles are unchanged. */
+html.dark body {
+    color: #EFEFF0;
+    background-color: #36363C;
+}
+
+html.dark #contents h1,
+html.dark #contents h2,
+html.dark #contents h3,
+html.dark #contents h4 {
+    color: #EFEFF0;
+}
+
+html.dark #contents h5,
+html.dark #contents h6 {
+    color: #B3B3B5;
+}
+
+html.dark #contents a {
+    color: #4DB6AC;
+}
+
+html.dark #contents hr {
+    border-top: 1px solid #4A4A51;
+}
+
+html.dark #contents blockquote {
+    color: #B3B3B5;
+    background: #2D2D31;
+    border-left: 3px solid #4A4A51;
+}
+
+html.dark #contents code {
+    background: #3E3E45;
+}
+
+html.dark #contents pre {
+    background: #2D2D31;
+    border: 1px solid #4A4A51;
+}
+
+/* Code inside a pre block keeps the pre background, matching the light mode. */
+html.dark #contents pre code {
+    background: transparent;
+}
+
+html.dark #contents th,
+html.dark #contents td {
+    border: 1px solid #4A4A51;
+}
+
+html.dark #contents th {
+    background: #3A3A3F;
+}
+
+html.dark #contents li.task-done {
+    color: #B3B3B5;
+}
+
+/* The checkbox keeps the brand accent in both modes; light mode relies on the
+   UA default, so this declaration exists only under html.dark. */
+html.dark #contents li.task-list-item input[type="checkbox"] {
+    accent-color: #009688;
+}
+
+html.dark #contents blockquote.unsupported-block {
+    background: #4D2020;
+    border-left: 3px solid #EF5350;
+    color: #EF9A9A;
+}
+
+/* Dark-mode scrollbars: color-scheme stays light in both modes, so the UA
+   keeps drawing light native scrollbars unless styled here. The root-scoped
+   selectors cover the viewport scrollbar; the descendant selectors cover the
+   inner ones of overflowing content blocks. Keep a 16px hit area around a
+   4px centered thumb, matching the native dark scrollbar in the preset dialog. */
+html.dark::-webkit-scrollbar,
+html.dark ::-webkit-scrollbar {
+    width: 16px;
+    height: 16px;
+    background: #171717;
+}
+
+html.dark::-webkit-scrollbar-track,
+html.dark ::-webkit-scrollbar-track {
+    background: #171717;
+}
+
+html.dark::-webkit-scrollbar-thumb,
+html.dark ::-webkit-scrollbar-thumb {
+    background: #999999;
+    background-clip: padding-box;
+    border: 6px solid transparent;
+    border-radius: 8px;
+}
+
+html.dark::-webkit-scrollbar-thumb:hover,
+html.dark ::-webkit-scrollbar-thumb:hover {
+    background-color: #ABABAB;
+}
+
+html.dark::-webkit-scrollbar-button,
+html.dark ::-webkit-scrollbar-button {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+html.dark::-webkit-scrollbar-corner,
+html.dark ::-webkit-scrollbar-corner {
+    background: #171717;
 }

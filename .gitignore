@@ -59,3 +59,7 @@ sentry-native/
 CLAUDE.md
 # snapmaker_connection CLI binaries are placed into resources/ locally per platform/architecture and are not tracked
 /resources/snapmaker_connection*
+
+# SnapLog public HMAC key is staged into the checkout by CI for the Flatpak
+# sandbox build and must never be committed.
+snaplog_public_hmac_secret.txt

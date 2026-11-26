@@ -389,6 +389,15 @@ static std::string telemetry_bed_type()
     return "";
 }
 
+static void report_mix_color_used(const std::string& entry)
+{
+    const SnapLog::v1::SnapLogExt ext{{
+        {"entry", entry},
+        {"printer_model", telemetry_printer_model()},
+    }};
+    SNAP_LOG_INFO(SnapLog::v1::SnapEvent::MIX_COLOR_USED, ext, "mix color used");
+}
+
 static void handle_newer_3mf_schema(wxWindow* parent,
                                     const DynamicPrintConfig& config)
 {
@@ -2764,6 +2773,7 @@ Sidebar::Sidebar(Plater *parent)
             dlg.ShowModal();
             return;
         }
+        report_mix_color_used("add_mix");
         MixedFilamentBatchDialog dlg(this);
         if (dlg.ShowModal() != wxID_OK) return;
         const BatchMatchResult& result = dlg.GetResult();
@@ -3397,6 +3407,7 @@ Sidebar::Sidebar(Plater *parent)
                 opt->value = mgr.serialize_custom_entries();
             update_mixed_filament_panel(false);
             m_scrolled_sizer->Layout();
+            report_mix_color_used("add_gradient");
         }
     });
 
@@ -3423,6 +3434,7 @@ Sidebar::Sidebar(Plater *parent)
                 opt->value = mgr.serialize_custom_entries();
             update_mixed_filament_panel(false);
             m_scrolled_sizer->Layout();
+            report_mix_color_used("add_pattern");
         }
     });
 
@@ -3468,6 +3480,7 @@ Sidebar::Sidebar(Plater *parent)
             opt->value = mgr.serialize_custom_entries();
         update_mixed_filament_panel(false);
         m_scrolled_sizer->Layout();
+        report_mix_color_used("add_color");
     });
 
     // Create "Add Color" button
@@ -15624,6 +15637,21 @@ void Plater::priv::on_slicing_began()
         m_slice_next_trigger = "auto";
         m_slice_session_active = true;
         m_slice_result_reported = false;
+
+        const SnapLog::v1::SnapLogExt ext{{
+            {"trigger", m_slice_trigger},
+            {"plateCount", std::to_string(partplate_list.get_plate_count())},
+            {"objectCount", std::to_string(model.objects.size())},
+            {"filamentCount", std::to_string(telemetry_filament_count())},
+            {"filamentTypes", telemetry_filament_types()},
+            {"printerModel", telemetry_printer_model()},
+            {"processPresetType", telemetry_process_preset_type()},
+            {"infillPattern", telemetry_infill_pattern()},
+            {"infillDensity", telemetry_infill_density()},
+            {"supportType", telemetry_support_type()},
+            {"bedType", telemetry_bed_type()},
+        }};
+        SNAP_LOG_INFO(SnapLog::v1::SnapEvent::SLICE_START, ext, "slice start");
     }
     m_slice_timing_active = true;
     clear_warnings();

@@ -570,6 +570,7 @@ public:
 	// Return the selected preset including the user modifications.
     Preset&         get_edited_preset()         { return m_edited_preset; }
     const Preset&   get_edited_preset() const   { return m_edited_preset; }
+    const DynamicPrintConfig& get_config_for_preset(const Preset& preset) const;
 
     const Preset& get_selected_preset_base() const { return *get_preset_base(m_presets[m_idx_selected]); }
 

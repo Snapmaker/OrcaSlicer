@@ -3191,6 +3191,47 @@ bool GUI_App::on_init_inner()
     initialize_snaplog();
     BOOST_LOG_TRIVIAL(info) << "SnapLogClient initialized";
 
+    const bool  launched_with_file = this->init_params && !this->init_params->input_files.empty();
+    std::string launch_file_type   = "none";
+    if (launched_with_file) {
+        const std::string& first_file = this->init_params->input_files.front();
+        const bool         is_url     = is_supported_open_protocol(first_file) || boost::algorithm::starts_with(first_file, "http://") ||
+                                        boost::algorithm::starts_with(first_file, "https://");
+        if (!is_url) {
+            const std::string filename = boost::to_lower_copy(boost::filesystem::path(first_file).filename().string());
+            static const std::vector<std::string_view> allowed_extensions = {"3mf", "stl",   "oltp",      "stp",     "step", "svg", "amf",
+                                                                             "obj", "gcode", "gcode.3mf", "zip.amf", "xml",  "ply"};
+            for (const auto allowed : allowed_extensions) {
+                if (filename.size() >= allowed.size()) {
+                    const size_t pos = filename.size() - allowed.size();
+                    if ((pos == 0 || filename[pos - 1] == '.') && filename.compare(pos, allowed.size(), allowed) == 0) {
+                        launch_file_type = std::string(allowed);
+                        break;
+                    }
+                }
+            }
+            if (launch_file_type == "none")
+                launch_file_type = "unknown";
+        }
+    }
+
+    const SnapLog::v1::SnapLogExt ext{{
+        {"firstLaunch", m_app_conf_exists ? "false" : "true"},
+        {"openMethod", launched_with_file ? "file" : "normal"},
+        {"launchFileType", launch_file_type},
+        {"language", into_u8(current_language_code_safe())},
+        {"userMode", get_mode_str()},
+    }};
+    // On first run the privacy wizard grants consent after on_init_inner,
+    // so keep the launch payload until consent becomes true.
+    const bool privacy_consent = app_config && app_config->get("app", PRIVACY_POLICY_FLAGS) == "true";
+    if (privacy_consent) {
+        SNAP_LOG_INFO(SnapLog::v1::SnapEvent::APP_LAUNCH, ext, "app launch");
+    } else {
+        m_pending_app_launch     = true;
+        m_pending_app_launch_ext = ext;
+    }
+
     profiler.mark("on_init_inner return");
 
     return true;
@@ -8094,6 +8135,11 @@ void GUI_App::user_update_privacy_notify(const bool& res)
 {
     set_privacy_policy(res);
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_consent(res);
+    if (res && m_pending_app_launch) {
+        m_pending_app_launch = false;
+        SNAP_LOG_INFO(SnapLog::v1::SnapEvent::APP_LAUNCH, m_pending_app_launch_ext, "app launch");
+        m_pending_app_launch_ext.clear();
+    }
 
     json data;
 
@@ -8575,8 +8621,8 @@ bool check_pla_petg_support_pair(int extruder_id)
     if (filament == nullptr)
         return false;
 
-    const ConfigOptionStrings *ft_opt =
-        filament->config.option<ConfigOptionStrings>("filament_type");
+    const DynamicPrintConfig&  config = preset_bundle->filaments.get_config_for_preset(*filament);
+    const ConfigOptionStrings* ft_opt = config.option<ConfigOptionStrings>("filament_type");
     if (ft_opt == nullptr || ft_opt->values.empty())
         return false;
 

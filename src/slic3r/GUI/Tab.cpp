@@ -1834,7 +1834,10 @@ SupportFilamentKind Tab::support_interface_filament_kind() const
         return SupportFilamentKind::None;
 
     const Preset* interface_preset = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[interface_filament_id]);
-    return interface_preset == nullptr ? SupportFilamentKind::None : classify_support_filament(interface_preset->config);
+    if (interface_preset == nullptr)
+        return SupportFilamentKind::None;
+
+    return classify_support_filament(m_preset_bundle->filaments.get_config_for_preset(*interface_preset));
 }
 
 void Tab::refresh_support_interface_kind()
@@ -1886,7 +1889,7 @@ void Tab::check_support_interface_recommendation(const Preset& edited_preset)
     if (interface_preset == nullptr || interface_preset->name != edited_preset.name)
         return;
 
-    const SupportFilamentKind kind = classify_support_filament(interface_preset->config);
+    const SupportFilamentKind kind = classify_support_filament(edited_preset.config);
     if (kind == SupportFilamentKind::None)
         return;
 
@@ -2134,7 +2137,8 @@ void Tab::on_value_change(const std::string& opt_key, const boost::any& value)
                 support_preset = m_preset_bundle->filaments.find_preset(m_preset_bundle->filament_presets[support_filament_id]);
             }
 
-            if (support_preset != nullptr && classify_support_filament(support_preset->config) == SupportFilamentKind::SupportPla) {
+            if (support_preset != nullptr && classify_support_filament(m_preset_bundle->filaments.get_config_for_preset(*support_preset)) ==
+                                                 SupportFilamentKind::SupportPla) {
                 MessageDialog dialog(wxGetApp().plater(),
                                      _L("Support for PLA is brittle and may break when it is used as the "
                                         "support base.\nUse it as the support base anyway?"),

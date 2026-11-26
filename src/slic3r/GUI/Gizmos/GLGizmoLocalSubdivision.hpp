@@ -85,7 +85,8 @@ private:
         // cleared - whenever the selection or the mesh changes, so an unchanged
         // failing selection (e.g. non-manifold edges) is not recomputed every frame.
         int                       failed_level = -1;
-        // Why the growth stopped below the requested level (valid when failed_level >= 0).
+        // Why the growth stopped below the requested level (valid when
+        // failed_level >= 0).
         TriangleMeshDeal::SubdivisionFailure failure_reason = TriangleMeshDeal::SubdivisionFailure::None;
         GLModel                   model;            // non-region geometry, drawn by the gizmo with the volume color
         GLModel                   model_region;     // region-only geometry, colored like the level-0 painting
@@ -117,11 +118,13 @@ private:
     void        gather_budget_inputs(size_t &painted, size_t &total_faces) const;
     // Shows the over-budget confirmation dialog (reentrancy-guarded).
     bool        ask_face_budget_dialog();
+    // Skip the selector draw only for volumes replaced by a live preview.
+    bool render_selector_for_volume(const ModelVolume* mv) const override;
     // Failure notification text matching the recorded per-preview reasons: the
     // specific cause when all failed previews share one, the combined wording when
     // they mix. apply selects the "Subdivision failed" family, otherwise the
     // "stopped at level" family.
-    wxString    subdivision_failure_text(int lowest_achieved, bool apply) const;
+    wxString    subdivision_failure_text(int lowest_achieved, bool apply, int* reason_key_out = nullptr) const;
 
     wchar_t m_current_tool = 0;
     bool m_detect_geometry_edge = true;
@@ -151,6 +154,8 @@ private:
     // (Requested, achieved) level pair of the last "subdivision stopped early"
     // notification; repaints that fail the same way do not re-notify.
     std::pair<int, int> m_last_failed_levels = {0, 0};
+    int                 m_last_failed_reason  = 0; // 0 none, 1 non-manifold, 2 degenerate, 3 mixed - the last notified cause
+    bool                m_notified_no_subdiv_faces = false; // "no subdividable faces" told once per selection
     // Tallest parameter layout drawn so far this session; shorter layouts are
     // padded up to it so switching tools never changes the panel height. Reset
     // when the gizmo opens.

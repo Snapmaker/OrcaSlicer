@@ -3163,6 +3163,7 @@ bool GUI_App::on_init_inner()
             for (const auto& url : m_pending_mac_open_urls)
                 start_download(into_u8(url));
             m_pending_mac_open_urls.clear();
+            report_app_launch();
 #endif // __APPLE__
 
             update_publish_status();
@@ -3191,12 +3192,26 @@ bool GUI_App::on_init_inner()
     initialize_snaplog();
     BOOST_LOG_TRIVIAL(info) << "SnapLogClient initialized";
 
+#ifndef __APPLE__
+    // macOS reports after pending MacOpenURLs are consumed in the idle handler.
+    report_app_launch();
+#endif
+
+    profiler.mark("on_init_inner return");
+
+    return true;
+}
+
+void GUI_App::report_app_launch()
+{
     const bool  launched_with_file = this->init_params && !this->init_params->input_files.empty();
     std::string launch_file_type   = "none";
+    std::string open_method        = "normal";
     if (launched_with_file) {
         const std::string& first_file = this->init_params->input_files.front();
         const bool         is_url     = is_supported_open_protocol(first_file) || boost::algorithm::starts_with(first_file, "http://") ||
                                         boost::algorithm::starts_with(first_file, "https://");
+        open_method                   = is_url ? "url" : "file";
         if (!is_url) {
             const std::string filename = boost::to_lower_copy(boost::filesystem::path(first_file).filename().string());
             static const std::vector<std::string_view> allowed_extensions = {"3mf", "stl",   "oltp",      "stp",     "step", "svg", "amf",
@@ -3214,10 +3229,16 @@ bool GUI_App::on_init_inner()
                 launch_file_type = "unknown";
         }
     }
+#ifdef __APPLE__
+    if (m_url_open_pending) {
+        open_method      = "url";
+        launch_file_type = "none";
+    }
+#endif
 
     const SnapLog::v1::SnapLogExt ext{{
         {"firstLaunch", m_app_conf_exists ? "false" : "true"},
-        {"openMethod", launched_with_file ? "file" : "normal"},
+        {"openMethod", open_method},
         {"launchFileType", launch_file_type},
         {"language", into_u8(current_language_code_safe())},
         {"userMode", get_mode_str()},
@@ -3231,10 +3252,6 @@ bool GUI_App::on_init_inner()
         m_pending_app_launch     = true;
         m_pending_app_launch_ext = ext;
     }
-
-    profiler.mark("on_init_inner return");
-
-    return true;
 }
 
 void GUI_App::copy_network_if_available()

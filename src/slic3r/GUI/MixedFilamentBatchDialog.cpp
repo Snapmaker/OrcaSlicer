@@ -2398,7 +2398,7 @@ void MixedFilamentBatchDialog::start_batch_match()
     }
     const SnapLog::v1::SnapLogExt ext{{
         {"entry", "batch_match"},
-        {"plate_count", std::to_string(wxGetApp().plater()->get_partplate_list().get_plate_count())},
+        {"plateCount", std::to_string(wxGetApp().plater()->get_partplate_list().get_plate_count())},
     }};
     SNAP_LOG_INFO(SnapLog::v1::SnapEvent::MIX_COLOR_USED, ext, "mix color used");
     // No selection-completeness gate: unselected slots / degenerate palettes degrade

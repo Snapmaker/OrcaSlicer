@@ -112,9 +112,17 @@ void GLGizmoLocalSubdivision::update_from_model_object(bool first_update)
     restore_preview();
     m_previews.clear();
     m_preview_dirty = true;
+    m_preview_budget_blocked = false;
 
     wxBusyCursor wait;
     const ModelObject* mo = m_c->selection_info()->model_object();
+    // The selectors may still hold GPU buffers uploaded while painting was
+    // rendered. Detach them before the selectors are destroyed: the destructor
+    // only asserts that no buffers remain (Debug) and does not delete them
+    // (Release would silently lose the handles). The detach makes no GL calls;
+    // the buffers are handed to the OpenGL manager and deleted later with a
+    // current context, so no context is needed here.
+    DetachTriangleSelectorGlResources();
     m_triangle_selectors.clear();
     std::vector<ColorRGBA> ebt_colors;
     ebt_colors.push_back(GLVolume::NEUTRAL_COLOR);
@@ -351,8 +359,12 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
         ImGui::PushStyleColor(ImGuiCol_Text, black);
 
         ImGui::SameLine(sliders_left_width);
-        if (ImGui::Button("-##subdiv_minus", ImVec2(btn_w, 0.f)) && m_subdiv_level > 0)
+        if (ImGui::Button("-##subdiv_minus", ImVec2(btn_w, 0.f)) && m_subdiv_level > 0) {
             --m_subdiv_level;
+            // The level changed: an earlier budget decline no longer applies, the
+            // gate below asks again for the new level if needed.
+            m_preview_budget_blocked = false;
+        }
 
         ImGui::SameLine(0.f, 0.f);
         char value_label[16] = {0};
@@ -366,8 +378,12 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
         ImGui::PopStyleColor(3);
 
         ImGui::SameLine(0.f, 0.f);
-        if (ImGui::Button("+##subdiv_plus", ImVec2(btn_w, 0.f)) && m_subdiv_level < MaxSubdivLevel)
+        if (ImGui::Button("+##subdiv_plus", ImVec2(btn_w, 0.f)) && m_subdiv_level < MaxSubdivLevel) {
             ++m_subdiv_level;
+            // The level changed: an earlier budget decline no longer applies, the
+            // gate inside update_preview asks for the new level before computing.
+            m_preview_budget_blocked = false;
+        }
 
         ImGui::PopStyleColor(4); // Button, ButtonHovered, ButtonActive, Text
     }
@@ -411,6 +427,10 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
                 m_triangle_selectors[idx]->request_update_render_data(true);
             }
         m_preview_dirty = true;
+        // An empty selection is always within the budget: unblock the preview so
+        // the cleared state is reflected immediately instead of keeping a stale
+        // subdivided preview on screen.
+        m_preview_budget_blocked = false;
         m_parent.set_as_dirty();
     }
 
@@ -442,8 +462,13 @@ void GLGizmoLocalSubdivision::restore_preview()
     }
 }
 
-void GLGizmoLocalSubdivision::update_preview()
+void GLGizmoLocalSubdivision::update_preview(bool allow_budget_prompt)
 {
+    // The budget dialog pumps events while it is open, which may repaint the
+    // canvas and re-enter this function; skip that nested call entirely.
+    if (m_awaiting_budget_confirmation)
+        return;
+
     // A preview whose next level failed carries a cached failure record, so no
     // growth is pending for it. Without this, an unchanged failing selection
     // (e.g. non-manifold edges) retried the same computation on every frame and
@@ -463,6 +488,27 @@ void GLGizmoLocalSubdivision::update_preview()
     ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
     if (mo == nullptr)
         return;
+
+    // Budget gate: the requested level may either grow the cached previews or
+    // (after repainting) rebuild them from scratch - both can spend the UI
+    // thread on many millions of faces. Estimate the output from the current
+    // selection BEFORE any computation and ask when it would exceed the budget.
+    if (m_subdiv_level > 0 && (m_preview_dirty || any_growth_pending)) {
+        if (m_preview_budget_blocked)
+            return; // declined earlier; keep the old preview and selection
+        if (allow_budget_prompt && ! confirm_face_budget(m_subdiv_level)) {
+            // Cancelled: compute nothing, keep the old preview, selection and
+            // caches. The stepper follows the preview that is actually shown so
+            // the requested level never disagrees with what is displayed. The
+            // dirty flag stays set, so the facet counter keeps tracking the
+            // selection; the block below stops update_preview from re-asking
+            // every frame.
+            m_preview_budget_blocked = true;
+            m_subdiv_level           = m_shown_level;
+            m_parent.set_as_dirty(); // repaint the reverted stepper value
+            return;
+        }
+    }
 
     if (m_preview_dirty) {
         // Rebuild the caches from the current painting state.
@@ -690,15 +736,76 @@ wxString GLGizmoLocalSubdivision::subdivision_failure_text(int lowest_achieved, 
                             lowest_achieved, m_subdiv_level);
 }
 
+bool GLGizmoLocalSubdivision::confirm_face_budget(int level)
+{
+    ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
+    if (mo == nullptr)
+        return true;
+
+    // Count the current selection and the meshes it sits on. The estimate is a
+    // conservative upper bound computed from face counts only: unselected faces
+    // pass through untouched, every painted face becomes at most 4 children per
+    // step (interior faces split 1-to-4, boundary faces into 2 or 3), and the
+    // children of one step are the selection of the next, so the 4^level bound
+    // holds level by level. No mesh is subdivided here.
+    size_t total_faces = 0;
+    size_t painted     = 0;
+    int    idx         = -1; // counts model parts only, indexing m_triangle_selectors
+    for (const ModelVolume* mv : mo->volumes) {
+        if (! mv->is_model_part())
+            continue;
+        ++idx;
+        total_faces += mv->mesh().its.indices.size();
+        if (size_t(idx) < m_triangle_selectors.size())
+            painted += m_triangle_selectors[size_t(idx)]->get_facets_indices_by_state(EnforcerBlockerType::ENFORCER).size();
+    }
+    if (painted == 0 || level <= 0)
+        return true;
+
+    if (! TriangleMeshDeal::local_subdivision_exceeds_face_budget(total_faces, painted, level, LocalSubdivisionFaceBudget))
+        return true;
+
+    auto         name_str = wxString::FromUTF8(mo->name);
+    auto         content  = wxString::Format(
+        _L("\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"), name_str);
+    WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), content, wxEmptyString, wxYES_NO);
+    m_awaiting_budget_confirmation = true;
+    const int rc = dlg.ShowModal();
+    m_awaiting_budget_confirmation = false;
+    return rc == wxID_YES;
+}
+
 void GLGizmoLocalSubdivision::apply_subdivision()
 {
     ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
     if (mo == nullptr)
         return;
 
+    // Whether the budget decline predates this call: a decline raised by the
+    // update_preview call below is handled as an abort instead of a stale preview.
+    const bool was_blocked_before_update = m_preview_budget_blocked;
     update_preview();
     if (m_previews.empty() || m_subdiv_level == 0)
         return;
+
+    // The previews may be stale: the user declined an over-budget recompute after
+    // repainting, so the caches no longer match the current selection. Applying
+    // them would subdivide the wrong faces. Re-confirm against the current
+    // selection, and only then recompute the previews for real (without asking
+    // again - the question was just answered). A decline that happened inside
+    // the update_preview call above instead aborts: the answer was just given.
+    bool stale_preview_confirmed = false;
+    if (m_preview_budget_blocked) {
+        if (! was_blocked_before_update)
+            return;
+        if (! confirm_face_budget(m_subdiv_level))
+            return;
+        m_preview_budget_blocked = false;
+        update_preview(false);
+        if (m_previews.empty() || m_subdiv_level == 0)
+            return;
+        stale_preview_confirmed = true;
+    }
 
     // The subdivision of a volume failed when its cache did not reach the wanted
     // level (smooth_triangle_mesh_local_its returned ok == false): apply nothing
@@ -713,32 +820,12 @@ void GLGizmoLocalSubdivision::apply_subdivision()
         return;
     }
 
-    // Upper bound of the face count after the subdivision: unselected faces stay,
-    // every painted face becomes at most 4^level faces.
-    size_t growth = 1;
-    for (int i = 0; i < m_subdiv_level; ++i)
-        growth *= 4;
-    size_t future_face_count = 0;
-    for (const ModelVolume* mv : mo->volumes) {
-        if (! mv->is_model_part())
-            continue;
-        size_t painted = 0;
-        for (const Preview& p : m_previews)
-            if (p.volume == mv) {
-                painted = p.facet_count;
-                break;
-            }
-        future_face_count += mv->mesh().its.indices.size() + painted * (growth - 1);
-    }
-
-    if (future_face_count > 1000000) {
-        auto         name_str = wxString::FromUTF8(mo->name);
-        auto         content  = wxString::Format(
-            _L("\"%s\" will exceed 1 million faces after this subdivision, which may increase slicing time. Do you want to continue?"), name_str);
-        WarningDialog dlg(static_cast<wxWindow*>(wxGetApp().mainframe), content, wxEmptyString, wxYES_NO);
-        if (dlg.ShowModal() == wxID_NO)
-            return;
-    }
+    // Soft face-count limit of the applied result: ask before spending the
+    // computation when the current selection at the wanted level would exceed
+    // the budget (Yes continues, No aborts). When the stale preview was just
+    // re-confirmed above, the identical question was already answered.
+    if (! stale_preview_confirmed && ! confirm_face_budget(m_subdiv_level))
+        return;
 
     auto      plater     = wxGetApp().plater();
     const int object_idx = m_parent.get_selection().get_object_idx();

@@ -60,7 +60,7 @@ private:
     void update_from_model_object(bool first_update = false) override;
     // Every time the gizmo is opened, start without a subdivision preview and
     // recalibrate the fixed panel height from scratch.
-    void on_opening() override { m_subdiv_level = 0; m_param_area_max_height = 0.f; }
+    void on_opening() override { m_subdiv_level = 0; m_param_area_max_height = 0.f; m_preview_budget_blocked = false; }
     void on_shutdown() override;
 
     void apply_subdivision();
@@ -90,9 +90,15 @@ private:
         GLModel                   model_region;     // region-only geometry, colored like the level-0 painting
         bool                      hidden = false;   // the original volume is hidden while the preview is shown
     };
-    void        update_preview();
+    void        update_preview(bool allow_budget_prompt = true);
     void        restore_preview();
     void        render_preview_meshes();
+    // Cheap budget gate run BEFORE any subdivision computation: estimates the face
+    // count of the requested level from the current selection and asks the user
+    // when it would exceed LocalSubdivisionFaceBudget (soft limit, Yes continues).
+    // Returns false when the user cancelled, true otherwise (also true when the
+    // estimate is within the budget or there is nothing selected).
+    bool        confirm_face_budget(int level);
     // Failure notification text matching the recorded per-preview reasons: the
     // specific cause when all failed previews share one, the combined wording when
     // they mix. apply selects the "Subdivision failed" family, otherwise the
@@ -104,9 +110,20 @@ private:
     std::map<std::string, wxString> m_desc;
 
     static const int MaxSubdivLevel = 3;
+    // Face-count budget shared by the live preview and the applied subdivision:
+    // both ask the user before spending the computation beyond this size.
+    static constexpr size_t LocalSubdivisionFaceBudget = 1000000;
     int  m_subdiv_level  = 0;   // wanted subdivision level (slider)
     bool m_preview_dirty = true; // painted facets changed, the caches must be rebuilt
     int  m_shown_level   = 0;   // level whose geometry is currently displayed (0 = original)
+    // The user declined an over-budget preview recompute after repainting: the
+    // caches no longer match the selection. While set, update_preview keeps the
+    // old preview (no dialog spam) and the level/selection changes that make the
+    // state stale again clear it. Apply re-confirms against the current selection.
+    bool m_preview_budget_blocked = false;
+    // Reentrancy guard: a modal budget dialog pumps events, which may repaint the
+    // canvas and re-enter update_preview while the dialog is still open.
+    bool m_awaiting_budget_confirmation = false;
     int  m_selected_facet_count = 0; // painted original-face count shown in the panel; refreshed while m_preview_dirty
     // (Requested, achieved) level pair of the last "subdivision stopped early"
     // notification; repaints that fail the same way do not re-notify.

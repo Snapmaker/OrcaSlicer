@@ -2827,7 +2827,7 @@ namespace IMGUIZMO_NAMESPACE
     * @brief Build face-local sample coordinates in [0, 1]: bevel arcs at both ends plus panel borders.
     * @param samples Output array with NAV_CUBE_SAMPLES ascending values.
     */
-   static void BuildRoundedCubeSamples(float* samples)
+   static void BuildRoundedCubeSamples(std::array<float, NAV_CUBE_SAMPLES>& samples)
    {
        for (int j = 0; j <= NAV_CUBE_ROUND_SEGMENTS; ++j)
        {
@@ -2855,6 +2855,71 @@ namespace IMGUIZMO_NAMESPACE
        normal.Normalize();
        return inner + normal * NAV_CUBE_ROUND_RADIUS;
    }
+
+   /// @brief Fixed model-space geometry shared by all navigator views.
+   struct RoundedCubeMesh
+   {
+       struct Quad
+       {
+           vec_t normal;
+           size_t baseIndex;
+           int boxIndex;
+       };
+
+       std::array<vec_t, 6 * NAV_CUBE_SAMPLES * NAV_CUBE_SAMPLES> vertices;
+       std::array<Quad, 6 * (NAV_CUBE_SAMPLES - 1) * (NAV_CUBE_SAMPLES - 1)> quads;
+
+       /// @brief Build the vertices and panels in their original face and draw order.
+       RoundedCubeMesh()
+       {
+           std::array<float, NAV_CUBE_SAMPLES> samples;
+           BuildRoundedCubeSamples(samples);
+           size_t quadIndex = 0;
+
+           for (int face = 0; face < 6; ++face)
+           {
+               const int axis = face % 3;
+               const float invert = face > 2 ? -1.f : 1.f;
+               const vec_t dn = directionUnary[axis];
+               const vec_t dx = directionUnary[(axis + 1) % 3];
+               const vec_t dy = directionUnary[(axis + 2) % 3];
+               const vec_t indexVectorX = dx * invert;
+               const vec_t indexVectorY = dy * invert;
+               const vec_t boxOrigin = dn * -invert - indexVectorX - indexVectorY;
+               const size_t faceBase = static_cast<size_t>(face) * samples.size() * samples.size();
+
+               for (size_t y = 0; y < samples.size(); ++y)
+               {
+                   for (size_t x = 0; x < samples.size(); ++x)
+                   {
+                       const vec_t point = (dn * 0.5f + dx * (samples[x] - 0.5f) + dy * (samples[y] - 0.5f)) * invert;
+                       vec_t normal;
+                       vertices[faceBase + y * samples.size() + x] = RoundCubePoint(point, normal);
+                   }
+               }
+
+               for (size_t y = 0; y + 1 < samples.size(); ++y)
+               {
+                   for (size_t x = 0; x + 1 < samples.size(); ++x)
+                   {
+                       const float u = 0.5f * (samples[x] + samples[x + 1]);
+                       const float v = 0.5f * (samples[y] + samples[y + 1]);
+                       const vec_t point = (dn * 0.5f + dx * (u - 0.5f) + dy * (v - 0.5f)) * invert;
+                       Quad& quad = quads[quadIndex++];
+                       RoundCubePoint(point, quad.normal);
+                       quad.baseIndex = faceBase + y * samples.size() + x;
+
+                       // Panel indices run from the high end (0) to the low end (2).
+                       const int col = u > 0.75f ? 0 : (u > 0.25f ? 1 : 2);
+                       const int row = v > 0.75f ? 0 : (v > 0.25f ? 1 : 2);
+                       const vec_t box = boxOrigin + indexVectorX * static_cast<float>(col)
+                                         + indexVectorY * static_cast<float>(row) + makeVect(1.f, 1.f, 1.f);
+                       quad.boxIndex = static_cast<int>(box.x * 9.f + box.y * 3.f + box.z);
+                   }
+               }
+           }
+       }
+   };
 
    static float Cross2D(const ImVec2& o, const ImVec2& a, const ImVec2& b)
    {
@@ -2936,11 +3001,8 @@ namespace IMGUIZMO_NAMESPACE
            float shade;
        };
 
-       const int    gridSize = NAV_CUBE_SAMPLES;
        const ImVec2 position = rect.Min;
        const ImVec2 size     = rect.GetSize();
-       float        samples[NAV_CUBE_SAMPLES];
-       BuildRoundedCubeSamples(samples);
 
        // hover color: same blend as the former 0x80 orange overlay on the face color
        const ImVec4 faceColorV = gContext.mStyle.Colors[FACE];
@@ -2960,61 +3022,29 @@ namespace IMGUIZMO_NAMESPACE
        lightDir = lightDir + makeVect(-0.25f, 0.8f, 0.f);
        lightDir.Normalize();
 
-       std::vector<ImVec2>   screenPts(static_cast<size_t>(6 * gridSize * gridSize));
-       std::vector<CubeQuad> quads;
-       quads.reserve(static_cast<size_t>(6 * (gridSize - 1) * (gridSize - 1)));
-
-       for (int iFace = 0; iFace < 6; iFace++)
+       static const RoundedCubeMesh mesh;
+       std::vector<ImVec2> screenPts;
+       screenPts.reserve(mesh.vertices.size());
+       for (const vec_t& vertex : mesh.vertices)
        {
-           const int   normalIndex  = iFace % 3;
-           const float invert       = (iFace > 2) ? -1.f : 1.f;
-           const vec_t dn           = directionUnary[normalIndex];
-           const vec_t dx           = directionUnary[(normalIndex + 1) % 3];
-           const vec_t dy           = directionUnary[(normalIndex + 2) % 3];
-           const vec_t indexVectorX = dx * invert;
-           const vec_t indexVectorY = dy * invert;
-           const vec_t boxOrigin    = dn * -invert - indexVectorX - indexVectorY;
-           const int   faceBase     = iFace * gridSize * gridSize;
+           screenPts.push_back(worldToPos(vertex, res, position, size));
+       }
 
-           for (int iy = 0; iy < gridSize; iy++)
+       std::vector<CubeQuad> quads;
+       quads.reserve(mesh.quads.size());
+       for (const RoundedCubeMesh::Quad& quad : mesh.quads)
+       {
+           vec_t normal = quad.normal;
+           normal.TransformVector(cubeView);
+           normal.Normalize();
+           if (normal.x * viewCenter.x + normal.y * viewCenter.y + normal.z * viewCenter.z > 0.f)
            {
-               for (int ix = 0; ix < gridSize; ix++)
-               {
-                   const vec_t surfacePt = (dn * 0.5f + dx * (samples[ix] - 0.5f) + dy * (samples[iy] - 0.5f)) * invert;
-                   vec_t       normal;
-                   screenPts[static_cast<size_t>(faceBase + iy * gridSize + ix)] = worldToPos(RoundCubePoint(surfacePt, normal), res, position, size);
-               }
+               continue;
            }
 
-           for (int iy = 0; iy < gridSize - 1; iy++)
-           {
-               for (int ix = 0; ix < gridSize - 1; ix++)
-               {
-                   const float uc        = 0.5f * (samples[ix] + samples[ix + 1]);
-                   const float vc        = 0.5f * (samples[iy] + samples[iy + 1]);
-                   const vec_t surfacePt = (dn * 0.5f + dx * (uc - 0.5f) + dy * (vc - 0.5f)) * invert;
-                   vec_t       normal;
-                   RoundCubePoint(surfacePt, normal);
-                   normal.TransformVector(cubeView);
-                   normal.Normalize();
-                   // back-face culling, same rule as the face plane test in ViewManipulate
-                   if (normal.x * viewCenter.x + normal.y * viewCenter.y + normal.z * viewCenter.z > 0.f)
-                   {
-                       continue;
-                   }
-
-                   // Panel indices run from the high end (0) to the low end (2).
-                   const int   col      = uc > 0.75f ? 0 : (uc > 0.25f ? 1 : 2);
-                   const int   row      = vc > 0.75f ? 0 : (vc > 0.25f ? 1 : 2);
-                   const vec_t boxCoord = boxOrigin + indexVectorX * static_cast<float>(col) + indexVectorY * static_cast<float>(row) + makeVect(1.f, 1.f, 1.f);
-                   const int   boxIndex = static_cast<int>(boxCoord.x * 9.f + boxCoord.y * 3.f + boxCoord.z);
-                   const float diffuse  = ImMax(normal.x * lightDir.x + normal.y * lightDir.y + normal.z * lightDir.z, 0.f);
-                   const float shade    = NAV_CUBE_AMBIENT + NAV_CUBE_DIFFUSE * diffuse;
-
-                   const size_t baseIndex = static_cast<size_t>(faceBase + iy * gridSize + ix);
-                   quads.push_back({baseIndex, boxIndex, shade});
-               }
-           }
+           const float diffuse = ImMax(normal.x * lightDir.x + normal.y * lightDir.y + normal.z * lightDir.z, 0.f);
+           const float shade = NAV_CUBE_AMBIENT + NAV_CUBE_DIFFUSE * diffuse;
+           quads.push_back({quad.baseIndex, quad.boxIndex, shade});
        }
 
        const auto getQuadPoints = [&screenPts](const size_t baseIndex) -> std::array<ImVec2, 4>

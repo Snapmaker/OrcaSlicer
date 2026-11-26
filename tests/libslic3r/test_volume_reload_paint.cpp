@@ -292,3 +292,29 @@ TEST_CASE("Rebuild preserves the immediate geometry and the four paint stores", 
     CHECK(fixed.volume->mesh().get_init_shift().isApprox(kFileCenter));
     CHECK(plain.volume->mesh().get_init_shift().isApprox(Vec3d::Zero()));
 }
+
+TEST_CASE("Repair commit preserves the file offset for a subsequent reload", "[PaintReload][ReviewRegression]")
+{
+    for (bool keep_paint : {false, true}) {
+        LoadedVolume loaded = load_volume(source_file_its());
+        const auto original = paint_local_strokes(*loaded.volume);
+        // Recreate the mesh from geometry only, as after the temporary 3MF
+        // round trip in the Windows repair path. Exercise its real commit API.
+        std::vector<ModelObject::RepairCommitItem> items;
+        items.push_back({loaded.volume, TriangleMesh(indexed_triangle_set(loaded.volume->mesh().its))});
+        REQUIRE(items.front().repaired_mesh.get_init_shift().isApprox(Vec3d::Zero()));
+        auto result = loaded.volume->get_object()->commit_repaired_meshes_with_painting(
+            items, keep_paint, [] { return false; }, nullptr);
+        REQUIRE(result == ModelObject::RepairCommitResult::Committed);
+        CHECK(loaded.volume->mesh().get_init_shift().isApprox(kFileCenter));
+        if (keep_paint)
+            CHECK(painted_facets(*loaded.volume) == original);
+        else {
+            CHECK_FALSE(loaded.volume->is_any_painted());
+            paint_local_strokes(*loaded.volume);
+        }
+        LoadedVolume reloaded = load_volume(source_file_its());
+        CHECK(relink_and_restore(*loaded.volume, *reloaded.volume, 1.0).isApprox(Transform3d::Identity()));
+        CHECK(painted_facets(*reloaded.volume) == original);
+    }
+}

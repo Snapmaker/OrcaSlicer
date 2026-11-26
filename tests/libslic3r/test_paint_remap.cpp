@@ -1889,3 +1889,32 @@ TEST_CASE("Paint remap: double mirror restores the original stroke position", "[
     CHECK_THAT(centroid.x(), WithinAbs(11.f, 0.6f));
     CHECK_THAT(centroid.y(), WithinAbs(2.f, 0.6f));
 }
+
+TEST_CASE("Intersection remap keeps positive-area terminal overlaps in either winding", "[PaintRemap][ReviewRegression]")
+{
+    for (bool reverse : {false, true}) {
+        indexed_triangle_set source;
+        source.vertices = { Vec3f(0, 0, 0), Vec3f(0.01f, 0, 0), Vec3f(0, 0.01f, 0) };
+        source.indices.emplace_back(0, reverse ? 2 : 1, reverse ? 1 : 2);
+        TriangleMesh source_mesh(source);
+        TriangleSelector selector(source_mesh);
+        selector.set_facet(0, EnforcerBlockerType::ENFORCER);
+        for (float offset : {0.0025f, 0.005f, 0.008f}) {
+            // First case overlaps in a triangle of area 0.0000125; second
+            // touches only at a point; third is separated. All edges are below
+            // the cursor's subdivision limit, exercising terminal coverage.
+            indexed_triangle_set target;
+            target.vertices = { Vec3f(offset, offset, 0), Vec3f(0.01f, offset, 0), Vec3f(offset, 0.01f, 0) };
+            target.indices.emplace_back(0, reverse ? 2 : 1, reverse ? 1 : 2);
+            TriangleMesh target_mesh(target);
+            auto data = TriangleSelector::remap_painting(source, selector.serialize(), target, Transform3d::Identity(), std::nullopt);
+            const auto painted = painted_facets(target_mesh, data, EnforcerBlockerType::ENFORCER);
+            const float area = painted_area_and_centroid(painted).first;
+            INFO("reverse=" << reverse << " offset=" << offset);
+            if (offset < 0.005f)
+                CHECK(area > 0.f);
+            else
+                CHECK(area == 0.f);
+        }
+    }
+}

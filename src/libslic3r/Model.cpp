@@ -2263,6 +2263,11 @@ ModelObject::RepairCommitResult ModelObject::commit_repaired_meshes_with_paintin
 
         PreparedVolume pv;
         pv.volume      = item.volume;
+        // Windows repair round-trips geometry through a temporary 3MF. Its
+        // vertices remain in this volume's stored coordinates, but the imported
+        // mesh no longer carries the original file-centering metadata. Preserve
+        // it before preparing ownership, so subsequent reloads stay aligned.
+        item.repaired_mesh.set_init_shift(item.volume->mesh().get_init_shift());
         pv.mesh        = std::make_shared<const TriangleMesh>(std::move(item.repaired_mesh));
         pv.convex_hull = std::make_shared<const TriangleMesh>(pv.mesh->convex_hull_3d());
         pv.saved       = keep_painting ? item.volume->save_painting() : std::nullopt;

@@ -3088,8 +3088,9 @@ static std::vector<Vec2f> clip_polygon_by_triangle_2d(std::vector<Vec2f> poly, c
         for (size_t i = 0; i < poly.size(); ++i) {
             const Vec2f& p = poly[i];
             const Vec2f& q = poly[(i + 1) % poly.size()];
-            const float  cp = (p - a).x() * edge.y() - (p - a).y() * edge.x(); // interior: cross >= 0
-            const float  cq = (q - a).x() * edge.y() - (q - a).y() * edge.x();
+            // A CCW clip triangle keeps the left side of each directed edge.
+            const float  cp = edge.x() * (p - a).y() - edge.y() * (p - a).x();
+            const float  cq = edge.x() * (q - a).y() - edge.y() * (q - a).x();
             const bool   p_in = cp >= 0.f;
             const bool   q_in = cq >= 0.f;
             if (p_in)

@@ -2,7 +2,9 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <numeric>
+#include <queue>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -752,8 +754,1032 @@ struct OpenClipEdge {
     coord_t min_x, min_y, max_x, max_y;
 };
 
+// Exact Clipper1 ctIntersection / pftNonZero open-path scanline classifier used for boundary runs.
+class C1OpenPathScanline
+{
+public:
+    struct Span {
+        size_t  seg_idx = 0;
+        coord_t lo      = 0;
+        coord_t hi      = 0;
+        bool    inside  = false;
+    };
+
+private:
+    static constexpr double kHorizontal = -1.0e40;
+    enum class Direction { RightToLeft, LeftToRight };
+
+    struct Edge {
+        Point   bot;
+        Point   top;
+        Point   curr;
+        double  dx           = 0.;
+        bool    is_clip      = false;
+        bool    is_skip      = false;
+        bool    contributing = false;
+        int     wind_delta   = 0;
+        int     wind_cnt     = 0;
+        int     wind_cnt2    = 0;
+        size_t  subj_seg_idx = size_t(-1);
+        coord_t last_x       = 0;
+        coord_t last_y       = 0;
+        Edge   *next         = nullptr;
+        Edge   *prev         = nullptr;
+        Edge   *next_in_lml  = nullptr;
+        Edge   *prev_in_ael  = nullptr;
+        Edge   *next_in_ael  = nullptr;
+        Edge   *prev_in_sel  = nullptr;
+        Edge   *next_in_sel  = nullptr;
+    };
+
+    struct LocalMinimum {
+        coord_t y           = 0;
+        Edge   *left_bound  = nullptr;
+        Edge   *right_bound = nullptr;
+    };
+
+    struct IntersectNode {
+        Edge *edge1 = nullptr;
+        Edge *edge2 = nullptr;
+        Point pt;
+    };
+
+    std::vector<std::unique_ptr<Edge[]>> m_edge_blocks;
+    std::vector<LocalMinimum>            m_minima_list;
+    std::priority_queue<coord_t>         m_scanbeam;
+    Edge                                *m_active_edges = nullptr;
+    Edge                                *m_sorted_edges = nullptr;
+    std::vector<IntersectNode>           m_intersect_list;
+    std::vector<std::vector<Span>>       m_seg_spans;
+
+    static inline bool is_horizontal(const Edge &e) { return e.dx == kHorizontal; }
+
+    static inline coord_t c1_round(double val)
+    {
+        return (val < 0.) ? coord_t(static_cast<int64_t>(val - 0.5)) : coord_t(static_cast<int64_t>(val + 0.5));
+    }
+
+    static inline coord_t top_x(const Edge &edge, coord_t current_y)
+    {
+        if (current_y == edge.top.y())
+            return edge.top.x();
+        return coord_t(int64_t(edge.bot.x()) + c1_round(edge.dx * double(int64_t(current_y) - int64_t(edge.bot.y()))));
+    }
+
+    static inline void init_edge2(Edge &e)
+    {
+        if (e.curr.y() >= e.next->curr.y()) {
+            e.bot = e.curr;
+            e.top = e.next->curr;
+        } else {
+            e.top = e.curr;
+            e.bot = e.next->curr;
+        }
+        const int64_t dy = int64_t(e.top.y()) - int64_t(e.bot.y());
+        e.dx = (dy == 0) ? kHorizontal : double(int64_t(e.top.x()) - int64_t(e.bot.x())) / double(dy);
+    }
+
+    static inline Edge *remove_edge(Edge *e)
+    {
+        e->prev->next  = e->next;
+        e->next->prev  = e->prev;
+        Edge *result   = e->next;
+        e->prev_in_ael = nullptr;
+        return result;
+    }
+
+    static inline void reverse_horizontal(Edge &e)
+    {
+        std::swap(e.top.x(), e.bot.x());
+    }
+
+    static Edge *find_next_loc_min(Edge *e)
+    {
+        for (;;) {
+            while (e->bot != e->prev->bot || e->curr == e->top)
+                e = e->next;
+            if (! is_horizontal(*e) && ! is_horizontal(*e->prev))
+                break;
+            while (is_horizontal(*e->prev))
+                e = e->prev;
+            Edge *e2 = e;
+            while (is_horizontal(*e))
+                e = e->next;
+            if (e->top.y() == e->prev->bot.y())
+                continue;
+            if (e2->prev->bot.x() < e->bot.x())
+                e = e2;
+            break;
+        }
+        return e;
+    }
+
+    Edge *process_bound(Edge *e, bool next_is_forward)
+    {
+        Edge *result = e;
+        Edge *horz   = nullptr;
+
+        if (e->is_skip) {
+            if (next_is_forward) {
+                while (e->top.y() == e->next->bot.y())
+                    e = e->next;
+                while (e != result && is_horizontal(*e))
+                    e = e->prev;
+            } else {
+                while (e->top.y() == e->prev->bot.y())
+                    e = e->prev;
+                while (e != result && is_horizontal(*e))
+                    e = e->next;
+            }
+            if (e == result) {
+                result = next_is_forward ? e->next : e->prev;
+            } else {
+                e = next_is_forward ? result->next : result->prev;
+                LocalMinimum loc_min;
+                loc_min.y           = e->bot.y();
+                loc_min.left_bound  = nullptr;
+                loc_min.right_bound = e;
+                e->wind_delta       = 0;
+                result              = process_bound(e, next_is_forward);
+                m_minima_list.push_back(loc_min);
+            }
+            return result;
+        }
+
+        Edge *e_start = nullptr;
+        if (is_horizontal(*e)) {
+            e_start = next_is_forward ? e->prev : e->next;
+            if (is_horizontal(*e_start)) {
+                if (e_start->bot.x() != e->bot.x() && e_start->top.x() != e->bot.x())
+                    reverse_horizontal(*e);
+            } else if (e_start->bot.x() != e->bot.x()) {
+                reverse_horizontal(*e);
+            }
+        }
+
+        e_start = e;
+        if (next_is_forward) {
+            while (result->top.y() == result->next->bot.y() && ! result->next->is_skip)
+                result = result->next;
+            if (is_horizontal(*result) && ! result->next->is_skip) {
+                horz = result;
+                while (is_horizontal(*horz->prev))
+                    horz = horz->prev;
+                if (horz->prev->top.x() > result->next->top.x())
+                    result = horz->prev;
+            }
+            while (e != result) {
+                e->next_in_lml = e->next;
+                if (is_horizontal(*e) && e != e_start && e->bot.x() != e->prev->top.x())
+                    reverse_horizontal(*e);
+                e = e->next;
+            }
+            if (is_horizontal(*e) && e != e_start && e->bot.x() != e->prev->top.x())
+                reverse_horizontal(*e);
+            result = result->next;
+        } else {
+            while (result->top.y() == result->prev->bot.y() && ! result->prev->is_skip)
+                result = result->prev;
+            if (is_horizontal(*result) && ! result->prev->is_skip) {
+                horz = result;
+                while (is_horizontal(*horz->next))
+                    horz = horz->next;
+                if (horz->next->top.x() == result->prev->top.x() || horz->next->top.x() > result->prev->top.x())
+                    result = horz->next;
+            }
+            while (e != result) {
+                e->next_in_lml = e->prev;
+                if (is_horizontal(*e) && e != e_start && e->bot.x() != e->next->top.x())
+                    reverse_horizontal(*e);
+                e = e->prev;
+            }
+            if (is_horizontal(*e) && e != e_start && e->bot.x() != e->next->top.x())
+                reverse_horizontal(*e);
+            result = result->prev;
+        }
+        return result;
+    }
+
+    static inline bool is_maxima(const Edge *e, coord_t y) { return e && e->top.y() == y && ! e->next_in_lml; }
+    static inline bool is_intermediate(const Edge *e, coord_t y) { return e->top.y() == y && e->next_in_lml; }
+
+    static inline Edge *get_maxima_pair(const Edge *e)
+    {
+        if ((e->next->top == e->top) && ! e->next->next_in_lml)
+            return e->next;
+        if ((e->prev->top == e->top) && ! e->prev->next_in_lml)
+            return e->prev;
+        return nullptr;
+    }
+
+    static inline Edge *get_maxima_pair_ex(const Edge *e)
+    {
+        Edge *result = get_maxima_pair(e);
+        if (result && (result->is_skip || (result->next_in_ael == result->prev_in_ael && ! is_horizontal(*result))))
+            return nullptr;
+        return result;
+    }
+
+    static inline void get_horz_direction(const Edge &horz_edge, Direction &dir, coord_t &left, coord_t &right)
+    {
+        if (horz_edge.bot.x() < horz_edge.top.x()) {
+            left  = horz_edge.bot.x();
+            right = horz_edge.top.x();
+            dir   = Direction::LeftToRight;
+        } else {
+            left  = horz_edge.top.x();
+            right = horz_edge.bot.x();
+            dir   = Direction::RightToLeft;
+        }
+    }
+
+    static inline bool e2_inserts_before_e1(const Edge &e1, const Edge &e2)
+    {
+        if (e2.curr.x() == e1.curr.x()) {
+            if (e2.top.y() > e1.top.y())
+                return e2.top.x() < top_x(e1, e2.top.y());
+            return e1.top.x() > top_x(e2, e1.top.y());
+        }
+        return e2.curr.x() < e1.curr.x();
+    }
+
+    void insert_edge_into_ael(Edge *edge, Edge *start_edge)
+    {
+        if (! m_active_edges) {
+            edge->prev_in_ael = nullptr;
+            edge->next_in_ael = nullptr;
+            m_active_edges    = edge;
+        } else if (! start_edge && e2_inserts_before_e1(*m_active_edges, *edge)) {
+            edge->prev_in_ael           = nullptr;
+            edge->next_in_ael           = m_active_edges;
+            m_active_edges->prev_in_ael = edge;
+            m_active_edges              = edge;
+        } else {
+            if (! start_edge)
+                start_edge = m_active_edges;
+            while (start_edge->next_in_ael && ! e2_inserts_before_e1(*start_edge->next_in_ael, *edge))
+                start_edge = start_edge->next_in_ael;
+            edge->next_in_ael = start_edge->next_in_ael;
+            if (start_edge->next_in_ael)
+                start_edge->next_in_ael->prev_in_ael = edge;
+            edge->prev_in_ael       = start_edge;
+            start_edge->next_in_ael = edge;
+        }
+    }
+
+    void delete_from_ael(Edge *e)
+    {
+        Edge *ael_prev = e->prev_in_ael;
+        Edge *ael_next = e->next_in_ael;
+        if (! ael_prev && ! ael_next && (e != m_active_edges))
+            return;
+        if (ael_prev)
+            ael_prev->next_in_ael = ael_next;
+        else
+            m_active_edges = ael_next;
+        if (ael_next)
+            ael_next->prev_in_ael = ael_prev;
+        e->next_in_ael = nullptr;
+        e->prev_in_ael = nullptr;
+    }
+
+    void add_edge_to_sel(Edge *edge)
+    {
+        if (! m_sorted_edges) {
+            m_sorted_edges    = edge;
+            edge->prev_in_sel = nullptr;
+            edge->next_in_sel = nullptr;
+        } else {
+            edge->next_in_sel           = m_sorted_edges;
+            edge->prev_in_sel           = nullptr;
+            m_sorted_edges->prev_in_sel = edge;
+            m_sorted_edges              = edge;
+        }
+    }
+
+    void delete_from_sel(Edge *e)
+    {
+        Edge *sel_prev = e->prev_in_sel;
+        Edge *sel_next = e->next_in_sel;
+        if (! sel_prev && ! sel_next && (e != m_sorted_edges))
+            return;
+        if (sel_prev)
+            sel_prev->next_in_sel = sel_next;
+        else
+            m_sorted_edges = sel_next;
+        if (sel_next)
+            sel_next->prev_in_sel = sel_prev;
+        e->next_in_sel = nullptr;
+        e->prev_in_sel = nullptr;
+    }
+
+    void copy_ael_to_sel()
+    {
+        Edge *e        = m_active_edges;
+        m_sorted_edges = e;
+        while (e) {
+            e->prev_in_sel = e->prev_in_ael;
+            e->next_in_sel = e->next_in_ael;
+            e              = e->next_in_ael;
+        }
+    }
+
+    void swap_positions_in_ael(Edge *edge1, Edge *edge2)
+    {
+        if (edge1->next_in_ael == edge1->prev_in_ael || edge2->next_in_ael == edge2->prev_in_ael)
+            return;
+        if (edge1->next_in_ael == edge2) {
+            Edge *next = edge2->next_in_ael;
+            if (next)
+                next->prev_in_ael = edge1;
+            Edge *prev = edge1->prev_in_ael;
+            if (prev)
+                prev->next_in_ael = edge2;
+            edge2->prev_in_ael = prev;
+            edge2->next_in_ael = edge1;
+            edge1->prev_in_ael = edge2;
+            edge1->next_in_ael = next;
+        } else if (edge2->next_in_ael == edge1) {
+            Edge *next = edge1->next_in_ael;
+            if (next)
+                next->prev_in_ael = edge2;
+            Edge *prev = edge2->prev_in_ael;
+            if (prev)
+                prev->next_in_ael = edge1;
+            edge1->prev_in_ael = prev;
+            edge1->next_in_ael = edge2;
+            edge2->prev_in_ael = edge1;
+            edge2->next_in_ael = next;
+        } else {
+            Edge *next         = edge1->next_in_ael;
+            Edge *prev         = edge1->prev_in_ael;
+            edge1->next_in_ael = edge2->next_in_ael;
+            if (edge1->next_in_ael)
+                edge1->next_in_ael->prev_in_ael = edge1;
+            edge1->prev_in_ael = edge2->prev_in_ael;
+            if (edge1->prev_in_ael)
+                edge1->prev_in_ael->next_in_ael = edge1;
+            edge2->next_in_ael = next;
+            if (edge2->next_in_ael)
+                edge2->next_in_ael->prev_in_ael = edge2;
+            edge2->prev_in_ael = prev;
+            if (edge2->prev_in_ael)
+                edge2->prev_in_ael->next_in_ael = edge2;
+        }
+        if (! edge1->prev_in_ael)
+            m_active_edges = edge1;
+        else if (! edge2->prev_in_ael)
+            m_active_edges = edge2;
+    }
+
+    void swap_positions_in_sel(Edge *edge1, Edge *edge2)
+    {
+        if (! edge1->next_in_sel && ! edge1->prev_in_sel)
+            return;
+        if (! edge2->next_in_sel && ! edge2->prev_in_sel)
+            return;
+        if (edge1->next_in_sel == edge2) {
+            Edge *next = edge2->next_in_sel;
+            if (next)
+                next->prev_in_sel = edge1;
+            Edge *prev = edge1->prev_in_sel;
+            if (prev)
+                prev->next_in_sel = edge2;
+            edge2->prev_in_sel = prev;
+            edge2->next_in_sel = edge1;
+            edge1->prev_in_sel = edge2;
+            edge1->next_in_sel = next;
+        } else if (edge2->next_in_sel == edge1) {
+            Edge *next = edge1->next_in_sel;
+            if (next)
+                next->prev_in_sel = edge2;
+            Edge *prev = edge2->prev_in_sel;
+            if (prev)
+                prev->next_in_sel = edge1;
+            edge1->prev_in_sel = prev;
+            edge1->next_in_sel = edge2;
+            edge2->prev_in_sel = edge1;
+            edge2->next_in_sel = next;
+        } else {
+            Edge *next         = edge1->next_in_sel;
+            Edge *prev         = edge1->prev_in_sel;
+            edge1->next_in_sel = edge2->next_in_sel;
+            if (edge1->next_in_sel)
+                edge1->next_in_sel->prev_in_sel = edge1;
+            edge1->prev_in_sel = edge2->prev_in_sel;
+            if (edge1->prev_in_sel)
+                edge1->prev_in_sel->next_in_sel = edge1;
+            edge2->next_in_sel = next;
+            if (edge2->next_in_sel)
+                edge2->next_in_sel->prev_in_sel = edge2;
+            edge2->prev_in_sel = prev;
+            if (edge2->prev_in_sel)
+                edge2->prev_in_sel->next_in_sel = edge2;
+        }
+        if (! edge1->prev_in_sel)
+            m_sorted_edges = edge1;
+        else if (! edge2->prev_in_sel)
+            m_sorted_edges = edge2;
+    }
+
+    void update_edge_into_ael(Edge *&e)
+    {
+        Edge *nxt         = e->next_in_lml;
+        Edge *ael_prev    = e->prev_in_ael;
+        Edge *ael_next    = e->next_in_ael;
+        nxt->contributing = e->contributing;
+        nxt->wind_delta   = e->wind_delta;
+        nxt->wind_cnt     = e->wind_cnt;
+        nxt->wind_cnt2    = e->wind_cnt2;
+        if (ael_prev)
+            ael_prev->next_in_ael = nxt;
+        else
+            m_active_edges = nxt;
+        if (ael_next)
+            ael_next->prev_in_ael = nxt;
+        e              = nxt;
+        e->curr        = e->bot;
+        e->last_x      = e->bot.x();
+        e->last_y      = e->bot.y();
+        e->prev_in_ael = ael_prev;
+        e->next_in_ael = ael_next;
+        if (! is_horizontal(*e))
+            m_scanbeam.push(e->top.y());
+    }
+
+    void set_winding_count(Edge &edge) const
+    {
+        Edge *e = edge.prev_in_ael;
+        while (e && (e->is_clip != edge.is_clip || e->wind_delta == 0))
+            e = e->prev_in_ael;
+        if (! e) {
+            edge.wind_cnt  = (edge.wind_delta == 0) ? 1 : edge.wind_delta;
+            edge.wind_cnt2 = 0;
+            e              = m_active_edges;
+        } else if (edge.wind_delta == 0) {
+            edge.wind_cnt  = 1;
+            edge.wind_cnt2 = e->wind_cnt2;
+            e              = e->next_in_ael;
+        } else {
+            if (e->wind_cnt * e->wind_delta < 0) {
+                if (std::abs(e->wind_cnt) > 1) {
+                    if (e->wind_delta * edge.wind_delta < 0)
+                        edge.wind_cnt = e->wind_cnt;
+                    else
+                        edge.wind_cnt = e->wind_cnt + edge.wind_delta;
+                } else {
+                    edge.wind_cnt = edge.wind_delta;
+                }
+            } else {
+                if (e->wind_delta * edge.wind_delta < 0)
+                    edge.wind_cnt = e->wind_cnt;
+                else
+                    edge.wind_cnt = e->wind_cnt + edge.wind_delta;
+            }
+            edge.wind_cnt2 = e->wind_cnt2;
+            e              = e->next_in_ael;
+        }
+        while (e != &edge) {
+            edge.wind_cnt2 += e->wind_delta;
+            e = e->next_in_ael;
+        }
+    }
+
+    inline void record_span(const Edge &e, coord_t c0, coord_t c1)
+    {
+        if (e.subj_seg_idx >= m_seg_spans.size())
+            return;
+        const coord_t lo = std::min(c0, c1);
+        const coord_t hi = std::max(c0, c1);
+        if (lo < hi)
+            m_seg_spans[e.subj_seg_idx].push_back({ e.subj_seg_idx, lo, hi, e.contributing });
+    }
+
+    void intersect_edges(Edge *e1, Edge *e2, const Point &pt)
+    {
+        if (e1->wind_delta == 0 || e2->wind_delta == 0) {
+            if (e1->wind_delta == 0 && e2->wind_delta == 0)
+                return;
+            if (e1->is_clip != e2->is_clip) {
+                Edge *eo = (e1->wind_delta == 0) ? e1 : e2;
+                Edge *ec = (e1->wind_delta == 0) ? e2 : e1;
+                if (std::abs(ec->wind_cnt) == 1) {
+                    if (is_horizontal(*eo)) {
+                        if (pt.x() != eo->last_x) {
+                            record_span(*eo, eo->last_x, pt.x());
+                            eo->last_x = pt.x();
+                        }
+                    } else {
+                        if (pt.y() < eo->last_y) {
+                            record_span(*eo, pt.y(), eo->last_y);
+                            eo->last_y = pt.y();
+                        }
+                    }
+                    eo->contributing = ! eo->contributing;
+                }
+            }
+            return;
+        }
+
+        if (e1->wind_cnt + e2->wind_delta == 0)
+            e1->wind_cnt = -e1->wind_cnt;
+        else
+            e1->wind_cnt += e2->wind_delta;
+        if (e2->wind_cnt - e1->wind_delta == 0)
+            e2->wind_cnt = -e2->wind_cnt;
+        else
+            e2->wind_cnt -= e1->wind_delta;
+    }
+
+    void intersect_point(const Edge &edge1, const Edge &edge2, Point &ip) const
+    {
+        if (edge1.dx == edge2.dx) {
+            ip.y() = edge1.curr.y();
+            ip.x() = top_x(edge1, ip.y());
+            return;
+        }
+        int64_t y = 0;
+        if (edge1.dx == 0.) {
+            ip.x() = edge1.bot.x();
+            y = is_horizontal(edge2)
+                ? int64_t(edge2.bot.y())
+                : int64_t(c1_round(double(ip.x()) / edge2.dx + double(edge2.bot.y()) - (double(edge2.bot.x()) / edge2.dx)));
+        } else if (edge2.dx == 0.) {
+            ip.x() = edge2.bot.x();
+            y = is_horizontal(edge1)
+                ? int64_t(edge1.bot.y())
+                : int64_t(c1_round(double(ip.x()) / edge1.dx + double(edge1.bot.y()) - (double(edge1.bot.x()) / edge1.dx)));
+        } else {
+            const double b1 = double(edge1.bot.x()) - double(edge1.bot.y()) * edge1.dx;
+            const double b2 = double(edge2.bot.x()) - double(edge2.bot.y()) * edge2.dx;
+            const double q  = (b2 - b1) / (edge1.dx - edge2.dx);
+            y               = int64_t(c1_round(q));
+            ip.x()          = (std::fabs(edge1.dx) < std::fabs(edge2.dx))
+                ? c1_round(edge1.dx * q + b1)
+                : c1_round(edge2.dx * q + b2);
+        }
+        ip.y() = coord_t(y);
+        if (y < edge1.top.y() || y < edge2.top.y()) {
+            ip.y() = (edge1.top.y() > edge2.top.y()) ? edge1.top.y() : edge2.top.y();
+            ip.x() = top_x((std::fabs(edge1.dx) < std::fabs(edge2.dx)) ? edge1 : edge2, ip.y());
+        }
+        if (ip.y() > edge1.curr.y()) {
+            ip.y() = edge1.curr.y();
+            ip.x() = top_x((std::fabs(edge1.dx) > std::fabs(edge2.dx)) ? edge2 : edge1, ip.y());
+        }
+    }
+
+    static inline bool edges_adjacent(const IntersectNode &inode)
+    {
+        return (inode.edge1->next_in_sel == inode.edge2) || (inode.edge1->prev_in_sel == inode.edge2);
+    }
+
+    bool fixup_intersection_order()
+    {
+        copy_ael_to_sel();
+        std::sort(m_intersect_list.begin(), m_intersect_list.end(),
+                  [](const IntersectNode &n1, const IntersectNode &n2) { return n2.pt.y() < n1.pt.y(); });
+        const size_t cnt = m_intersect_list.size();
+        for (size_t i = 0; i < cnt; ++i) {
+            if (! edges_adjacent(m_intersect_list[i])) {
+                size_t j = i + 1;
+                while (j < cnt && ! edges_adjacent(m_intersect_list[j]))
+                    ++j;
+                if (j == cnt)
+                    return false;
+                std::swap(m_intersect_list[i], m_intersect_list[j]);
+            }
+            swap_positions_in_sel(m_intersect_list[i].edge1, m_intersect_list[i].edge2);
+        }
+        return true;
+    }
+
+    void build_intersect_list(coord_t top_y)
+    {
+        if (! m_active_edges)
+            return;
+        Edge *e        = m_active_edges;
+        m_sorted_edges = e;
+        while (e) {
+            e->prev_in_sel = e->prev_in_ael;
+            e->next_in_sel = e->next_in_ael;
+            e->curr.x()    = top_x(*e, top_y);
+            e              = e->next_in_ael;
+        }
+        bool is_modified = false;
+        do {
+            is_modified = false;
+            e           = m_sorted_edges;
+            while (e->next_in_sel) {
+                Edge *e_next = e->next_in_sel;
+                if (e->curr.x() > e_next->curr.x()) {
+                    Point pt;
+                    intersect_point(*e, *e_next, pt);
+                    if (pt.y() < top_y)
+                        pt = Point(top_x(*e, top_y), top_y);
+                    m_intersect_list.push_back({ e, e_next, pt });
+                    swap_positions_in_sel(e, e_next);
+                    is_modified = true;
+                } else {
+                    e = e_next;
+                }
+            }
+            if (e->prev_in_sel)
+                e->prev_in_sel->next_in_sel = nullptr;
+            else
+                break;
+        } while (is_modified);
+        m_sorted_edges = nullptr;
+    }
+
+    void process_intersections(coord_t top_y)
+    {
+        if (! m_active_edges)
+            return;
+        m_intersect_list.clear();
+        build_intersect_list(top_y);
+        if (! m_intersect_list.empty()) {
+            if (m_intersect_list.size() == 1 || fixup_intersection_order()) {
+                for (const IntersectNode &node : m_intersect_list) {
+                    intersect_edges(node.edge1, node.edge2, node.pt);
+                    swap_positions_in_ael(node.edge1, node.edge2);
+                }
+            }
+            m_intersect_list.clear();
+        }
+        m_sorted_edges = nullptr;
+    }
+
+    void insert_local_minima_into_ael(coord_t bot_y)
+    {
+        while (! m_minima_list.empty() && m_minima_list.back().y == bot_y) {
+            Edge *lb = m_minima_list.back().left_bound;
+            Edge *rb = m_minima_list.back().right_bound;
+            m_minima_list.pop_back();
+
+            if (! lb) {
+                insert_edge_into_ael(rb, nullptr);
+                set_winding_count(*rb);
+                rb->contributing = (! rb->is_clip && rb->wind_cnt2 != 0);
+                rb->last_x       = rb->bot.x();
+                rb->last_y       = rb->bot.y();
+            } else if (! rb) {
+                insert_edge_into_ael(lb, nullptr);
+                set_winding_count(*lb);
+                lb->contributing = (! lb->is_clip && lb->wind_cnt2 != 0);
+                lb->last_x       = lb->bot.x();
+                lb->last_y       = lb->bot.y();
+                m_scanbeam.push(lb->top.y());
+            } else {
+                insert_edge_into_ael(lb, nullptr);
+                insert_edge_into_ael(rb, lb);
+                set_winding_count(*lb);
+                rb->wind_cnt       = lb->wind_cnt;
+                rb->wind_cnt2      = lb->wind_cnt2;
+                const bool contrib = (! lb->is_clip && lb->wind_cnt2 != 0);
+                lb->contributing   = contrib;
+                rb->contributing   = contrib;
+                lb->last_x         = lb->bot.x();
+                lb->last_y         = lb->bot.y();
+                rb->last_x         = rb->bot.x();
+                rb->last_y         = rb->bot.y();
+                m_scanbeam.push(lb->top.y());
+            }
+
+            if (rb) {
+                if (is_horizontal(*rb)) {
+                    add_edge_to_sel(rb);
+                    if (rb->next_in_lml)
+                        m_scanbeam.push(rb->next_in_lml->top.y());
+                } else {
+                    m_scanbeam.push(rb->top.y());
+                }
+            }
+
+            if (! lb || ! rb)
+                continue;
+
+            if (lb->next_in_ael != rb) {
+                Edge *e = lb->next_in_ael;
+                while (e && e != rb) {
+                    intersect_edges(rb, e, lb->curr);
+                    e = e->next_in_ael;
+                }
+            }
+        }
+    }
+
+    void process_horizontal(Edge *horz_edge)
+    {
+        Direction  dir;
+        coord_t    horz_left = 0, horz_right = 0;
+        const bool is_open = ! horz_edge->is_clip;
+        get_horz_direction(*horz_edge, dir, horz_left, horz_right);
+
+        Edge *e_last_horz = horz_edge;
+        Edge *e_max_pair  = nullptr;
+        while (e_last_horz->next_in_lml && is_horizontal(*e_last_horz->next_in_lml))
+            e_last_horz = e_last_horz->next_in_lml;
+        if (! e_last_horz->next_in_lml)
+            e_max_pair = get_maxima_pair(e_last_horz);
+
+        for (;;) {
+            const bool is_last_horz = (horz_edge == e_last_horz);
+            Edge      *e            = (dir == Direction::LeftToRight) ? horz_edge->next_in_ael : horz_edge->prev_in_ael;
+            while (e) {
+                if ((dir == Direction::LeftToRight && e->curr.x() > horz_right) ||
+                    (dir == Direction::RightToLeft && e->curr.x() < horz_left))
+                    break;
+                if (e->curr.x() == horz_edge->top.x() && horz_edge->next_in_lml && e->dx < horz_edge->next_in_lml->dx)
+                    break;
+                if (e == e_max_pair && is_last_horz) {
+                    if (is_open)
+                        record_span(*horz_edge, horz_edge->last_x, horz_edge->top.x());
+                    delete_from_ael(horz_edge);
+                    delete_from_ael(e_max_pair);
+                    return;
+                }
+                const Point pt(e->curr.x(), horz_edge->curr.y());
+                if (dir == Direction::LeftToRight)
+                    intersect_edges(horz_edge, e, pt);
+                else
+                    intersect_edges(e, horz_edge, pt);
+                Edge *e_next = (dir == Direction::LeftToRight) ? e->next_in_ael : e->prev_in_ael;
+                swap_positions_in_ael(horz_edge, e);
+                e = e_next;
+            }
+            if (is_open && horz_edge->top.x() != horz_edge->last_x) {
+                record_span(*horz_edge, horz_edge->last_x, horz_edge->top.x());
+                horz_edge->last_x = horz_edge->top.x();
+            }
+            if (! horz_edge->next_in_lml || ! is_horizontal(*horz_edge->next_in_lml))
+                break;
+            update_edge_into_ael(horz_edge);
+            get_horz_direction(*horz_edge, dir, horz_left, horz_right);
+        }
+        if (is_open && horz_edge->top.x() != horz_edge->last_x) {
+            record_span(*horz_edge, horz_edge->last_x, horz_edge->top.x());
+            horz_edge->last_x = horz_edge->top.x();
+        }
+        if (horz_edge->next_in_lml)
+            update_edge_into_ael(horz_edge);
+        else
+            delete_from_ael(horz_edge);
+    }
+
+    void process_horizontals()
+    {
+        while (Edge *horz_edge = m_sorted_edges) {
+            delete_from_sel(horz_edge);
+            process_horizontal(horz_edge);
+        }
+    }
+
+    void do_maxima(Edge *e)
+    {
+        Edge *e_max_pair = get_maxima_pair_ex(e);
+        if (! e_max_pair) {
+            delete_from_ael(e);
+            return;
+        }
+        Edge *e_next = e->next_in_ael;
+        while (e_next && e_next != e_max_pair) {
+            intersect_edges(e, e_next, e->top);
+            swap_positions_in_ael(e, e_next);
+            e_next = e->next_in_ael;
+        }
+        delete_from_ael(e);
+        delete_from_ael(e_max_pair);
+    }
+
+    void process_edges_at_top_of_scanbeam(coord_t top_y)
+    {
+        for (Edge *ae = m_active_edges; ae; ae = ae->next_in_ael) {
+            if (! ae->is_clip && ! is_horizontal(*ae) && top_y < ae->last_y) {
+                record_span(*ae, top_y, ae->last_y);
+                ae->last_y = top_y;
+            }
+        }
+
+        Edge *e = m_active_edges;
+        while (e) {
+            bool is_max_edge = is_maxima(e, top_y);
+            if (is_max_edge) {
+                Edge *e_max_pair = get_maxima_pair_ex(e);
+                is_max_edge      = (! e_max_pair || ! is_horizontal(*e_max_pair));
+            }
+            if (is_max_edge) {
+                Edge *e_prev = e->prev_in_ael;
+                do_maxima(e);
+                e = e_prev ? e_prev->next_in_ael : m_active_edges;
+            } else {
+                if (is_intermediate(e, top_y) && is_horizontal(*e->next_in_lml)) {
+                    update_edge_into_ael(e);
+                    add_edge_to_sel(e);
+                } else {
+                    e->curr.x() = top_x(*e, top_y);
+                    e->curr.y() = top_y;
+                }
+                e = e->next_in_ael;
+            }
+        }
+
+        process_horizontals();
+
+        e = m_active_edges;
+        while (e) {
+            if (is_intermediate(e, top_y))
+                update_edge_into_ael(e);
+            e = e->next_in_ael;
+        }
+    }
+
+public:
+    void add_path(const Point *pts, size_t count, bool is_clip, bool closed)
+    {
+        if (! is_clip && count >= 2 && m_seg_spans.size() + 1 < count)
+            m_seg_spans.resize(count - 1);
+
+        int high_i = int(count) - 1;
+        if (closed)
+            while (high_i > 0 && pts[high_i] == pts[0])
+                --high_i;
+        while (high_i > 0 && pts[high_i] == pts[high_i - 1])
+            --high_i;
+        if ((closed && high_i < 2) || (! closed && high_i < 1))
+            return;
+
+        auto  block = std::make_unique<Edge[]>(size_t(high_i) + 1);
+        Edge *edges = block.get();
+        for (int i = 0; i <= high_i; ++i) {
+            edges[i].curr         = pts[i];
+            edges[i].next         = &edges[(i == high_i) ? 0 : (i + 1)];
+            edges[i].prev         = &edges[(i == 0) ? high_i : (i - 1)];
+            edges[i].is_clip      = is_clip;
+            edges[i].subj_seg_idx = (! is_clip && i < high_i) ? size_t(i) : size_t(-1);
+        }
+
+        Edge *e_start = &edges[0];
+        Edge *e = e_start, *e_loop_stop = e_start;
+        for (;;) {
+            if (e->curr == e->next->curr && (closed || e->next != e_start)) {
+                if (e == e->next)
+                    break;
+                if (e == e_start)
+                    e_start = e->next;
+                e           = remove_edge(e);
+                e_loop_stop = e;
+                continue;
+            }
+            if (e->prev == e->next)
+                break;
+            if (closed && int128::orient(e->prev->curr, e->curr, e->next->curr) == 0) {
+                if (e == e_start)
+                    e_start = e->next;
+                e           = remove_edge(e);
+                e           = e->prev;
+                e_loop_stop = e;
+                continue;
+            }
+            e = e->next;
+            if (e == e_loop_stop || (! closed && e->next == e_start))
+                break;
+        }
+        if ((! closed && (e == e->next)) || (closed && (e->prev == e->next)))
+            return;
+
+        if (! closed)
+            e_start->prev->is_skip = true;
+
+        bool is_flat = true;
+        e            = e_start;
+        do {
+            init_edge2(*e);
+            e = e->next;
+            if (is_flat && e->curr.y() != e_start->curr.y())
+                is_flat = false;
+        } while (e != e_start);
+
+        m_edge_blocks.push_back(std::move(block));
+
+        if (is_flat) {
+            if (closed)
+                return;
+            e->prev->is_skip = true;
+            LocalMinimum loc_min;
+            loc_min.y           = e->bot.y();
+            loc_min.left_bound  = nullptr;
+            loc_min.right_bound = e;
+            loc_min.right_bound->wind_delta = 0;
+            for (;;) {
+                if (e->bot.x() != e->prev->top.x())
+                    reverse_horizontal(*e);
+                if (e->next->is_skip)
+                    break;
+                e->next_in_lml = e->next;
+                e              = e->next;
+            }
+            m_minima_list.push_back(loc_min);
+            return;
+        }
+
+        if (e->prev->bot == e->prev->top)
+            e = e->next;
+
+        Edge *e_min = nullptr;
+        for (;;) {
+            e = find_next_loc_min(e);
+            if (e == e_min)
+                break;
+            if (! e_min)
+                e_min = e;
+
+            LocalMinimum loc_min;
+            loc_min.y                = e->bot.y();
+            bool left_is_forward     = false;
+            if (e->dx < e->prev->dx) {
+                loc_min.left_bound  = e->prev;
+                loc_min.right_bound = e;
+                left_is_forward     = false;
+            } else {
+                loc_min.left_bound  = e;
+                loc_min.right_bound = e->prev;
+                left_is_forward     = true;
+            }
+
+            if (! closed)
+                loc_min.left_bound->wind_delta = 0;
+            else if (loc_min.left_bound->next == loc_min.right_bound)
+                loc_min.left_bound->wind_delta = -1;
+            else
+                loc_min.left_bound->wind_delta = 1;
+            loc_min.right_bound->wind_delta = -loc_min.left_bound->wind_delta;
+
+            e        = process_bound(loc_min.left_bound, left_is_forward);
+            if (e->is_skip)
+                e = process_bound(e, left_is_forward);
+            Edge *e2 = process_bound(loc_min.right_bound, ! left_is_forward);
+            if (e2->is_skip)
+                e2 = process_bound(e2, ! left_is_forward);
+
+            if (loc_min.left_bound->is_skip)
+                loc_min.left_bound = nullptr;
+            else if (loc_min.right_bound->is_skip)
+                loc_min.right_bound = nullptr;
+            m_minima_list.push_back(loc_min);
+            if (! left_is_forward)
+                e = e2;
+        }
+    }
+
+    const std::vector<std::vector<Span>> &execute()
+    {
+        if (m_minima_list.empty())
+            return m_seg_spans;
+        std::stable_sort(m_minima_list.begin(), m_minima_list.end(),
+                         [](const LocalMinimum &a, const LocalMinimum &b) { return a.y < b.y; });
+        for (LocalMinimum &lm : m_minima_list) {
+            if (lm.left_bound)
+                lm.left_bound->curr = lm.left_bound->bot;
+            if (lm.right_bound)
+                lm.right_bound->curr = lm.right_bound->bot;
+            m_scanbeam.push(lm.y);
+        }
+        m_active_edges = nullptr;
+        m_sorted_edges = nullptr;
+
+        coord_t bot_y = m_scanbeam.top();
+        do {
+            m_scanbeam.pop();
+        } while (! m_scanbeam.empty() && bot_y == m_scanbeam.top());
+
+        for (;;) {
+            insert_local_minima_into_ael(bot_y);
+            process_horizontals();
+            if (m_scanbeam.empty())
+                break;
+            const coord_t top_y = m_scanbeam.top();
+            do {
+                m_scanbeam.pop();
+            } while (! m_scanbeam.empty() && top_y == m_scanbeam.top());
+            process_intersections(top_y);
+            process_edges_at_top_of_scanbeam(top_y);
+            bot_y = top_y;
+        }
+        return m_seg_spans;
+    }
+};
+
 struct OpenClipEdgeData {
+    struct ClipPolyRange {
+        size_t      pt_begin = 0;
+        size_t      pt_count = 0;
+        BoundingBox bbox;
+    };
+
     std::vector<OpenClipEdge>          edges;
+    std::vector<Point>                 clip_pts;
+    std::vector<ClipPolyRange>         clip_polys;
     AABBTreeIndirect::Tree<2, coord_t> tree;
     BoundingBox                        total_bbox;
 
@@ -763,16 +1789,26 @@ struct OpenClipEdgeData {
     void build_from_paths(const PathsRange &paths)
     {
         edges.clear();
+        clip_pts.clear();
+        clip_polys.clear();
         tree.clear();
         total_bbox = BoundingBox();
         size_t total_pts = 0;
         for (const auto &poly : paths)
             total_pts += poly.size();
         edges.reserve(total_pts);
+        clip_pts.reserve(total_pts);
         for (const auto &poly : paths) {
             const size_t n = poly.size();
             if (n < 3)
                 continue;
+            const size_t pt_begin = clip_pts.size();
+            BoundingBox  poly_box;
+            for (const Point &pt : poly) {
+                clip_pts.push_back(pt);
+                poly_box.merge(pt);
+            }
+            clip_polys.push_back({ pt_begin, n, poly_box });
             for (size_t i = 0; i < n; ++i) {
                 const Point &a = poly[i];
                 const Point &b = poly[(i + 1 == n) ? 0 : i + 1];
@@ -842,32 +1878,6 @@ struct OpenClipEdgeData {
         IntervalKind kind   = IntervalKind::StrictlyOutside;
         bool         inside = false;
     };
-
-    int point_winding(double px_val, double py_val) const
-    {
-        if (edges.empty() || px_val > double(total_bbox.max.x()) + 1. ||
-            py_val < double(total_bbox.min.y()) - 1. || py_val > double(total_bbox.max.y()) + 1.)
-            return 0;
-        int               w    = 0;
-        const int64_t     x_lo = std::clamp<int64_t>(int64_t(std::floor(px_val)) - 1, total_bbox.min.x(), total_bbox.max.x());
-        const int64_t     y_lo = std::clamp<int64_t>(int64_t(std::floor(py_val)) - 1, total_bbox.min.y(), total_bbox.max.y());
-        const int64_t     y_hi = std::clamp<int64_t>(int64_t(std::ceil(py_val)) + 1, total_bbox.min.y(), total_bbox.max.y());
-        const BoundingBox ray_box(Point(coord_t(x_lo), coord_t(y_lo)), Point(total_bbox.max.x(), coord_t(y_hi)));
-        query_box(ray_box, [&](size_t idx) {
-            const OpenClipEdge &ce = edges[idx];
-            if (ce.a.y() == ce.b.y())
-                return true;
-            const double ay = double(ce.a.y()), by = double(ce.b.y());
-            if ((ay <= py_val && by > py_val) || (by <= py_val && ay > py_val)) {
-                const double x_cross = (ce.a.x() == ce.b.x()) ? double(ce.a.x())
-                    : (double(ce.a.x()) + (py_val - ay) * double(ce.b.x() - ce.a.x()) / (by - ay));
-                if (x_cross > px_val)
-                    w += (ce.b.y() > ce.a.y() ? 1 : -1);
-            }
-            return true;
-        });
-        return w;
-    }
 
     void clip_segment_raw(const Point &a, const Point &b, size_t seg_idx, std::vector<RawPathInterval> &out) const
     {
@@ -1079,7 +2089,6 @@ struct OpenClipEdgeData {
         };
 
         const size_t base_out = out.size();
-        out.reserve(base_out + bps.size() - 1);
         for (size_t k = 0; k + 1 < bps.size(); ++k) {
             if (bps[k].pt == bps[k + 1].pt) {
                 if (k + 2 == bps.size() && out.size() > base_out) {
@@ -1150,147 +2159,82 @@ struct OpenClipEdgeData {
             for (RawPathInterval &r : raw)
                 r.inside = (r.kind != IntervalKind::StrictlyOutside);
         } else {
-            const size_t M        = raw.size();
-            auto         next_mod = [M](size_t i) -> size_t { return (i + 1 == M) ? 0 : i + 1; };
-            auto         prev_mod = [M](size_t i) -> size_t { return (i == 0) ? M - 1 : i - 1; };
-
-            // Pass 1: base classification + contiguous NonHorizRight runs via Clipper1 top-corner maxima rule.
+            bool has_boundary = false;
             for (RawPathInterval &r : raw) {
                 switch (r.kind) {
                 case IntervalKind::StrictlyInside:
-                case IntervalKind::NonHorizLeft:
                     r.inside = true;
                     break;
                 case IntervalKind::StrictlyOutside:
+                    r.inside = false;
+                    break;
                 case IntervalKind::HorizTop:
                 case IntervalKind::HorizBottom:
+                case IntervalKind::NonHorizLeft:
                 case IntervalKind::NonHorizRight:
-                    r.inside = false;
+                    r.inside     = false;
+                    has_boundary = true;
                     break;
                 }
             }
 
-            size_t start_v = 0;
-            bool   all_v   = true;
-            if (is_closed) {
-                for (size_t i = 0; i < M; ++i)
-                    if (raw[i].kind != IntervalKind::NonHorizRight) {
-                        start_v = next_mod(i);
-                        all_v   = false;
-                        break;
-                    }
-            } else {
-                all_v = std::all_of(raw.begin(), raw.end(), [](const RawPathInterval &r) {
-                    return r.kind == IntervalKind::NonHorizRight;
-                });
-            }
+            if (has_boundary) {
+                C1OpenPathScanline scanline;
+                Points             closed_pts;
+                const Point       *subj_ptr = path.data();
+                size_t             subj_cnt = path.size();
+                if (is_closed && path.size() >= 3 && path.front() != path.back()) {
+                    closed_pts.reserve(path.size() + 1);
+                    closed_pts.insert(closed_pts.end(), path.begin(), path.end());
+                    closed_pts.push_back(path.front());
+                    subj_ptr = closed_pts.data();
+                    subj_cnt = closed_pts.size();
+                }
+                scanline.add_path(subj_ptr, subj_cnt, false, false);
 
-            if (! all_v) {
-                for (size_t step = 0; step < M;) {
-                    const size_t s = (start_v + step) % M;
-                    if (raw[s].kind != IntervalKind::NonHorizRight) {
-                        ++step;
+                BoundingBox subj_box;
+                for (const Point &pt : path)
+                    subj_box.merge(pt);
+                subj_box.offset(1);
+                for (const ClipPolyRange &cp : clip_polys) {
+                    if (cp.bbox.overlap(subj_box))
+                        scanline.add_path(clip_pts.data() + cp.pt_begin, cp.pt_count, true, true);
+                }
+
+                const auto &seg_spans = scanline.execute();
+                for (RawPathInterval &r : raw) {
+                    if (r.kind == IntervalKind::StrictlyInside || r.kind == IntervalKind::StrictlyOutside)
                         continue;
-                    }
-                    size_t run_len = 1;
-                    while (run_len < M) {
-                        const size_t nxt = (s + run_len) % M;
-                        if (! is_closed && nxt == 0)
-                            break;
-                        if (raw[nxt].kind != IntervalKind::NonHorizRight)
-                            break;
-                        ++run_len;
-                    }
-                    const size_t e        = (s + run_len - 1) % M;
-                    const bool   has_prev = is_closed || s > 0;
-                    const bool   has_next = is_closed || (e + 1 < M);
-
-                    bool v_inside = false;
-                    auto test_upper_endpoint = [&](const Point &p_hi, const Point &p_along,
-                                                   const RawPathInterval &adj, const Point &adj_other) {
-                        if (adj.kind == IntervalKind::StrictlyInside &&
-                            (adj_other.y() > p_hi.y() || (adj_other.y() == p_hi.y() && adj_other.x() < p_hi.x()))) {
-                            v_inside = true;
-                            return;
+                    if (r.seg_idx >= seg_spans.size() || seg_spans[r.seg_idx].empty())
+                        continue;
+                    const bool    horiz = (r.src_a.y() == r.src_b.y());
+                    const coord_t lo    = horiz ? std::min(r.p0.x(), r.p1.x()) : std::min(r.p0.y(), r.p1.y());
+                    const coord_t hi    = horiz ? std::max(r.p0.x(), r.p1.x()) : std::max(r.p0.y(), r.p1.y());
+                    int64_t       in_ov  = 0;
+                    int64_t       out_ov = 0;
+                    for (const C1OpenPathScanline::Span &sp : seg_spans[r.seg_idx]) {
+                        const coord_t ov_lo = std::max(lo, sp.lo);
+                        const coord_t ov_hi = std::min(hi, sp.hi);
+                        if (ov_lo < ov_hi) {
+                            const int64_t len = int64_t(ov_hi) - int64_t(ov_lo);
+                            if (sp.inside)
+                                in_ov += len;
+                            else
+                                out_ov += len;
                         }
-                        if (point_winding(double(p_hi.x()) - 1e-3, double(p_hi.y()) + 1e-3) == 0 &&
-                            int128::orient(p_hi, p_along, adj_other) < 0)
-                            v_inside = true;
-                    };
-
-                    if (has_prev && raw[s].src_a.y() > raw[s].src_b.y()) {
-                        const size_t prev_idx = prev_mod(s);
-                        if (raw[prev_idx].p1 == raw[s].p0)
-                            test_upper_endpoint(raw[s].p0, raw[s].p1, raw[prev_idx], raw[prev_idx].p0);
                     }
-                    if (! v_inside && has_next && raw[e].src_b.y() > raw[e].src_a.y()) {
-                        const size_t next_idx = next_mod(e);
-                        if (raw[next_idx].p0 == raw[e].p1)
-                            test_upper_endpoint(raw[e].p1, raw[e].p0, raw[next_idx], raw[next_idx].p1);
+                    if (in_ov == 0 && out_ov == 0) {
+                        const coord_t mid = lo + (hi - lo) / 2;
+                        for (const C1OpenPathScanline::Span &sp : seg_spans[r.seg_idx]) {
+                            if (mid >= sp.lo && mid <= sp.hi) {
+                                if (sp.inside)
+                                    in_ov += 1;
+                                else
+                                    out_ov += 1;
+                            }
+                        }
                     }
-
-                    for (size_t k = 0; k < run_len; ++k)
-                        raw[(s + k) % M].inside = v_inside;
-                    step += run_len;
-                }
-            }
-
-            // Pass 2: contiguous HorizBottom runs — inside iff connected at either end to an upper inside edge.
-            size_t start_h = 0;
-            bool   all_h   = true;
-            if (is_closed) {
-                for (size_t i = 0; i < M; ++i) {
-                    const size_t nxt = next_mod(i);
-                    if (raw[i].kind != IntervalKind::HorizBottom ||
-                        raw[nxt].kind != IntervalKind::HorizBottom ||
-                        raw[i].src_a.y() != raw[nxt].src_a.y()) {
-                        start_h = nxt;
-                        all_h   = false;
-                        break;
-                    }
-                }
-            } else {
-                const coord_t y_first = raw.front().src_a.y();
-                all_h                 = std::all_of(raw.begin(), raw.end(), [y_first](const RawPathInterval &r) {
-                    return r.kind == IntervalKind::HorizBottom && r.src_a.y() == y_first;
-                });
-            }
-
-            if (! all_h) {
-                for (size_t step = 0; step < M;) {
-                    const size_t s = (start_h + step) % M;
-                    if (raw[s].kind != IntervalKind::HorizBottom) {
-                        ++step;
-                        continue;
-                    }
-                    const coord_t y0      = raw[s].src_a.y();
-                    size_t        run_len = 1;
-                    while (run_len < M) {
-                        const size_t nxt = (s + run_len) % M;
-                        if (! is_closed && nxt == 0)
-                            break;
-                        if (raw[nxt].kind != IntervalKind::HorizBottom || raw[nxt].src_a.y() != y0)
-                            break;
-                        ++run_len;
-                    }
-                    const size_t e        = (s + run_len - 1) % M;
-                    const bool   has_prev = is_closed || s > 0;
-                    const bool   has_next = is_closed || (e + 1 < M);
-
-                    bool h_inside = false;
-                    if (has_prev) {
-                        const size_t prev_idx = prev_mod(s);
-                        if (raw[prev_idx].inside && raw[prev_idx].p1 == raw[s].p0 && raw[prev_idx].src_a.y() > y0)
-                            h_inside = true;
-                    }
-                    if (! h_inside && has_next) {
-                        const size_t next_idx = next_mod(e);
-                        if (raw[next_idx].inside && raw[next_idx].p0 == raw[e].p1 && raw[next_idx].src_b.y() > y0)
-                            h_inside = true;
-                    }
-                    for (size_t k = 0; k < run_len; ++k)
-                        raw[(s + k) % M].inside = h_inside;
-                    step += run_len;
+                    r.inside = (in_ov > out_ov);
                 }
             }
         }
@@ -1522,8 +2466,148 @@ inline bool c2_rects_overlap(const C2::Rect64 &a, const C2::Rect64 &b)
     return a.left <= b.right && b.left <= a.right && a.top <= b.bottom && b.top <= a.bottom;
 }
 
-// Offset non-CW paths safely: mutually influence-disjoint positive-area paths run in one fast batch,
-// while any paths with overlapping offset-influence bboxes (or zero-area bowties) run individually so
+inline C2::PointD c2_unit_normal(const C2::Point64 &pt1, const C2::Point64 &pt2)
+{
+    if (pt1 == pt2)
+        return C2::PointD(0.0, 0.0);
+    const double dx  = static_cast<double>(pt2.x - pt1.x);
+    const double dy  = static_cast<double>(pt2.y - pt1.y);
+    const double inv = 1.0 / std::sqrt(dx * dx + dy * dy);
+    return C2::PointD(dy * inv, -dx * inv);
+}
+
+// True iff `path` (normalized to CCW if `is_cw`) is strictly simple-convex and, when shrinking (`eff_delta < 0`),
+// every vertex satisfies Clipper2's OffsetConcaveCrossing condition cleanly without inverted edges or 3-point loops.
+bool c2_is_clean_convex_offset_impl(const C2::Path64 &path, bool is_cw, float eff_delta, C2::Path64 *shrunk_out = nullptr)
+{
+    const size_t n = path.size();
+    if (n < 3)
+        return false;
+    auto get_pt = [&](size_t idx) -> const C2::Point64 & {
+        return is_cw ? path[n - 1 - idx] : path[idx];
+    };
+    auto lex_lt = [](const C2::Point64 &a, const C2::Point64 &b) {
+        return a.y < b.y || (a.y == b.y && a.x < b.x);
+    };
+
+    size_t lex_min_cnt = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const C2::Point64 &p_prev = get_pt((i == 0) ? (n - 1) : (i - 1));
+        const C2::Point64 &p_curr = get_pt(i);
+        const C2::Point64 &p_next = get_pt((i + 1 == n) ? 0 : (i + 1));
+        if (p_curr == p_next || p_curr == p_prev)
+            return false;
+        if (int128::orient(Vec2crd(p_prev.x, p_prev.y), Vec2crd(p_curr.x, p_curr.y), Vec2crd(p_next.x, p_next.y)) <= 0)
+            return false;
+        if (lex_lt(p_curr, p_prev) && lex_lt(p_curr, p_next))
+            ++lex_min_cnt;
+    }
+    if (lex_min_cnt != 1)
+        return false;
+
+    if (eff_delta >= 0.f || std::abs(eff_delta) < 0.5f) {
+        if (shrunk_out) {
+            shrunk_out->resize(n);
+            for (size_t i = 0; i < n; ++i)
+                (*shrunk_out)[i] = get_pt(i);
+        }
+        return true;
+    }
+
+    std::array<C2::PointD, 16> norms_stack{};
+    std::array<C2::Point64, 16> shifted_stack{};
+    std::vector<C2::PointD> norms_heap;
+    std::vector<C2::Point64> shifted_heap;
+    C2::PointD *norms = norms_stack.data();
+    C2::Point64 *shifted = shifted_stack.data();
+    if (n > 16) {
+        norms_heap.resize(n);
+        shifted_heap.resize(n);
+        norms   = norms_heap.data();
+        shifted = shifted_heap.data();
+    }
+
+    for (size_t i = 0; i < n; ++i)
+        norms[i] = c2_unit_normal(get_pt(i), get_pt((i + 1 == n) ? 0 : (i + 1)));
+
+    const double d_eff = double(eff_delta);
+    for (size_t j = 0; j < n; ++j) {
+        const size_t k    = (j == 0) ? (n - 1) : (j - 1);
+        const size_t next = (j + 1 == n) ? 0 : (j + 1);
+        const double sin_a = C2::CrossProduct(norms[j], norms[k]);
+        const double cos_a = C2::DotProduct(norms[j], norms[k]);
+        if (cos_a <= -0.998 || sin_a * d_eff >= 0.0)
+            return false;
+        const double x = std::fabs(d_eff * sin_a) / (1.0 + cos_a);
+        if (4.1 * x * x > C2::DistanceSqr(get_pt(k), get_pt(j)) ||
+            4.1 * x * x > C2::DistanceSqr(get_pt(j), get_pt(next)))
+            return false;
+        const double q = d_eff / (1.0 + cos_a);
+        const C2::Point64 &pj = get_pt(j);
+        shifted[j] = C2::Point64(pj.x + (norms[k].x + norms[j].x) * q,
+                                 pj.y + (norms[k].y + norms[j].y) * q);
+    }
+
+    size_t shifted_lex_min = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const size_t prev = (i == 0) ? (n - 1) : (i - 1);
+        const size_t next = (i + 1 == n) ? 0 : (i + 1);
+        if (shifted[i] == shifted[next])
+            return false;
+        const C2::Point64 &oi = get_pt(i);
+        const C2::Point64 &on = get_pt(next);
+        const double edx = double(on.x - oi.x);
+        const double edy = double(on.y - oi.y);
+        const double sdx = double(shifted[next].x - shifted[i].x);
+        const double sdy = double(shifted[next].y - shifted[i].y);
+        if (edx * sdx + edy * sdy <= 0.0)
+            return false;
+        if (int128::orient(Vec2crd(shifted[prev].x, shifted[prev].y),
+                           Vec2crd(shifted[i].x, shifted[i].y),
+                           Vec2crd(shifted[next].x, shifted[next].y)) <= 0)
+            return false;
+        if (lex_lt(shifted[i], shifted[prev]) && lex_lt(shifted[i], shifted[next]))
+            ++shifted_lex_min;
+    }
+    if (shifted_lex_min != 1)
+        return false;
+
+    if (shrunk_out)
+        shrunk_out->assign(shifted, shifted + n);
+    return true;
+}
+
+bool c2_convex_strictly_contains_point(const C2::Path64 &convex_ccw, const C2::Point64 &pt)
+{
+    const size_t n = convex_ccw.size();
+    const Vec2crd qp(pt.x, pt.y);
+    for (size_t i = 0; i < n; ++i) {
+        const C2::Point64 &a = convex_ccw[i];
+        const C2::Point64 &b = convex_ccw[(i + 1 == n) ? 0 : (i + 1)];
+        if (int128::orient(Vec2crd(a.x, a.y), Vec2crd(b.x, b.y), qp) <= 0)
+            return false;
+    }
+    return true;
+}
+
+bool c2_convex_strictly_contains_poly(const C2::Path64 &convex_ccw, const C2::Rect64 &convex_box,
+                                      const C2::Path64 &inner, const C2::Rect64 &inner_box)
+{
+    if (! (inner_box.left > convex_box.left && inner_box.right < convex_box.right &&
+           inner_box.top > convex_box.top && inner_box.bottom < convex_box.bottom))
+        return false;
+    if (convex_ccw.size() <= 32) {
+        for (const C2::Point64 &pt : inner)
+            if (! c2_convex_strictly_contains_point(convex_ccw, pt))
+                return false;
+        return true;
+    }
+    return ! c2_paths_touch(inner, convex_ccw, inner_box, convex_box) &&
+           c2_point_in_path(inner.front(), convex_ccw) == 1;
+}
+
+// Offset non-CW paths safely: provably clean-convex paths always stay in the fast batch,
+// while non-clean paths with overlapping offset-influence bboxes (or zero-area bowties) run individually so
 // concave self-intersections cannot cancel adjacent paths.
 template<class TOut>
 bool c2_offset_ccw_paths_isolated(C2::Paths64 &&paths, const std::vector<int> &area_signs,
@@ -1540,11 +2624,28 @@ bool c2_offset_ccw_paths_isolated(C2::Paths64 &&paths, const std::vector<int> &a
         return true;
     }
 
-    const int64_t          pad = c2_offset_influence_pad(delta, joinType, miterLimit);
+    std::vector<uint8_t> is_clean(n, 0);
+    size_t               non_clean_cnt = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (area_signs[i] > 0 && c2_is_clean_convex_offset_impl(paths[i], false, delta))
+            is_clean[i] = 1;
+        else
+            ++non_clean_cnt;
+    }
+
+    if (non_clean_cnt == 0) {
+        co.AddPaths(paths, to_c2(joinType), C2::EndType::Polygon);
+        co.Execute(delta, out);
+        return true;
+    }
+
+    const int64_t           pad = c2_offset_influence_pad(delta, joinType, miterLimit);
     std::vector<C2::Rect64> inf_bounds;
     inf_bounds.reserve(n);
-    for (const C2::Path64 &p : paths)
-        inf_bounds.emplace_back(c2_inflate_rect64(C2::GetBounds(p), pad));
+    for (size_t i = 0; i < n; ++i) {
+        const C2::Rect64 box = C2::GetBounds(paths[i]);
+        inf_bounds.emplace_back((is_clean[i] && delta < 0.f) ? box : c2_inflate_rect64(box, pad));
+    }
 
     std::vector<uint8_t> isolate(n, 0);
     bool                 any_isolated = false;
@@ -1556,11 +2657,17 @@ bool c2_offset_ccw_paths_isolated(C2::Paths64 &&paths, const std::vector<int> &a
 
     if (n < 16) {
         for (size_t i = 0; i < n; ++i) {
-            for (size_t j = i + 1; j < n; ++j) {
+            if (is_clean[i] || isolate[i])
+                continue;
+            for (size_t j = 0; j < n; ++j) {
+                if (j == i)
+                    continue;
                 if (c2_rects_overlap(inf_bounds[i], inf_bounds[j])) {
                     isolate[i]   = 1;
-                    isolate[j]   = 1;
+                    if (! is_clean[j])
+                        isolate[j] = 1;
                     any_isolated = true;
+                    break;
                 }
             }
         }
@@ -1572,6 +2679,8 @@ bool c2_offset_ccw_paths_isolated(C2::Paths64 &&paths, const std::vector<int> &a
         AABBTreeIndirect::Tree<2, coord_t> aabb;
         aabb.build(std::move(nodes));
         for (size_t i = 0; i < n; ++i) {
+            if (is_clean[i] || isolate[i])
+                continue;
             const C2::Rect64 &bi = inf_bounds[i];
             const AABBTreeIndirect::Tree<2, coord_t>::BoundingBox query(
                 Vec2crd(clamp_to_coord(bi.left), clamp_to_coord(bi.top)),
@@ -1581,9 +2690,11 @@ bool c2_offset_ccw_paths_isolated(C2::Paths64 &&paths, const std::vector<int> &a
                 AABBTreeIndirect::intersecting(query),
                 [&](const AABBTreeIndirect::Tree<2, coord_t>::Node &node) {
                     if (node.idx != i && c2_rects_overlap(bi, inf_bounds[node.idx])) {
-                        isolate[i]        = 1;
-                        isolate[node.idx] = 1;
-                        any_isolated      = true;
+                        isolate[i] = 1;
+                        if (! is_clean[node.idx])
+                            isolate[node.idx] = 1;
+                        any_isolated = true;
+                        return false;
                     }
                     return true;
                 });
@@ -1638,7 +2749,8 @@ bool c2_offset_ccw_paths_isolated(C2::Paths64 &&paths, const std::vector<int> &a
 
 // A single group offsets like Clipper1's path by path offset only if every CW path is strictly
 // enclosed inside a CCW path (positive winding, no touching boundaries), no same-sign paths
-// have overlapping offset influence boxes, and no zero-area path can confuse orientation.
+// have overlapping offset influence boxes, every path is clean-convex for its effective offset
+// direction, and no zero-area path can confuse orientation.
 bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<int> &area_signs,
                         float delta, JoinType joinType, double miterLimit)
 {
@@ -1655,7 +2767,13 @@ bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<int> &area_s
     if (! has_cw)
         return false;
 
-    const size_t            n   = paths.size();
+    const size_t n = paths.size();
+    for (size_t i = 0; i < n; ++i) {
+        const bool is_cw = (area_signs[i] < 0);
+        if (! c2_is_clean_convex_offset_impl(paths[i], is_cw, is_cw ? -delta : delta))
+            return false;
+    }
+
     const int64_t           pad = c2_offset_influence_pad(delta, joinType, miterLimit);
     std::vector<C2::Rect64> bounds;
     std::vector<C2::Rect64> inf_bounds;
@@ -1819,13 +2937,16 @@ inline const ExPolygon& expolygon_of(const Surface &surface) { return surface.ex
 inline const ExPolygon& expolygon_of(const Surface *surface) { return surface->expolygon; }
 
 // Clipper1 ignored the orientation of expolygons, a single group needs CCW contours and CW holes.
-// Isolate holes to their own entity on both positive and negative offsets, and isolate influence-overlapping
-// holeless contours so concave self-intersections cannot cancel neighboring islands or fill neighboring holes.
+// Clean-convex holed entities whose holes stay strictly inside without pairwise interference batch
+// directly in one ClipperOffset pass; all non-clean or potentially interacting entities isolate
+// their contour and holes individually before subtraction and union.
 template<class ExPolygonRange, class TOut>
 void c2_offset_expolygons(const ExPolygonRange &src, float delta, JoinType joinType, double miterLimit, TOut &out)
 {
     const double      shortest = std::abs(delta * ClipperOffsetShortestEdgeFactor);
+    const int64_t     pad      = c2_offset_influence_pad(delta, joinType, miterLimit);
     C2::Paths64       combined;
+    C2::Paths64       fast_batch;
     C2::Paths64       holeless_contours;
     std::vector<int>  holeless_signs;
     C2::ClipperOffset co;
@@ -1856,13 +2977,6 @@ void c2_offset_expolygons(const ExPolygonRange &src, float delta, JoinType joinT
             continue;
         }
 
-        co.Clear();
-        co.AddPath(contour, to_c2(joinType), C2::EndType::Polygon);
-        C2::Paths64 offset_contour;
-        co.Execute(delta, offset_contour);
-        if (offset_contour.empty())
-            continue;
-
         C2::Paths64      hole_inputs;
         std::vector<int> hole_signs;
         hole_inputs.reserve(expoly.holes.size());
@@ -1881,10 +2995,70 @@ void c2_offset_expolygons(const ExPolygonRange &src, float delta, JoinType joinT
         }
 
         if (hole_inputs.empty()) {
-            append(combined, std::move(offset_contour));
-            ++entity_batches;
+            holeless_contours.emplace_back(std::move(contour));
+            holeless_signs.push_back(norm_c_sign);
             continue;
         }
+
+        bool safe_for_batch = (norm_c_sign > 0 && hole_inputs.size() <= 8);
+        C2::Path64 shrunk_contour;
+        if (safe_for_batch)
+            safe_for_batch = c2_is_clean_convex_offset_impl(contour, false, delta, delta < 0.f ? &shrunk_contour : nullptr);
+        if (safe_for_batch && delta < 0.f && shrunk_contour.size() > 32)
+            safe_for_batch = false;
+
+        if (safe_for_batch) {
+            std::array<C2::Rect64, 8> hole_check_boxes{};
+            const C2::Rect64          c_box = C2::GetBounds(contour);
+            for (size_t hi = 0; hi < hole_inputs.size(); ++hi) {
+                if (hole_signs[hi] <= 0 || ! c2_is_clean_convex_offset_impl(hole_inputs[hi], false, -delta)) {
+                    safe_for_batch = false;
+                    break;
+                }
+                const C2::Rect64 h_box = C2::GetBounds(hole_inputs[hi]);
+                if (delta < 0.f) {
+                    const C2::Rect64 h_inf = c2_inflate_rect64(h_box, pad);
+                    if (! c2_convex_strictly_contains_point(shrunk_contour, C2::Point64(h_inf.left, h_inf.top)) ||
+                        ! c2_convex_strictly_contains_point(shrunk_contour, C2::Point64(h_inf.right, h_inf.top)) ||
+                        ! c2_convex_strictly_contains_point(shrunk_contour, C2::Point64(h_inf.right, h_inf.bottom)) ||
+                        ! c2_convex_strictly_contains_point(shrunk_contour, C2::Point64(h_inf.left, h_inf.bottom))) {
+                        safe_for_batch = false;
+                        break;
+                    }
+                    hole_check_boxes[hi] = h_inf;
+                } else {
+                    if (! c2_convex_strictly_contains_poly(contour, c_box, hole_inputs[hi], h_box)) {
+                        safe_for_batch = false;
+                        break;
+                    }
+                    hole_check_boxes[hi] = h_box;
+                }
+                for (size_t hj = 0; hj < hi; ++hj) {
+                    if (c2_rects_overlap(hole_check_boxes[hi], hole_check_boxes[hj])) {
+                        safe_for_batch = false;
+                        break;
+                    }
+                }
+                if (! safe_for_batch)
+                    break;
+            }
+        }
+
+        if (safe_for_batch) {
+            fast_batch.emplace_back(std::move(contour));
+            for (C2::Path64 &h : hole_inputs) {
+                std::reverse(h.begin(), h.end());
+                fast_batch.emplace_back(std::move(h));
+            }
+            continue;
+        }
+
+        co.Clear();
+        co.AddPath(contour, to_c2(joinType), C2::EndType::Polygon);
+        C2::Paths64 offset_contour;
+        co.Execute(delta, offset_contour);
+        if (offset_contour.empty())
+            continue;
 
         C2::Paths64 offset_holes;
         c2_offset_ccw_paths_isolated(std::move(hole_inputs), hole_signs, -delta, joinType, miterLimit, offset_holes);
@@ -1898,6 +3072,26 @@ void c2_offset_expolygons(const ExPolygonRange &src, float delta, JoinType joinT
         c2_clip(C2::ClipType::Difference, offset_contour, offset_holes, C2::FillRule::NonZero, diff_out);
         if (! diff_out.empty()) {
             append(combined, std::move(diff_out));
+            ++entity_batches;
+        }
+    }
+
+    if (combined.empty() && holeless_contours.empty()) {
+        if (! fast_batch.empty()) {
+            co.Clear();
+            co.AddPaths(fast_batch, to_c2(joinType), C2::EndType::Polygon);
+            co.Execute(delta, out);
+        }
+        return;
+    }
+
+    if (! fast_batch.empty()) {
+        co.Clear();
+        co.AddPaths(fast_batch, to_c2(joinType), C2::EndType::Polygon);
+        C2::Paths64 fast_out;
+        co.Execute(delta, fast_out);
+        if (! fast_out.empty()) {
+            append(combined, std::move(fast_out));
             ++entity_batches;
         }
     }

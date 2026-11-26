@@ -73,11 +73,11 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   contour/hole orientations first.
 - Open polylines are clipped per source path against an indexed clip edge set,
   preserving source direction and vertex order. `intersection_pl` / `diff_pl`
-  and `clip_extrusion` follow Clipper1's boundary rule across connected path
-  runs (excluding shared top horizontal and non-maxima right vertical boundaries
-  and outer-grazing horizontal bottom segments from `intersection` so
-  `intersection` and `diff` remain complementary), while `Algorithm::split_line`
-  uses boundary-inclusive containment.
+  and `clip_extrusion` follow Clipper1's exact boundary semantics (resolving
+  boundary-grazing intervals through a Clipper1-equivalent open-path scanline
+  pass in `OpenClipEdgeData::clip_path`, so `intersection` and `diff` remain
+  complementary across corners, rotations, and horizontal runs), while
+  `Algorithm::split_line` uses boundary-inclusive containment.
 
 ### Offsets
 
@@ -95,19 +95,23 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
 - A single `Polygon` keeps its orientation: a CCW polygon grows with a
   positive delta, a CW polygon is a hole and shrinks.
 - `Polygons` follow the same rule per path. Non-CW batches run through
-  `c2_offset_ccw_paths_isolated()`, which batches mutually influence-disjoint
-  paths and isolates paths whose offset-influence bounding boxes overlap (so
+  `c2_offset_ccw_paths_isolated()`, which fast-batches all provably clean
+  convex contours (`c2_is_clean_convex_offset_impl`) and isolates only non-clean
+  or zero-area paths whose offset-influence boxes overlap another path (so
   concave self-intersections cannot cancel neighboring islands). Mixed CCW/CW
-  inputs run as one Clipper2 group only when every CW path is strictly enclosed
-  with positive winding inside non-touching CCW contours and no same-sign paths
-  overlap within offset influence range; otherwise each path is offset on its
-  own and the results are united.
+  inputs run as one Clipper2 group only when every path is clean-convex for its
+  effective offset direction, every CW path is strictly enclosed with positive
+  winding inside non-touching CCW contours, and no same-sign paths overlap
+  within offset influence range; otherwise each path is offset on its own and
+  the results are united.
 - `ExPolygons` and `Surfaces` normalize contour (CCW) and hole (CW)
-  orientations, batching mutually influence-disjoint holeless contours while
-  isolating each holed entity (and isolating its holes by influence bounding box
-  on both positive and negative offsets) before subtraction and union. Two-step
-  `offset2()` / `offset2_ex()` calls preserve the intermediate `PolyTree64`
-  hierarchy across both positive and negative second deltas.
+  orientations, fast-batching clean-convex holeless contours and clean-convex
+  holed entities whose holes stay strictly inside without pairwise
+  interference, while isolating non-clean holed entities (and isolating their
+  holes by influence bounding box on both positive and negative offsets) before
+  subtraction and union. Two-step `offset2()` / `offset2_ex()` calls preserve
+  the intermediate `PolyTree64` hierarchy across both positive and negative
+  second deltas.
 - Only truly collinear degenerate paths are dropped under a negative offset;
   self-intersecting zero-area paths (e.g. bowties) retain their
   positive-winding lobes.

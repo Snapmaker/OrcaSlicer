@@ -860,6 +860,115 @@ TEST_CASE("MR13 open polyline clipping Clipper1ExcludeTop semantics and partitio
             { coord_t(scale_(10.)), coord_t(scale_(9.)) }
         };
         check_loop_partition(right_grazing, Polygons{ sq10 }, 0., scale_(26.));
+
+        // Right-side pass-through over top corner: [10.2,17]x[5,11.2] on [-0.2,10.2]^2 -> 5.2mm inside (left x=10.2 up to y=10.2), 20.8mm outside.
+        const Polygon lower_grown({ { coord_t(scale_(-0.2)), coord_t(scale_(-0.2)) },
+                                    { coord_t(scale_(10.2)), coord_t(scale_(-0.2)) },
+                                    { coord_t(scale_(10.2)), coord_t(scale_(10.2)) },
+                                    { coord_t(scale_(-0.2)), coord_t(scale_(10.2)) } });
+        const Points right_top_corner{
+            { coord_t(scale_(10.2)), coord_t(scale_(5.)) },
+            { coord_t(scale_(17.)), coord_t(scale_(5.)) },
+            { coord_t(scale_(17.)), coord_t(scale_(11.2)) },
+            { coord_t(scale_(10.2)), coord_t(scale_(11.2)) }
+        };
+        check_loop_partition(right_top_corner, Polygons{ lower_grown }, scale_(5.2), scale_(20.8));
+
+        // Verify exact supported endpoints (10.2, 5.0) <-> (10.2, 10.2).
+        Polylines corner_in, corner_out;
+        ClipperUtils::clip_closed_polygon_split(Polygon(right_top_corner), Polygons{ lower_grown }, corner_in, corner_out);
+        REQUIRE(corner_in.size() == 1);
+        CHECK(corner_in.front().length() == Catch::Approx(double(scale_(5.2))));
+        const BoundingBox ci_bb(corner_in.front().points);
+        CHECK(ci_bb.min.x() == coord_t(scale_(10.2)));
+        CHECK(ci_bb.max.x() == coord_t(scale_(10.2)));
+        CHECK(ci_bb.min.y() == coord_t(scale_(5.)));
+        CHECK(ci_bb.max.y() == coord_t(scale_(10.2)));
+
+        // Left-side spanning past top & bottom corners: [-8, -0.2]x[-5, 15] on [-0.2,10.2]^2 -> 0mm inside, 55.6mm outside.
+        const Points left_spanning{
+            { coord_t(scale_(-8.)), coord_t(scale_(-5.)) },
+            { coord_t(scale_(-0.2)), coord_t(scale_(-5.)) },
+            { coord_t(scale_(-0.2)), coord_t(scale_(15.)) },
+            { coord_t(scale_(-8.)), coord_t(scale_(15.)) }
+        };
+        check_loop_partition(left_spanning, Polygons{ lower_grown }, 0., scale_(55.6));
+
+        // Rotated (+36.87 deg and -36.87 deg) grazing loops: 0mm inside, 26mm outside.
+        auto rot_pts = [](const Points &in, double c, double s) -> Points {
+            Points out;
+            out.reserve(in.size());
+            for (const Point &p : in)
+                out.emplace_back(coord_t(std::llround(c * p.x() - s * p.y())),
+                                 coord_t(std::llround(s * p.x() + c * p.y())));
+            return out;
+        };
+        for (double s : { 0.6, -0.6 }) {
+            const double exp_in  = (s > 0.) ? 0. : scale_(8.);
+            const double exp_out = (s > 0.) ? scale_(26.) : scale_(18.);
+            check_loop_partition(rot_pts(bot_grazing, 0.8, s), Polygons{ Polygon(rot_pts(lower_clip.points, 0.8, s)) }, exp_in, exp_out);
+        }
+
+        // Clip polygon containing a CW hole grazed along hole top (Clipper1 NonZero bottom edge -> inside)
+        // and hole bottom (Clipper1 top edge -> outside).
+        const Polygon outer_clip({ { 0, 0 }, { coord_t(scale_(20.)), 0 }, { coord_t(scale_(20.)), coord_t(scale_(20.)) }, { 0, coord_t(scale_(20.)) } });
+        const Polygon hole_clip({ { coord_t(scale_(5.)), coord_t(scale_(5.)) }, { coord_t(scale_(5.)), coord_t(scale_(15.)) }, { coord_t(scale_(15.)), coord_t(scale_(15.)) }, { coord_t(scale_(15.)), coord_t(scale_(5.)) } });
+        const Points  hole_graze_top{
+            { coord_t(scale_(6.)), coord_t(scale_(6.)) },
+            { coord_t(scale_(14.)), coord_t(scale_(6.)) },
+            { coord_t(scale_(14.)), coord_t(scale_(15.)) },
+            { coord_t(scale_(6.)), coord_t(scale_(15.)) }
+        };
+        {
+            Polylines hg_in, hg_out;
+            ClipperUtils::clip_closed_polygon_split(Polygon(hole_graze_top), Polygons{ outer_clip, hole_clip }, hg_in, hg_out);
+            double hi = 0., ho = 0.;
+            for (const Polyline &pl : hg_in)
+                hi += pl.length();
+            for (const Polyline &pl : hg_out)
+                ho += pl.length();
+            CHECK(hi + ho == Catch::Approx(double(scale_(34.))));
+            CHECK(hi == Catch::Approx(double(scale_(8.))));
+            CHECK(ho == Catch::Approx(double(scale_(26.))));
+        }
+        const Points hole_graze_bottom{
+            { coord_t(scale_(6.)), coord_t(scale_(5.)) },
+            { coord_t(scale_(14.)), coord_t(scale_(5.)) },
+            { coord_t(scale_(14.)), coord_t(scale_(14.)) },
+            { coord_t(scale_(6.)), coord_t(scale_(14.)) }
+        };
+        {
+            Polylines hg_in, hg_out;
+            ClipperUtils::clip_closed_polygon_split(Polygon(hole_graze_bottom), Polygons{ outer_clip, hole_clip }, hg_in, hg_out);
+            double hi = 0., ho = 0.;
+            for (const Polyline &pl : hg_in)
+                hi += pl.length();
+            for (const Polyline &pl : hg_out)
+                ho += pl.length();
+            CHECK(hi + ho == Catch::Approx(double(scale_(34.))));
+            CHECK(hi == Catch::Approx(0.));
+            CHECK(ho == Catch::Approx(double(scale_(34.))));
+        }
+    }
+
+    SECTION("Long zigzag polyline across rectangle preserves all crossings and total length")
+    {
+        Polyline zigzag;
+        const size_t segs = 4096;
+        zigzag.points.reserve(segs + 1);
+        for (size_t i = 0; i <= segs; ++i)
+            zigzag.points.emplace_back(coord_t(scale_((i % 2 == 0) ? -1. : 1.)), coord_t(scale_(double(i) * 0.02)));
+        const Polygon rect({ { 0, coord_t(scale_(-1.)) }, { coord_t(scale_(2.)), coord_t(scale_(-1.)) }, { coord_t(scale_(2.)), coord_t(scale_(100.)) }, { 0, coord_t(scale_(100.)) } });
+        const Polylines in_res  = intersection_pl(zigzag, Polygons{ rect });
+        const Polylines out_res = diff_pl(zigzag, Polygons{ rect });
+        CHECK(in_res.size() == 2048);
+        CHECK(out_res.size() == 2049);
+        double in_len = 0., out_len = 0.;
+        for (const Polyline &pl : in_res)
+            in_len += pl.length();
+        for (const Polyline &pl : out_res)
+            out_len += pl.length();
+        CHECK(in_len + out_len == Catch::Approx(zigzag.length()));
     }
 
     SECTION("Four-point path along clip top preserves vertices while excluding shared top edge")
@@ -1030,6 +1139,102 @@ TEST_CASE("MR13 negative offset hole isolation and offset2 preservation", "[Clip
         const ExPolygons merged_grown = offset_ex(ExPolygons{ e1, e2 }, float(scale_(1.)), jtMiter, 2.0);
         REQUIRE(merged_grown.size() == 1);
         CHECK(merged_grown.front().holes.size() == 2);
+
+        const ExPolygons merged_flat = offset_ex(Polygons{ e1.contour, e1.holes.front(), e2.contour, e2.holes.front() }, float(scale_(1.)), jtMiter, 2.0);
+        CHECK(xor_ex(merged_grown, merged_flat).empty());
+
+        // P1 #3 flat vs structured counterexample: concave CW hole near outer frame edge must never bulge outer frame.
+        ExPolygon tight_frame(Polygon{
+            { coord_t(scale_(-15.)), coord_t(scale_(-0.4)) },
+            { coord_t(scale_(10.4)), coord_t(scale_(-0.4)) },
+            { coord_t(scale_(10.4)), coord_t(scale_(10.4)) },
+            { coord_t(scale_(-15.)), coord_t(scale_(10.4)) }
+        });
+        Polygon sq_hole({
+            { coord_t(scale_(-12.)), coord_t(scale_(3.)) },
+            { coord_t(scale_(-12.)), coord_t(scale_(6.)) },
+            { coord_t(scale_(-9.5)), coord_t(scale_(6.)) },
+            { coord_t(scale_(-9.5)), coord_t(scale_(3.)) }
+        });
+        tight_frame.holes.push_back(a_cw);
+        tight_frame.holes.push_back(sq_hole);
+
+        const ExPolygons tight_ex = offset_ex(ExPolygons{ tight_frame }, float(scale_(1.)), jtMiter, 3.0);
+        REQUIRE(tight_ex.size() == 1);
+        CHECK(tight_ex.front().holes.size() == 3);
+        CHECK(get_extents(tight_ex).max.x() == coord_t(scale_(11.4)));
+
+        for (bool swap_holes : { false, true }) {
+            const Polygons flat_in = swap_holes
+                ? Polygons{ tight_frame.contour, sq_hole, a_cw }
+                : Polygons{ tight_frame.contour, a_cw, sq_hole };
+            const ExPolygons tight_flat = offset_ex(flat_in, float(scale_(1.)), jtMiter, 3.0);
+            REQUIRE(tight_flat.size() == 1);
+            CHECK(tight_flat.front().holes.size() == 3);
+            CHECK(get_extents(tight_flat).max.x() == coord_t(scale_(11.4)));
+            CHECK(xor_ex(tight_flat, tight_ex).empty());
+        }
+
+        // Nested island inside a hole: both structured ExPolygons and flat Polygons agree for +1mm and -1mm.
+        ExPolygon outer_ring(Polygon{ { 0, 0 }, { coord_t(scale_(30.)), 0 }, { coord_t(scale_(30.)), coord_t(scale_(30.)) }, { 0, coord_t(scale_(30.)) } });
+        outer_ring.holes.push_back(Polygon{ { coord_t(scale_(5.)), coord_t(scale_(25.)) }, { coord_t(scale_(25.)), coord_t(scale_(25.)) }, { coord_t(scale_(25.)), coord_t(scale_(5.)) }, { coord_t(scale_(5.)), coord_t(scale_(5.)) } });
+        ExPolygon nested_island(Polygon{ { coord_t(scale_(10.)), coord_t(scale_(10.)) }, { coord_t(scale_(20.)), coord_t(scale_(10.)) }, { coord_t(scale_(20.)), coord_t(scale_(20.)) }, { coord_t(scale_(10.)), coord_t(scale_(20.)) } });
+        const Polygons nested_flat{ outer_ring.contour, outer_ring.holes.front(), nested_island.contour };
+        for (float d : { float(scale_(1.)), -float(scale_(1.)) }) {
+            const ExPolygons nested_ex_res   = offset_ex(ExPolygons{ outer_ring, nested_island }, d, jtMiter, 2.0);
+            const ExPolygons nested_flat_res = offset_ex(nested_flat, d, jtMiter, 2.0);
+            REQUIRE(nested_ex_res.size() == 2);
+            CHECK(xor_ex(nested_ex_res, nested_flat_res).empty());
+        }
+
+        // Lone CW polygon under positive offset follows NonZero semantics (contracts into positive offset ref).
+        {
+            Polygon cw_sq({ { 0, 0 }, { 0, coord_t(scale_(10.)) }, { coord_t(scale_(10.)), coord_t(scale_(10.)) }, { coord_t(scale_(10.)), 0 } });
+            const Polygons cw_res = offset(Polygons{ cw_sq }, float(scale_(1.)), jtMiter, 2.0);
+            REQUIRE(cw_res.size() == 1);
+            CHECK(cw_res.front().area() == Catch::Approx(scale_(8.) * scale_(8.)));
+        }
+
+        // Clean-convex fast-batch grid verification (holed squares +0.05mm, solid squares -0.1mm).
+        {
+            ExPolygons grid_holed;
+            Polygons   grid_solid;
+            for (int iy = 0; iy < 10; ++iy) {
+                for (int ix = 0; ix < 10; ++ix) {
+                    const coord_t ox = coord_t(scale_(ix * 1.2));
+                    const coord_t oy = coord_t(scale_(iy * 1.2));
+                    ExPolygon cell(Polygon{
+                        { ox, oy },
+                        { ox + coord_t(scale_(0.5)), oy },
+                        { ox + coord_t(scale_(0.5)), oy + coord_t(scale_(0.5)) },
+                        { ox, oy + coord_t(scale_(0.5)) }
+                    });
+                    grid_solid.push_back(cell.contour);
+                    cell.holes.push_back(Polygon{
+                        { ox + coord_t(scale_(0.1)), oy + coord_t(scale_(0.4)) },
+                        { ox + coord_t(scale_(0.4)), oy + coord_t(scale_(0.4)) },
+                        { ox + coord_t(scale_(0.4)), oy + coord_t(scale_(0.1)) },
+                        { ox + coord_t(scale_(0.1)), oy + coord_t(scale_(0.1)) }
+                    });
+                    grid_holed.push_back(std::move(cell));
+                }
+            }
+            const ExPolygons holed_out = offset_ex(grid_holed, float(scale_(0.05)), jtMiter, 2.0);
+            REQUIRE(holed_out.size() == 100);
+            double hole_area_sum = 0.;
+            for (const ExPolygon &ex : holed_out) {
+                REQUIRE(ex.holes.size() == 1);
+                hole_area_sum += std::abs(ex.holes.front().area());
+            }
+            CHECK(hole_area_sum == Catch::Approx(100. * scale_(0.2) * scale_(0.2)));
+
+            const Polygons solid_out = offset(grid_solid, -float(scale_(0.1)), jtMiter, 2.0);
+            REQUIRE(solid_out.size() == 100);
+            double solid_area_sum = 0.;
+            for (const Polygon &p : solid_out)
+                solid_area_sum += p.area();
+            CHECK(solid_area_sum == Catch::Approx(100. * scale_(0.3) * scale_(0.3)));
+        }
     }
 
     SECTION("Standalone bowtie negative offset keeps positive lobe while collinear vanishes")

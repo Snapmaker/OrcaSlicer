@@ -3095,6 +3095,7 @@ namespace IMGUIZMO_NAMESPACE
    {
       static bool isDraging = false;
       static bool isClicking = false;
+      static int pressedBox = -1;
       static vec_t interpolationUp;
       static vec_t interpolationDir;
       static int interpolationFrames = 0;
@@ -3122,7 +3123,11 @@ namespace IMGUIZMO_NAMESPACE
       const ImRect rect(position, position + size);
       const bool canHover = !isDraging && rect.Contains(io.MousePos) && IsHoveringWindow();
       const int hoveredBox = DrawRoundedCube(gContext.mDrawList, res, cubeView, rect, canHover);
-      static int overBox = -1;
+      // An active text field can release focus later in the same frame.
+      if (!isDraging && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+      {
+          pressedBox = hoveredBox;
+      }
       if (hoveredBox >= 0)
       {
 #if IMGUI_VERSION_NUM >= 18723
@@ -3130,10 +3135,11 @@ namespace IMGUIZMO_NAMESPACE
 #else
           ImGui::CaptureMouseFromApp();
 #endif
-          if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && GImGui->ActiveId == 0)
+          const bool movedSincePress = io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] > 0.f;
+          const bool releasedClick = ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !movedSincePress;
+          if (hoveredBox == pressedBox && GImGui->ActiveId == 0 && (io.MouseDown[ImGuiMouseButton_Left] || releasedClick))
           {
-              overBox = hoveredBox;
-              isClicking = true;
+              isClicking = !movedSincePress;
               isDraging = true;
               interpolationFrames = 0;
           }
@@ -3304,15 +3310,15 @@ namespace IMGUIZMO_NAMESPACE
          if (isClicking)
          {
             // apply new view direction
-            int cx = overBox / 9;
-            int cy = (overBox - cx * 9) / 3;
-            int cz = overBox % 3;
+            int cx = pressedBox / 9;
+            int cy = (pressedBox - cx * 9) / 3;
+            int cz = pressedBox % 3;
             interpolationDir = makeVect(1.f - (float)cx, 1.f - (float)cy, 1.f - (float)cz);
             interpolationDir.Normalize();
 
             if (fabsf(Dot(interpolationDir, referenceUp)) > 1.0f - 0.01f)
             {
-               interpolationUp = overBox == 10 ? makeVect(1.f, 0.f, 0.f) : makeVect(-1.f, 0.f, 0.f);
+               interpolationUp = pressedBox == 10 ? makeVect(1.f, 0.f, 0.f) : makeVect(-1.f, 0.f, 0.f);
             }
             else
             {
@@ -3320,10 +3326,11 @@ namespace IMGUIZMO_NAMESPACE
             }
             interpolationFrames = 40;
             result.changed = true;
-            result.clicked_box = overBox;
+            result.clicked_box = pressedBox;
          }
          isClicking = false;
          isDraging = false;
+         pressedBox = -1;
       }
 
 

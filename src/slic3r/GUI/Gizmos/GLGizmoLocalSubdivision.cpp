@@ -73,6 +73,10 @@ bool GLGizmoLocalSubdivision::gizmo_event(SLAGizmoEventType action, const Vec2d&
         if (m_finishingPaintingInteraction)
             return true;
         m_finishingPaintingInteraction = true;
+        // The stroke may have painted hidden parts "through" (the raycaster spans
+        // the whole object); drop those facets before the preview rebuild so the
+        // hidden parts can never reappear through a preview or an apply.
+        clear_painting_on_hidden_parts();
         DiscardPaintingPreviewsAndFlush();
         update_model_object();
         m_button_down             = Button::None;
@@ -135,6 +139,17 @@ void GLGizmoLocalSubdivision::update_from_model_object(bool first_update)
 PainterGizmoType GLGizmoLocalSubdivision::get_painter_type() const
 {
     return PainterGizmoType::LOCAL_SUBDIVISION;
+}
+
+bool GLGizmoLocalSubdivision::on_is_activable() const
+{
+    if (wxGetApp().preset_bundle->printers.get_edited_preset().printer_technology() != ptFFF)
+        return false;
+    // is_from_single_instance() already implies exactly one object and one instance
+    // (the selection cache maps object -> instance set), so a single volume of a
+    // multi-volume object passes, while multi-object and multi-instance selections
+    // are refused like in the base painter.
+    return m_parent.get_selection().is_from_single_instance();
 }
 
 wxString GLGizmoLocalSubdivision::handle_snapshot_action_name(bool shift_down, Button button_down) const
@@ -662,22 +677,13 @@ void GLGizmoLocalSubdivision::update_preview()
         // surroundings with the raw volume color (same color the level-0 rendering
         // uses through the transparent pass, alpha included), the region with the
         // painting color.
-        const Selection& selection      = m_parent.get_selection();
-        const int        instance_idx   = m_c->selection_info()->get_active_instance();
-        bool             anything_shown = false;
+        const int instance_idx = m_c->selection_info()->get_active_instance();
+        bool      anything_shown = false;
         for (Preview& p : m_previews) {
             const int level = std::min(m_subdiv_level, int(p.meshes.size()) - 1);
             if (level <= 0)
                 continue;
-            const GLVolume* glv = nullptr;
-            for (const auto& i : selection.get_volume_idxs()) {
-                const GLVolume* v = selection.get_volume(i);
-                if (v->volume_idx() == p.gl_volume_idx) {
-                    glv = v;
-                    break;
-                }
-            }
-            if (glv == nullptr)
+            if (matching_glvolume(p) == nullptr)
                 continue;
 
             const size_t         region    = p.region_counts[size_t(level)];
@@ -728,6 +734,10 @@ void GLGizmoLocalSubdivision::update_preview()
 
 bool GLGizmoLocalSubdivision::render_selector_for_volume(const ModelVolume* mv) const
 {
+    // A partial-volume selection isolates the session to the selected parts:
+    // the unselected siblings are hidden and not paintable (see gizmo_event).
+    if (! is_selected_volume(mv))
+        return false;
     if (m_shown_level == 0)
         return true;
     const Preview* p = nullptr;
@@ -744,14 +754,10 @@ bool GLGizmoLocalSubdivision::render_selector_for_volume(const ModelVolume* mv) 
     if (! p->model.is_initialized() && ! p->model_region.is_initialized())
         return true; // render_preview_meshes skips uninitialized models
     // Mirror the GLVolume match of render_preview_meshes: without it the preview
-    // would not draw this volume either.
-    const Selection& selection = m_parent.get_selection();
-    for (const auto& i : selection.get_volume_idxs()) {
-        const GLVolume* v = selection.get_volume(i);
-        if (v != nullptr && v->volume_idx() == p->gl_volume_idx)
-            return false; // the preview mesh replaces the selector for this volume
-    }
-    return true;
+    // would not draw this volume either. With a partial-volume selection the
+    // painted volume may not be among the selected ones, so the lookup spans the
+    // whole selected object instance.
+    return matching_glvolume(*p) == nullptr;
 }
 
 void GLGizmoLocalSubdivision::render_preview_meshes()
@@ -759,7 +765,6 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
     if (m_shown_level == 0 || m_previews.empty())
         return;
 
-    const Selection& selection = m_parent.get_selection();
     // Same shader as the canvas volume rendering, so the preview shading matches
     // exactly what is shown at level 0.
     auto* gouraud_shader = wxGetApp().get_shader("gouraud");
@@ -781,14 +786,7 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
     for (Preview& p : m_previews) {
         if (! p.model_region.is_initialized() && ! p.model.is_initialized())
             continue;
-        const GLVolume* glv = nullptr;
-        for (const auto& i : selection.get_volume_idxs()) {
-            const GLVolume* v = selection.get_volume(i);
-            if (v->volume_idx() == p.gl_volume_idx) {
-                glv = v;
-                break;
-            }
-        }
+        const GLVolume* glv = matching_glvolume(p);
         if (glv == nullptr)
             continue;
         const Transform3d trafo_matrix      = glv->world_matrix();
@@ -816,6 +814,67 @@ void GLGizmoLocalSubdivision::render_preview_meshes()
     }
     gouraud_shader->stop_using();
     glsafe(::glPopAttrib());
+}
+
+const GLVolume* GLGizmoLocalSubdivision::matching_glvolume(const Preview& p) const
+{
+    const Selection& selection = m_parent.get_selection();
+    const int        obj_idx   = selection.get_object_idx();
+    const int        inst_idx  = selection.get_instance_idx();
+    if (obj_idx < 0 || inst_idx < 0)
+        return nullptr;
+    // Scan the whole canvas collection: the painted volume may not be among the
+    // selected volumes (partial-volume selection), and matching on volume_idx()
+    // alone could collide with another object's volume.
+    for (const GLVolume* v : m_parent.get_volumes().volumes)
+        if (v != nullptr && v->object_idx() == obj_idx && v->instance_idx() == inst_idx && v->volume_idx() == p.gl_volume_idx)
+            return v;
+    return nullptr;
+}
+
+bool GLGizmoLocalSubdivision::is_selected_volume(const ModelVolume* mv) const
+{
+    const ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
+    if (mo == nullptr)
+        return true; // no selection info: show everything rather than hide by mistake
+    int full_idx = -1;
+    for (int i = 0; i < int(mo->volumes.size()); ++i)
+        if (mo->volumes[i] == mv) {
+            full_idx = i;
+            break;
+        }
+    if (full_idx < 0)
+        return false;
+    const Selection& selection = m_parent.get_selection();
+    for (const auto& i : selection.get_volume_idxs()) {
+        const GLVolume* v = selection.get_volume(i);
+        if (v != nullptr && v->volume_idx() == full_idx)
+            return true;
+    }
+    return false;
+}
+
+void GLGizmoLocalSubdivision::clear_painting_on_hidden_parts()
+{
+    const ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
+    if (mo == nullptr)
+        return;
+    // Same clear idiom as the "Erase all selection" button, applied only to the
+    // parts that are hidden (outside the current selection). The raycaster spans
+    // the whole object, so a stroke over a hidden part paints invisibly; without
+    // this wipe that painting would resurrect the part through a preview.
+    int mesh_id = -1;
+    for (const ModelVolume* mv : mo->volumes) {
+        if (! mv->is_model_part())
+            continue;
+        ++mesh_id;
+        if (is_selected_volume(mv))
+            continue;
+        if (mesh_id < int(m_triangle_selectors.size())) {
+            m_triangle_selectors[mesh_id]->reset();
+            m_triangle_selectors[mesh_id]->request_update_render_data(true);
+        }
+    }
 }
 
 wxString GLGizmoLocalSubdivision::subdivision_failure_text(int lowest_achieved, bool apply, int* reason_key_out) const
@@ -871,18 +930,15 @@ void GLGizmoLocalSubdivision::apply_subdivision()
         return;
 
     // The subdivision of a volume failed when its cache did not reach the wanted
-    // level (smooth_triangle_mesh_local_its returned ok == false): apply nothing
-    // and tell the user why the button had no effect.
+    // level (smooth_triangle_mesh_local_its returned ok == false). A failed part
+    // is skipped, not a veto: one non-manifold part of a multi-part object must
+    // not block the subdivision of the healthy parts of the same object. The
+    // preview already told the user which parts stopped early, so a partial
+    // application is not re-announced here - only an entirely failed apply has to
+    // explain itself, otherwise the Subdivide click would look like a silent no-op.
     int lowest_achieved = m_subdiv_level;
     for (const Preview& p : m_previews)
         lowest_achieved = std::min(lowest_achieved, int(p.meshes.size()) - 1);
-    if (lowest_achieved < m_subdiv_level) {
-        wxGetApp().plater()->get_notification_manager()->push_notification(
-            NotificationManager::NotificationLevel::WarningNotificationLevel, 10,
-            // into_u8 (explicit UTF-8), NOT ToStdString(): see the preview-path note.
-            into_u8(subdivision_failure_text(lowest_achieved, true)));
-        return;
-    }
 
     // The 1-million-face guard moved to the level stepper: the preview has already
     // built (and paid for) the meshes by the time the apply path could ask.
@@ -897,6 +953,8 @@ void GLGizmoLocalSubdivision::apply_subdivision()
     Model&                model = plater->model();
     std::vector<Preview*> apply_list;
     for (Preview& p : m_previews) {
+        if (int(p.meshes.size()) - 1 < m_subdiv_level)
+            continue; // failed below the requested level: leave this part untouched
         const int level = std::min(m_subdiv_level, int(p.meshes.size()) - 1);
         if (level <= 0)
             continue;
@@ -916,8 +974,14 @@ void GLGizmoLocalSubdivision::apply_subdivision()
             continue;
         apply_list.push_back(&p);
     }
-    if (apply_list.empty())
+    if (apply_list.empty()) {
+        if (lowest_achieved < m_subdiv_level)
+            wxGetApp().plater()->get_notification_manager()->push_notification(
+                NotificationManager::NotificationLevel::WarningNotificationLevel, 10,
+                // into_u8 (explicit UTF-8), NOT ToStdString(): see the preview-path note.
+                into_u8(subdivision_failure_text(lowest_achieved, true)));
         return;
+    }
 
     // Move the result meshes out of the caches: closing the gizmo below clears them.
     std::vector<std::pair<ModelVolume*, indexed_triangle_set>> meshes_to_apply;

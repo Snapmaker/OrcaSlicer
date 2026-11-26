@@ -48,6 +48,14 @@ protected:
     // Opened from the object context menu only, never from the toolbar.
     bool on_is_selectable() const override { return false; }
 
+    // The base painter requires a single full instance, but this gizmo only needs
+    // the selection to belong to one instance of one object: the object/part context
+    // menu can be invoked with just one volume of a multi-volume object selected
+    // (e.g. right after repairing that part), and the per-volume preview machinery
+    // already handles the unselected parts. Multi-object and multi-instance
+    // selections are still refused, as the data path assumes a single instance.
+    bool on_is_activable() const override;
+
     // Finer circle brush than the painting gizmos default.
     static const constexpr float CursorRadiusMin = 0.1f;
     const float get_cursor_radius_min() const override { return CursorRadiusMin; }
@@ -94,6 +102,17 @@ private:
     void        update_preview();
     void        restore_preview();
     void        render_preview_meshes();
+    // GLVolume of the previewed volume inside the selected object instance. Looks
+    // over ALL canvas volumes, not just the selected ones: with a partial-volume
+    // selection the painted volume may lie outside the selection.
+    const GLVolume* matching_glvolume(const Preview& p) const;
+    // Whether the given model part belongs to the current selection. Parts outside
+    // a partial-volume selection are hidden for the whole session.
+    bool is_selected_volume(const ModelVolume* mv) const;
+    // Painting hits on unselected parts (possible through the object-wide raycaster
+    // while those parts are hidden) must not survive the stroke: their transient
+    // selection is cleared so no preview or apply ever sees it.
+    void clear_painting_on_hidden_parts();
     // Per-volume gate for the inherited selector draw: skip exactly the volumes
     // whose draw render_preview_meshes replaces (conditions mirrored), so
     // unpainted siblings and failed previews keep their original rendering.

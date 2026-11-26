@@ -3,13 +3,13 @@
 #include "libslic3r/Time.hpp"
 #include "libslic3r/Thread.hpp"
 #include "slic3r/Utils/ColorSpaceConvert.hpp"
+#include "slic3r/Utils/SnapLogClient.hpp"
 
 #include "GUI_App.hpp"
 #include "MsgDialog.hpp"
 #include "Plater.hpp"
 #include "GUI_App.hpp"
 #include "ReleaseNote.hpp"
-#include "slic3r/Utils/SnapLogClient.hpp"
 #include <thread>
 #include <mutex>
 #include <codecvt>
@@ -2734,10 +2734,6 @@ void MachineObject::set_print_state(std::string status)
 
 int MachineObject::connect(bool is_anonymous, bool use_openssl)
 {
-    SNAP_LOG_BATCH(Info, "device connect attempt",
-        {"eventName","device_connect_attempt"},
-        {"connectionType", is_anonymous ? "anonymous" : "login"},
-        {"use_ssl", use_openssl ? "true" : "false"});
     if (dev_ip.empty()) return -1;
     std::string username;
     std::string password;
@@ -6443,6 +6439,7 @@ void DeviceManager::clean_user_info()
     // reset selected_machine
     selected_machine = "";
     local_selected_machine = "";
+    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
 
     // clean access code
     for (auto it = userMachineList.begin(); it != userMachineList.end(); it++) {
@@ -6528,8 +6525,13 @@ bool DeviceManager::set_selected_machine(std::string dev_id, bool need_disconnec
             data.second.checked_filament.clear();
         }
     }
+    // Only publish the printer SN after every early-return path has passed:
+    // a failed selection must not change the telemetry identity.
+    if (it != my_machine_list.end() && it->second->connection_type() == "lan")
+        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn(dev_id);
+    else if (it == my_machine_list.end())
+        ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_print_sn("");
     selected_machine = dev_id;
-    ::Slic3r::SnapLog::v1::SnapLogClient::instance().set_device_id(dev_id);
     return true;
 }
 

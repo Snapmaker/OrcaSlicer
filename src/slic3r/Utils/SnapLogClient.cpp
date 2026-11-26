@@ -12,6 +12,7 @@
 #include <fstream>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <regex>
 #include <thread>
 #include <boost/filesystem.hpp>
@@ -30,18 +31,12 @@
 #include <nlohmann/json.hpp>
 namespace Slic3r { namespace SnapLog { inline namespace v1 {
 
-constexpr int kShutdownRealtimeJoinMaxSec = 2;
-constexpr int kShutdownBatchJoinMaxSec    = 3;
+constexpr int kShutdownBatchJoinMaxSec = 3;
 
-static bool is_valid_spool_path(const boost::filesystem::path& path)
-{
-    return !path.empty() && !path.native().empty();
-}
+static bool is_valid_spool_path(const boost::filesystem::path& path) { return !path.empty() && !path.native().empty(); }
 
 static void log_detached_thread_failure(const char* operation) noexcept
-{
-    BOOST_LOG_TRIVIAL(warning) << "SnapLog " << operation << " thread failed";
-}
+{ BOOST_LOG_TRIVIAL(warning) << "SnapLog " << operation << " thread failed"; }
 
 static void fulfill_purge_completion(const std::shared_ptr<std::promise<bool>>& completion, bool succeeded) noexcept
 {
@@ -56,10 +51,7 @@ class PurgeCompletionGuard
 public:
     explicit PurgeCompletionGuard(std::shared_ptr<std::promise<bool>> completion) : m_completion(std::move(completion)) {}
 
-    ~PurgeCompletionGuard()
-    {
-        fulfill_purge_completion(m_completion, false);
-    }
+    ~PurgeCompletionGuard() { fulfill_purge_completion(m_completion, false); }
 
     void fulfill(bool succeeded)
     {
@@ -105,7 +97,7 @@ SnapLogClient::SpoolLock& SnapLogClient::SpoolLock::operator=(SnapLogClient::Spo
 
 SnapLogClient::SpoolLock SnapLogClient::try_acquire_spool_lock(const boost::filesystem::path& dir)
 {
-    SpoolLock                 lk;
+    SpoolLock lk;
     if (!is_valid_spool_path(dir))
         return lk;
 
@@ -131,7 +123,7 @@ SnapLogClient::SpoolLock SnapLogClient::try_acquire_spool_lock(const boost::file
     return lk;
 }
 
-std::string hmac_sha256_hex(std::string_view key, std::string_view msg)
+static std::string hmac_sha256_hex(std::string_view key, std::string_view msg)
 {
     std::array<unsigned char, EVP_MAX_MD_SIZE> out{};
     unsigned int                               len = 0;
@@ -146,62 +138,25 @@ std::string hmac_sha256_hex(std::string_view key, std::string_view msg)
     return r;
 }
 
-std::string default_nonce()
+static std::optional<std::string> default_public_nonce()
 {
-    // 16 random bytes -> 32 lowercase hex chars (128 bits of entropy).
-    // we deliberately avoid boost::uuids.
     unsigned char buf[16];
     if (RAND_bytes(buf, sizeof(buf)) != 1) {
-        // RAND_bytes should not fail in practice; fall back to zeros so the
-        // call is still total (the signature still validates, just with a
-        // weak nonce — server-side nonce-replay protection catches abuse).
-        for (auto& b : buf)
-            b = 0;
+        return std::nullopt;
     }
-    static const char* H = "0123456789abcdef";
-    std::string        r(32, '0');
+
+    static const char* hex = "0123456789abcdef";
+    std::string result(32, '0');
     for (int i = 0; i < 16; ++i) {
-        r[2 * i]     = H[buf[i] >> 4];
-        r[2 * i + 1] = H[buf[i] & 0xF];
+        result[2 * i]   = hex[buf[i] >> 4];
+        result[2 * i + 1] = hex[buf[i] & 0x0F];
     }
-    return r;
+    return result;
 }
 
-RealtimeRequest build_realtime_request(
-    const SnapLogDeps& deps, const SnapLogConfig& cfg, const std::string& clientId, const std::string& token, NonceGenerator nonce_gen)
+static int64_t default_public_now_ms()
 {
-    RealtimeRequest r;
-
-    auto add_common = [&]() {
-        r.headers.emplace_back("X-Client-Type", kSnapLogClientType);
-        r.headers.emplace_back("X-Client-Id", clientId);
-    };
-
-    if (!token.empty()) {
-        // Logged-in path: Bearer + the print upload endpoint.
-        // The log gateway requires the "Bearer " prefix
-        // a bare token is rejected as 110002 "Missing
-        // authorization" and, since the realtime worker is fire-and-forget, the
-        // event would be silently dropped. Note the app's stored token is bare
-        // (parsed from the login redirect's token= param), so we prepend here.
-        r.url = cfg.gateway_base + "/api/log/upload/print";
-        r.headers.emplace_back("Authorization", std::string("Bearer ") + token);
-        add_common();
-    } else {
-        // Public path: HMAC-signed, public endpoint.
-        r.url = cfg.gateway_base + "/api/log/public/upload/print";
-        add_common();
-        // Timestamp in ms from the injected clock.
-        int64_t     ts     = deps.now_ms ? deps.now_ms() : 0;
-        std::string ts_str = std::to_string(ts);
-        std::string nonce  = nonce_gen ? nonce_gen() : default_nonce();
-        // X-Sign = HMAC_SHA256(secret, clientType||clientId||ts||nonce)
-        std::string sign = hmac_sha256_hex(cfg.hmac_secret, std::string(kSnapLogClientType) + clientId + ts_str + nonce);
-        r.headers.emplace_back("X-Timestamp", ts_str);
-        r.headers.emplace_back("X-Nonce", nonce);
-        r.headers.emplace_back("X-Sign", sign);
-    }
-    return r;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 std::string redact_path(const std::string& home, const std::string& p)
@@ -268,7 +223,7 @@ std::string hash_pii(const std::string& clientId, const std::string& serial)
 
 // Local wall-clock time as "YYYY-MM-DD HH:MM:SS" via the C library localtime
 // (reflects the user's TZ). Returns "" for non-positive timestamps. Defined
-// here (above the renderers) so both render_realtime_body and render_batch_line
+// here (above the renderers) so batch rendering
 // can call it without a forward declaration.
 std::string format_local_time_ms(int64_t ms)
 {
@@ -295,171 +250,6 @@ bool        is_secret_key(const std::string& key);
 std::string utf8_safe_prefix(const std::string& value, std::size_t budget);
 std::string sanitize_message(const std::string& home, const std::string& message);
 } // namespace
-
-std::string render_realtime_body(
-    SnapLogLevel level, const std::string& msg, const SnapLogExt& ext, std::size_t line_max_bytes, const RealtimeIdentity& id)
-{
-    nlohmann::json j;
-    j["clientType"] = kSnapLogClientType;
-    // clientId = the per-install InstanceID (top-level, gateway contract).
-    j["clientId"] = utf8_safe_prefix(id.client_id, id.client_id.size());
-    j["level"]    = level_str(level);
-
-    // Build ext: hard-reject keys starting with "raw" (case-insensitive, so
-    // rawGcode / RawGcode / RAW_DATA / raw3mf are all dropped), mask all
-    // string values, and enforce per-string + total-ext size caps.
-    // per-string ≤2KB, ext ≤8KB. Protecting eventName (and opId)
-    // from whole-ext drop because they are how Grafana filters.
-    static constexpr std::size_t kMaxExtValueBytes = 2000;
-    static constexpr std::size_t kMaxExtTotalBytes = 8000;
-    const std::string            val_trunc_suffix  = u8"…[truncated]"; // "...[truncated]"
-
-    auto is_protected_key = [](const std::string& k) {
-        return k == "eventName" || k == "opId" || k == "clientUUID" || k == "connect_clientid" || k == "printerSN" || k == "processId" ||
-               k == "deviceId" || k == "userId" || k == "orcaVersion" || k == "os" || k == "batchId" || k == "localTime";
-    };
-    auto truncate_value = [&](const std::string& key, const std::string& v) -> std::string {
-        std::string sanitized;
-        if (is_secret_key(key)) {
-            sanitized = "***";
-        } else if (is_pii_key(key) && !v.empty()) {
-            sanitized = hash_pii(id.client_id, v);
-        } else if (is_pii_key(key)) {
-            sanitized.clear();
-        } else if (looks_like_path(v)) {
-            sanitized = mask_secret_in_value(redact_path(id.home_for_redact, v));
-        } else {
-            sanitized = mask_secret_in_value(v);
-        }
-        sanitized = utf8_safe_prefix(sanitized, sanitized.size());
-        if (sanitized.size() <= kMaxExtValueBytes)
-            return sanitized;
-        std::size_t budget = (kMaxExtValueBytes > val_trunc_suffix.size()) ? (kMaxExtValueBytes - val_trunc_suffix.size()) : 0;
-        return utf8_safe_prefix(sanitized, budget) + val_trunc_suffix;
-    };
-
-    // Build ext entries preserving insertion order, truncating each value.
-    // Use an ordered vector so FIFO dropping is predictable.
-    std::vector<std::pair<std::string, std::string>> ext_pairs;
-    ext_pairs.reserve(ext.size() + 10);
-    // Standard identity/metadata (always present, protected from drop). Values
-    // are "" when unavailable (not logged in / no printer connected).
-    ext_pairs.emplace_back("clientUUID", truncate_value("clientUUID", id.client_id));
-    ext_pairs.emplace_back("processId", truncate_value("processId", id.process_id));
-    ext_pairs.emplace_back("connect_clientid", truncate_value("connect_clientid", id.connect_clientid));
-    ext_pairs.emplace_back("printerSN", truncate_value("printerSN", id.printer_sn));
-    ext_pairs.emplace_back("deviceId", truncate_value("deviceId", id.device_id));
-    ext_pairs.emplace_back("userId", truncate_value("userId", id.user_id));
-    ext_pairs.emplace_back("orcaVersion", truncate_value("orcaVersion", id.orca_version));
-    ext_pairs.emplace_back("os", truncate_value("os", id.os));
-    ext_pairs.emplace_back("batchId", truncate_value("batchId", id.batch_id));
-    ext_pairs.emplace_back("localTime", truncate_value("localTime", format_local_time_ms(id.ts_ms)));
-    for (const auto& kv : ext) {
-        const std::string& key = kv.first;
-        if (key.size() >= 3) {
-            // Case-insensitive compare of first 3 chars to "raw".
-            char c0 = static_cast<char>(std::tolower(static_cast<unsigned char>(key[0])));
-            char c1 = static_cast<char>(std::tolower(static_cast<unsigned char>(key[1])));
-            char c2 = static_cast<char>(std::tolower(static_cast<unsigned char>(key[2])));
-            if (c0 == 'r' && c1 == 'a' && c2 == 'w')
-                continue; // raw* rejected
-        }
-        std::string safe_key = utf8_safe_prefix(key, key.size());
-        ext_pairs.emplace_back(safe_key, truncate_value(key, kv.second));
-    }
-
-    // Serialize ext candidates to measure total bytes, dropping non-protected
-    // FIFO entries if the ext object exceeds kMaxExtTotalBytes.
-    auto build_ext_obj = [&](const std::vector<std::pair<std::string, std::string>>& pairs) {
-        nlohmann::json obj = nlohmann::json::object();
-        for (const auto& kv : pairs)
-            obj[kv.first] = kv.second;
-        return obj;
-    };
-
-    // Greedy: start with all pairs. If over cap, drop oldest non-protected entry.
-    // Always keep eventName and opId if present.
-    std::vector<std::pair<std::string, std::string>> kept = ext_pairs;
-    while (!kept.empty()) {
-        nlohmann::json test_obj   = build_ext_obj(kept);
-        std::string    serialized = test_obj.dump();
-        if (serialized.size() <= kMaxExtTotalBytes)
-            break;
-        // Find the oldest non-protected entry to drop (FIFO).
-        auto drop_it = kept.end();
-        for (auto it = kept.begin(); it != kept.end(); ++it) {
-            if (!is_protected_key(it->first)) {
-                drop_it = it;
-                break;
-            }
-        }
-        if (drop_it == kept.end())
-            break; // only protected entries left, stop
-        kept.erase(drop_it);
-    }
-    j["ext"] = build_ext_obj(kept);
-
-    // Enforce the line cap. Truncate the message first (it's the dominant
-    // contributor), then if still over, drop ext entirely, then message
-    // truncation suffix. We never exceed line_max_bytes and always keep valid
-    // JSON.
-    std::string message = sanitize_message(id.home_for_redact, msg);
-    j["message"]        = message;
-
-    auto serialize = [&]() { return j.dump(); };
-
-    std::string out = serialize();
-    if (out.size() <= line_max_bytes)
-        return out;
-
-    // Step 1: truncate message.
-    const std::string trunc_suffix = u8"…[truncated]"; // "...[truncated]"
-    // Estimate overhead = everything except message content.
-    // message is stored under "message": "...", so overhead ≈ size - msg.size().
-    std::size_t overhead = out.size() - message.size();
-    // Budget for message content (leave room for the truncation suffix).
-    std::size_t budget = (line_max_bytes > overhead + trunc_suffix.size()) ? (line_max_bytes - overhead - trunc_suffix.size()) : 0;
-    if (budget < message.size()) {
-        message      = utf8_safe_prefix(message, budget) + trunc_suffix;
-        j["message"] = message;
-        out          = serialize();
-    }
-
-    // Step 2: if still over, trim ext to only protected keys (eventName/opId).
-    // The per-value/ext caps already bound ext to ~8KB, so this is a rare
-    // last-resort — but we still preserve the Grafana-query keys.
-    if (out.size() > line_max_bytes) {
-        nlohmann::json minimal_ext = nlohmann::json::object();
-        for (const auto& kv : kept) {
-            if (is_protected_key(kv.first))
-                minimal_ext[kv.first] = kv.second;
-        }
-        if (minimal_ext.empty())
-            j["ext"] = nullptr;
-        else
-            j["ext"] = minimal_ext;
-        out = serialize();
-    }
-
-    // Step 3: hard cap — if still over (degenerate tiny line_max_bytes), chop
-    // the tail and keep the JSON structurally valid by re-dumping a minimal
-    // object. This is a last-resort guarantee.
-    if (out.size() > line_max_bytes) {
-        j["message"] = trunc_suffix;
-        j["ext"]     = nullptr;
-        out          = serialize();
-        if (out.size() > line_max_bytes) {
-            // Absolute floor: emit a minimal truncated marker.
-            out = nlohmann::json{{"clientType", kSnapLogClientType},
-                                 {"clientId", utf8_safe_prefix(id.client_id, id.client_id.size())},
-                                 {"level", level_str(level)},
-                                 {"message", trunc_suffix},
-                                 {"ext", nullptr}}
-                      .dump();
-        }
-    }
-    return out;
-}
 
 namespace {
 
@@ -540,7 +330,9 @@ bool is_pii_key(const std::string& key)
         lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
     return lower == "printerserial" || lower == "printer_serial" || lower == "printersn" || lower == "printer_sn" || lower == "sn" ||
            lower == "serialnumber" || lower == "serial_number" || lower == "mac" || lower == "macaddress" || lower == "mac_address" ||
-           lower == "ip" || lower == "ipaddress" || lower == "ip_address";
+           lower == "ip" || lower == "ipaddress" || lower == "ip_address" || lower == "devicesn" || lower == "device_sn" ||
+           lower == "deviceid" || lower == "device_id" || lower == "devicekey" || lower == "device_key" || lower == "devicename" ||
+           lower == "device_name";
 }
 
 // Secret key names: when the KEY itself names a secret, the value is treated
@@ -561,7 +353,7 @@ bool is_secret_key(const std::string& key)
         return true;
     // Contains "password", "secret", "token", "credential" as substrings.
     if (lower.find("password") != std::string::npos || lower.find("secret") != std::string::npos ||
-        lower.find("credential") != std::string::npos)
+        lower.find("token") != std::string::npos || lower.find("credential") != std::string::npos)
         return true;
     return false;
 }
@@ -618,12 +410,18 @@ std::string render_batch_line(
     std::vector<std::pair<std::string, std::string>> ext_pairs;
     ext_pairs.emplace_back("clientUUID", sanitize_value("clientUUID", ctx.clientId));
     ext_pairs.emplace_back("processId", sanitize_value("processId", ctx.processId));
-    ext_pairs.emplace_back("connect_clientid", sanitize_value("connect_clientid", ctx.connect_clientid));
     ext_pairs.emplace_back("printerSN", sanitize_value("printerSN", ctx.print_sn));
     ext_pairs.emplace_back("orcaVersion", sanitize_value("orcaVersion", ctx.appVersion));
+    ext_pairs.emplace_back("profileVersion", sanitize_value("profileVersion", ctx.profileVersion));
+    ext_pairs.emplace_back("control_version", sanitize_value("control_version", ctx.controlVersion));
     ext_pairs.emplace_back("os", sanitize_value("os", ctx.osVersion));
     ext_pairs.emplace_back("batchId", ctx.batchId);
     ext_pairs.emplace_back("localTime", format_local_time_ms(ctx.ts_ms));
+
+    auto is_batch_protected = [](const std::string& k) {
+        return k == "clientUUID" || k == "processId" || k == "printerSN" || k == "orcaVersion" || k == "os" ||
+               k == "batchId" || k == "localTime" || k == "eventName" || k == "profileVersion" || k == "control_version";
+    };
     for (const auto& kv : ext) {
         const std::string& key = kv.first;
         // Drop raw* keys (case-insensitive prefix check).
@@ -635,6 +433,8 @@ std::string render_batch_line(
                 continue;
         }
         std::string safe_key = utf8_safe_prefix(key, key.size());
+        if (is_batch_protected(safe_key))
+            continue;
         ext_pairs.emplace_back(safe_key, sanitize_value(key, kv.second));
     }
 
@@ -648,10 +448,7 @@ std::string render_batch_line(
 
     std::vector<std::pair<std::string, std::string>> kept = ext_pairs;
     // Never drop clientUUID (it's protected) — it's how the server correlates.
-    auto is_batch_protected = [](const std::string& k) {
-        return k == "clientUUID" || k == "processId" || k == "connect_clientid" || k == "printerSN" || k == "orcaVersion" || k == "os" ||
-               k == "batchId" || k == "localTime" || k == "eventName" || k == "opId";
-    };
+    auto is_trim_protected = [](const std::string& k) { return k == "opId"; };
     while (!kept.empty()) {
         nlohmann::json test_obj   = build_ext_obj(kept);
         std::string    serialized = test_obj.dump();
@@ -659,7 +456,7 @@ std::string render_batch_line(
             break;
         auto drop_it = kept.end();
         for (auto it = kept.begin(); it != kept.end(); ++it) {
-            if (!is_batch_protected(it->first)) {
+            if (!is_batch_protected(it->first) && !is_trim_protected(it->first)) {
                 drop_it = it;
                 break;
             }
@@ -670,7 +467,7 @@ std::string render_batch_line(
     }
     j["ext"] = build_ext_obj(kept);
 
-    // Enforce the line cap. Mirror render_realtime_body's truncation skeleton.
+    // Enforce the batch line cap.
     std::string message   = sanitize_message(ctx.home_for_redact, msg);
     auto        serialize = [&]() { return j.dump(); };
 
@@ -695,7 +492,7 @@ std::string render_batch_line(
     if (out.size() > line_max_bytes) {
         nlohmann::json minimal_ext = nlohmann::json::object();
         for (const auto& kv : kept) {
-            if (is_batch_protected(kv.first))
+            if (is_batch_protected(kv.first) || is_trim_protected(kv.first))
                 minimal_ext[kv.first] = kv.second;
         }
         if (minimal_ext.empty())
@@ -722,6 +519,26 @@ std::string render_batch_line(
 
     out.push_back('\n'); // NDJSON: line ends with newline.
     return out;
+}
+
+static std::string snaplog_site_base_for_country(std::string_view country_code)
+{
+    return country_code.find("CN") != std::string_view::npos ? std::string{kSnapLogUploadCnUrl} : std::string{kSnapLogUploadIntlUrl};
+}
+
+void apply_production_snaplog_site(SnapLogConfig& config, std::string_view country_code)
+{
+    config.snaplog_base = snaplog_site_base_for_country(country_code);
+}
+
+void SnapLogClient::reconfigure_site(std::string_view country_code)
+{
+    auto in = internals();
+    if (!in)
+        return;
+    const std::string base = snaplog_site_base_for_country(country_code);
+    std::lock_guard<std::mutex> lk(in->site_mu);
+    in->site_base = base;
 }
 
 bool RateLimiter::allow(const std::string&                eventName,
@@ -781,7 +598,7 @@ bool RateLimiter::allow(const std::string&                eventName,
     return true;
 }
 
-// RtEvent and SnapLogClient::Internals are defined in the header so tests can
+// LogEvent and SnapLogClient::Internals are defined in the header so tests can
 // construct a fake Internals and drive bt_worker_loop directly. See SnapLogClient.hpp.
 
 SnapLogClient& SnapLogClient::instance()
@@ -792,125 +609,8 @@ SnapLogClient& SnapLogClient::instance()
     return *inst;
 }
 
-// Realtime worker thread function. Runs in its own thread;
-// contains NO Catch2 assertions (they're not thread-safe). It polls:
-//   - exit conditions (stop/deps_invalid/consent)
-//   - the in-flight handle (clear when done)
-//   - the queue (send one event when no handle is in-flight)
-//
-// Invariant: at most one rt_handle is in-flight at a time. The worker is the
-// only writer of rt_handle, so the slot is naturally single-writer; we still
-// hold m_h_mu during the consent-recheck + store so that cancel_current()
-
-// Fix D: This worker is fire-and-forget for the realtime/print endpoint.
-// When the response completes (handle->done()), we simply clear the slot
-// — we never inspect the response body or check code==0 vs code==200.
-// The realtime endpoint accepts events best-effort; there is no retry or
-// auth-dead logic triggered by the response code. This is by design.
-void SnapLogClient::rt_worker_loop(std::shared_ptr<Internals> in)
-{
-    using namespace std::chrono_literals;
-    while (true) {
-        // 1. Exit conditions (lock-free atomics).
-        if (in->stop_receiving.load(std::memory_order_relaxed))
-            return;
-        if (in->deps_invalid.load(std::memory_order_relaxed))
-            return;
-        if (!in->consent.load(std::memory_order_relaxed)) {
-            // Consent false: sleep and re-check. We do NOT exit the thread on
-            // consent-false (consent may flip back on); we just stop sending.
-            std::this_thread::sleep_for(std::chrono::milliseconds(in->cfg.poll_interval_ms > 0 ? in->cfg.poll_interval_ms : 1));
-            continue;
-        }
-
-        // 2. Check the in-flight handle. If done, clear the slot.
-        {
-            std::lock_guard<std::mutex> lk(in->m_h_mu);
-            if (in->rt_handle && in->rt_handle->done()) {
-                in->rt_handle.reset();
-            }
-        }
-
-        // 3. If no handle in-flight, try to pop one event and send it.
-        bool have_handle = false;
-        {
-            std::lock_guard<std::mutex> lk(in->m_h_mu);
-            have_handle = (in->rt_handle != nullptr);
-        }
-        if (!have_handle) {
-            // Pop one event under queue_mu.
-            std::optional<RtEvent> ev_opt;
-            {
-                std::lock_guard<std::mutex> qk(in->queue_mu);
-                if (!in->rt_queue.empty()) {
-                    ev_opt = std::move(in->rt_queue.front());
-                    in->rt_queue.pop_front();
-                }
-            }
-            if (ev_opt.has_value()) {
-                const RtEvent& ev = *ev_opt;
-                // Re-check consent (it may have flipped after enqueue).
-                if (!in->consent.load(std::memory_order_relaxed)) {
-                    // Consent flipped false — drop the event without sending.
-                    in->dropped.fetch_add(1, std::memory_order_relaxed);
-                } else if (in->deps_invalid.load(std::memory_order_relaxed) || in->stop_receiving.load(std::memory_order_relaxed)) {
-                    // Shutdown/deps-invalid racing in — drop and exit.
-                    in->dropped.fetch_add(1, std::memory_order_relaxed);
-                    return;
-                } else {
-                    // Build the request OUTSIDE m_h_mu (now_ms/hmac may be
-                    // non-trivial; keep the lock window tight).
-                    std::string      token_snap;
-                    RealtimeIdentity id;
-                    id.client_id       = in->machine_id_snapshot; // set once at init, immutable
-                    id.process_id      = in->cfg.process_id;
-                    id.home_for_redact = in->cfg.home_for_redact;
-                    {
-                        std::lock_guard<std::mutex> tk(in->token_mu);
-                        token_snap          = in->user_token;
-                        id.connect_clientid = in->connect_clientid;
-                        id.printer_sn       = in->print_sn;
-                        id.device_id        = in->device_id;
-                        id.user_id          = in->user_id;
-                        id.batch_id         = in->current_batch_id_snapshot;
-                    }
-                    id.orca_version      = in->cfg.app_version;
-                    id.os                = in->cfg.os_version;
-                    id.ts_ms             = in->deps.now_ms ? in->deps.now_ms() : 0;
-                    NonceGenerator  ng   = in->nonce_gen_for_test ? in->nonce_gen_for_test : NonceGenerator{};
-                    RealtimeRequest req  = build_realtime_request(in->deps, in->cfg, in->machine_id_snapshot, token_snap, ng);
-                    std::string     body = render_realtime_body(ev.level, ev.message, ev.ext, in->cfg.line_max_bytes, id);
-
-                    // Fire the async request OUTSIDE m_h_mu (do_request creates
-                    // a handle and returns immediately; holding the lock here
-                    // would serialize cancel_current against the request issue).
-                    std::shared_ptr<SnapLogHandle> h;
-                    if (in->deps.do_request) {
-                        h = in->deps.do_request("POST", req.url, req.headers,
-                                                /*body_file*/ nullptr, &body);
-                    }
-                    if (h) {
-                        std::lock_guard<std::mutex> hk(in->m_h_mu);
-                        if (in->consent.load(std::memory_order_relaxed) && !in->stop_receiving.load(std::memory_order_relaxed)) {
-                            in->rt_handle = std::move(h);
-                        } else {
-                            // Consent flipped / shutting down between issue and
-                            // store — cancel the just-issued handle and drop.
-                            h->cancel();
-                            in->dropped.fetch_add(1, std::memory_order_relaxed);
-                        }
-                    } else {
-                        // do_request not set — drop (counted).
-                        in->dropped.fetch_add(1, std::memory_order_relaxed);
-                    }
-                }
-            }
-        }
-
-        // 4. Sleep for the poll interval before the next iteration.
-        std::this_thread::sleep_for(std::chrono::milliseconds(in->cfg.poll_interval_ms > 0 ? in->cfg.poll_interval_ms : 1));
-    }
-}
+static int64_t steady_now_ms()
+{ return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 // Forward declaration: generate_batch_id is defined later (near bt_worker_loop)
 // but init() needs it to seed current_batch_id on startup.
@@ -938,12 +638,13 @@ static bool purge_spool(const std::shared_ptr<SnapLogClient::Internals>& in)
     auto purge_file = [&in](const fs::path& path) {
         const auto mark_failure = [&in](const char* stage, const boost::system::error_code& failure_ec) {
             in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
-            BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge failed at " << stage << ": " << failure_ec.message();
+            BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge failed at " << stage << ": "
+                                       << failure_ec.message();
             return false;
         };
 
         boost::system::error_code ec;
-        const bool exists = fs::exists(path, ec);
+        const bool                exists = fs::exists(path, ec);
         if (!ec && !exists)
             return true;
         if (ec == boost::system::errc::no_such_file_or_directory)
@@ -967,7 +668,7 @@ static bool purge_spool(const std::shared_ptr<SnapLogClient::Internals>& in)
             return mark_failure("resize", resize_ec);
 
         boost::system::error_code size_ec;
-        const auto size = fs::file_size(path, size_ec);
+        const auto                size = fs::file_size(path, size_ec);
         if (size_ec || size != 0)
             return mark_failure("file size", size_ec);
 
@@ -995,7 +696,7 @@ void SnapLogClient::start_batch_worker(const std::shared_ptr<Internals>& in)
         return;
 
     if (!in->bt_spool_lock.acquired && m_purge_lock_spool_dir == in->spool_dir_resolved && m_purge_spool_lock.acquired) {
-        in->bt_spool_lock       = std::move(m_purge_spool_lock);
+        in->bt_spool_lock = std::move(m_purge_spool_lock);
         m_purge_lock_spool_dir.clear();
     }
 
@@ -1006,12 +707,13 @@ void SnapLogClient::start_batch_worker(const std::shared_ptr<Internals>& in)
             return;
         }
     }
+    in->batch_locked_out.store(false);
 
     namespace fs = boost::filesystem;
     boost::system::error_code ec;
     if (fs::exists(in->active_path, ec)) {
         boost::system::error_code size_ec;
-        const auto active_size = fs::file_size(in->active_path, size_ec);
+        const auto                active_size = fs::file_size(in->active_path, size_ec);
         if (!size_ec && active_size > 0) {
             std::string err;
             rotate_active(in->spool_dir_resolved, in->active_path, "recovery00000000", err);
@@ -1032,11 +734,11 @@ void SnapLogClient::start_batch_worker(const std::shared_ptr<Internals>& in)
     }
     reset_batch_upload_state(*in);
     in->events_in_active = 0;
-    in->last_flush_ms    = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    in->last_flush_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 
     std::shared_ptr<Internals> in_for_bt  = in;
     const uint64_t             generation = in->batch_worker_generation.fetch_add(1, std::memory_order_acq_rel) + 1;
-    in->bt_worker = std::thread(bt_worker_loop, in_for_bt, generation);
+    in->bt_worker                         = std::thread(bt_worker_loop, in_for_bt, generation);
 }
 
 static bool purge_completion_blocks(const std::shared_future<bool>& completion)
@@ -1049,9 +751,7 @@ static bool purge_completion_blocks(const std::shared_future<bool>& completion)
 }
 
 static bool purge_completion_active(const std::shared_future<bool>& completion)
-{
-    return completion.valid() && completion.wait_for(std::chrono::seconds(0)) != std::future_status::ready;
-}
+{ return completion.valid() && completion.wait_for(std::chrono::seconds(0)) != std::future_status::ready; }
 
 std::shared_future<bool> SnapLogClient::begin_spool_purge(const std::shared_ptr<Internals>& in, std::thread retired_worker)
 {
@@ -1061,10 +761,10 @@ std::shared_future<bool> SnapLogClient::begin_spool_purge(const std::shared_ptr<
 
     auto retired_worker_handle = std::make_shared<std::thread>(std::move(retired_worker));
     if (!in->bt_spool_lock.acquired && m_purge_lock_spool_dir == in->spool_dir_resolved && m_purge_spool_lock.acquired) {
-        in->bt_spool_lock       = std::move(m_purge_spool_lock);
+        in->bt_spool_lock = std::move(m_purge_spool_lock);
         m_purge_lock_spool_dir.clear();
     } else if (m_purge_lock_spool_dir != in->spool_dir_resolved) {
-        m_purge_spool_lock       = SpoolLock{};
+        m_purge_spool_lock = SpoolLock{};
         m_purge_lock_spool_dir.clear();
     }
 
@@ -1076,53 +776,83 @@ std::shared_future<bool> SnapLogClient::begin_spool_purge(const std::shared_ptr<
     }
 
     auto previous_completion = m_purge_completion;
-    auto completion_promise = std::make_shared<std::promise<bool>>();
-    auto completion = completion_promise->get_future().share();
-    m_purge_spool_dir = in->spool_dir_resolved;
-    m_purge_promise   = completion_promise;
-    m_purge_completion = completion;
+    auto completion_promise  = std::make_shared<std::promise<bool>>();
+    auto completion          = completion_promise->get_future().share();
+    m_purge_spool_dir        = in->spool_dir_resolved;
+    m_purge_promise          = completion_promise;
+    m_purge_completion       = completion;
 
-    std::thread(
-        [this, in, completion_promise, previous_completion, retired_worker_handle]() mutable {
-            PurgeCompletionGuard completion_guard(completion_promise);
-            bool purged = false;
+    std::thread([this, in, completion_promise, previous_completion, retired_worker_handle]() mutable {
+        PurgeCompletionGuard completion_guard(completion_promise);
+        bool                 purged                = false;
+        bool                 lock_failure_reported = false;
 
-            if (retired_worker_handle->joinable())
-                retired_worker_handle->join();
-            if (previous_completion.valid())
-                previous_completion.wait();
+        if (retired_worker_handle->joinable())
+            retired_worker_handle->join();
+        if (previous_completion.valid())
+            previous_completion.wait();
 
-            if (!in->bt_spool_lock.acquired)
-                in->bt_spool_lock = try_acquire_spool_lock(in->spool_dir_resolved);
-            if (in->bt_spool_lock.acquired)
-                purged = purge_spool(in);
-            else {
-                in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
-                BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge could not acquire the spool lock";
+        const auto purge_deadline = std::chrono::steady_clock::now() +
+                                    std::chrono::seconds(std::max(1, in->cfg.purge_deadline_sec));
+        int       backoff_ms      = 100;
+
+        // A consent-OFF purge must outlive stop_receiving: shutdown() keeps
+        // Internals published precisely so this privacy cleanup can finish.
+        while (std::chrono::steady_clock::now() < purge_deadline) {
+            bool have_lock = false;
+            {
+                // bt_spool_lock is also moved by the UI thread under
+                // m_lifecycle_mu; never touch it without that lock.
+                std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
+                if (!in->bt_spool_lock.acquired)
+                    in->bt_spool_lock = try_acquire_spool_lock(in->spool_dir_resolved);
+                have_lock = in->bt_spool_lock.acquired;
             }
 
-            std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
-            if (in->bt_spool_lock.acquired) {
-                m_purge_spool_lock       = std::move(in->bt_spool_lock);
-                m_purge_lock_spool_dir = in->spool_dir_resolved;
-            }
-            if (m_purge_promise == completion_promise && purged) {
-                m_purge_promise.reset();
-                m_purge_completion = {};
-                m_purge_spool_dir.clear();
-            }
-            if (m_int == in) {
-                if (in->stop_receiving.load(std::memory_order_relaxed)) {
-                    std::lock_guard<std::mutex> state_lock(m_state_mu);
-                    m_int.reset();
-                } else if (purged && in->consent.load(std::memory_order_relaxed)) {
-                    start_batch_worker(in);
+            if (!have_lock) {
+                if (!lock_failure_reported) {
+                    lock_failure_reported = true;
+                    in->purge_delete_failed.fetch_add(1, std::memory_order_relaxed);
+                    BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge could not acquire the spool lock; retrying";
                 }
+                std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+                backoff_ms = std::min(backoff_ms * 2, 2000);
+                continue;
             }
-            // The deferred starter must not observe completion before spool-lock ownership has moved.
-            completion_guard.fulfill(purged);
-        })
-        .detach();
+
+            purged = purge_spool(in);
+            if (purged)
+                break;
+
+            if (!lock_failure_reported) {
+                lock_failure_reported = true;
+                BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: privacy purge could not complete; retrying";
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(backoff_ms));
+            backoff_ms = std::min(backoff_ms * 2, 2000);
+        }
+
+        std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
+        if (m_purge_promise == completion_promise && in->bt_spool_lock.acquired) {
+            m_purge_spool_lock     = std::move(in->bt_spool_lock);
+            m_purge_lock_spool_dir = in->spool_dir_resolved;
+        }
+        if (m_purge_promise == completion_promise && purged) {
+            m_purge_promise.reset();
+            m_purge_completion = {};
+            m_purge_spool_dir.clear();
+        }
+        if (m_int == in) {
+            if (in->stop_receiving.load(std::memory_order_acquire)) {
+                std::lock_guard<std::mutex> state_lock(m_state_mu);
+                m_int.reset();
+            } else if (purged && in->consent.load(std::memory_order_acquire)) {
+                start_batch_worker(in);
+            }
+        }
+        // The deferred starter must not observe completion before spool-lock ownership has moved.
+        completion_guard.fulfill(purged);
+    }).detach();
 
     return completion;
 }
@@ -1149,16 +879,15 @@ void SnapLogClient::start_batch_worker_after_purge(const std::shared_ptr<Interna
     std::thread([this, in, completion] {
         completion.wait();
         std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
-        if (m_int != in || !in->consent.load(std::memory_order_relaxed) || spool_purge_blocks_worker(in->spool_dir_resolved))
+        if (m_int != in || in->stop_receiving.load(std::memory_order_acquire) || !in->consent.load(std::memory_order_acquire) ||
+            spool_purge_blocks_worker(in->spool_dir_resolved))
             return;
         start_batch_worker(in);
     }).detach();
 }
 
 bool SnapLogClient::spool_purge_blocks_worker(const boost::filesystem::path& spool_dir) const
-{
-    return m_purge_spool_dir == spool_dir && purge_completion_blocks(m_purge_completion);
-}
+{ return m_purge_spool_dir == spool_dir && purge_completion_blocks(m_purge_completion); }
 
 void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
 {
@@ -1172,36 +901,12 @@ void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
     // stop its workers first. Use cancel-then-join (same pattern as shutdown)
     // to bound the join.
     if (old) {
-        // Stop rt_worker with the same bounded pattern as shutdown. The
-        // joiner pins Internals so a blocked worker can never be destroyed
-        // while this helper thread is still joining it.
-        if (old->rt_worker.joinable()) {
-            old->stop_receiving.store(true);
-            cancel_current(old, SnapLogPolicy::Realtime);
-            auto                       rt_join_promise = std::make_shared<std::promise<void>>();
-            auto                       rt_join_future  = rt_join_promise->get_future();
-            std::shared_ptr<Internals> rt_in_pin       = old;
-            std::thread                rt_joiner([rt_in_pin, rt_join_promise]() {
-                if (rt_in_pin->rt_worker.joinable()) {
-                    rt_in_pin->rt_worker.join();
-                    rt_join_promise->set_value();
-                }
-            });
-            rt_joiner.detach();
-
-            int rt_deadline_sec = rt_in_pin->cfg.realtime_join_deadline_sec;
-            if (rt_deadline_sec < 1)
-                rt_deadline_sec = 1;
-            if (rt_join_future.wait_for(std::chrono::seconds(rt_deadline_sec)) != std::future_status::ready) {
-                rt_in_pin->deps_invalid.store(true);
-            }
-        }
         // Stop bt_worker if it was started (re-init guard).
         if (old->bt_worker.joinable()) {
             old->stop_receiving.store(true);
             old->stop_uploads.store(true);
             old->batch_worker_generation.fetch_add(1, std::memory_order_acq_rel);
-            cancel_current(old, SnapLogPolicy::Buffered);
+            cancel_current(old);
             // Bounded join on bt_worker (same deadline pattern as shutdown).
             auto                       join_promise = std::make_shared<std::promise<void>>();
             auto                       join_future  = join_promise->get_future();
@@ -1231,7 +936,7 @@ void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
         in->machine_id_snapshot = in->deps.machine_id();
     in->stop_receiving.store(false);
 
-    const bool initial_consent = in->consent.load(std::memory_order_relaxed);
+    const bool initial_consent = in->consent.load(std::memory_order_acquire);
     if (!in->cfg.spool_dir.empty()) {
         namespace fs           = boost::filesystem;
         in->spool_dir_resolved = fs::path(in->cfg.spool_dir);
@@ -1243,12 +948,6 @@ void SnapLogClient::init(SnapLogDeps deps, SnapLogConfig cfg)
         boost::system::error_code ec;
         fs::create_directories(in->spool_dir_resolved, ec);
     }
-
-    // Start the realtime worker thread (moves the shared_ptr by value so the
-    // thread keeps Internals alive even if the client resets m_int during
-    // shutdown; shutdown joins before m_int.reset() in the shutdown path).
-    std::shared_ptr<Internals> in_for_thread = in;
-    in->rt_worker                            = std::thread(rt_worker_loop, in_for_thread);
 
     // Start the batch worker thread if spool_dir is configured. drain_and_flush
     // starts false (only set true during shutdown for the final flush).
@@ -1277,81 +976,28 @@ void SnapLogClient::shutdown()
 {
     std::lock_guard<std::mutex> lifecycle_lock(m_lifecycle_mu);
     auto                        in = internals();
-    // Bounded shutdown:
-    // 1. Flip stop_receiving so the worker's next poll-loop top exits.
-    // 2. cancel_current(Realtime) — abort any in-flight handle so its done()
-    //    trips and the worker clears the slot quickly.
-    // 3. Bounded join: run the join on a helper thread, wait up to
-    //    realtime_join_deadline_sec. If the worker hasn't exited by then
-    //    (e.g. a production do_request stuck in DNS), we set deps_invalid
-    //    (tells the worker to stop calling Deps) and detach the worker thread.
-    //    The worker closure captures shared_ptr<Internals> (NOT this), so the
-    //    detached worker drains safely after m_int.reset() without UAF.
+    // Bounded shutdown: stop accepting events, cancel in-flight requests,
+    // drain queued batches to disk, and join workers with a deadline.
     if (!in)
         return;
     const bool deferred_consent_purge = purge_completion_active(m_purge_completion) && m_purge_spool_dir == in->spool_dir_resolved;
     in->stop_receiving.store(true);
-    cancel_current(in, SnapLogPolicy::Realtime); // abort in-flight so worker's done() trips
-
-    if (in->rt_worker.joinable()) {
-        // Run join on a helper thread, wait with a deadline. std::thread has
-        // no try_join in C++17, so this is the portable pattern: a detached
-        // joiner signals completion via a promise/future.
-        //
-        // The joiner captures a shared_ptr<Internals> copy (in_pin) BY VALUE
-        // so Internals cannot be destroyed while the joiner is blocked inside
-        // rt->join(). Without this pin, the deadline-exceeded path (detach +
-        // m_int.reset()) could let the worker's exit drop the last ref,
-        // destroying Internals (and rt_worker) mid-join — UB per
-        // [thread.thread.constr]/4. With in_pin: client ref + worker ref +
-        // joiner ref → Internals outlives the join.
-        auto                       join_promise = std::make_shared<std::promise<void>>();
-        auto                       join_future  = join_promise->get_future();
-        std::shared_ptr<Internals> in_pin       = in; // increment refcount
-        std::thread                joiner([rt = &in_pin->rt_worker, join_promise, in_pin]() {
-            if (rt->joinable()) {
-                rt->join();
-                join_promise->set_value();
-            }
-            // in_pin released when the lambda ends (after set_value),
-            // guaranteeing Internals stays alive across rt->join().
-        });
-        joiner.detach();
-
-        // Shutdown is on the GUI exit path. Keep its total bounded even when a
-        // transport ignores cancellation; a detached worker can finish later.
-        int deadline_sec = std::min(in->cfg.realtime_join_deadline_sec, kShutdownRealtimeJoinMaxSec);
-        if (deadline_sec < 1)
-            deadline_sec = 1;
-        if (join_future.wait_for(std::chrono::seconds(deadline_sec)) == std::future_status::ready) {
-            // Worker joined within deadline — nothing more to do.
-        } else {
-            // Worker hasn't exited — detach it so we don't block forever.
-            // Set deps_invalid so the worker stops calling Deps callbacks
-            // (which may touch destructed GUI objects). The worker captures
-            // shared_ptr<Internals> so it drains safely.
-            in->deps_invalid.store(true);
-            // Note: rt_worker is still running; we intentionally do NOT join
-            // it here. m_int.reset() below releases our ref; the worker keeps
-            // its own shared_ptr<Internals> alive until it exits.
-        }
-    }
 
     bool batch_request_active = in->batch_requests_in_progress.load(std::memory_order_acquire) > 0;
     // Cancelling an in-progress upload must not cause the flusher to issue a
     // fresh create request before the synchronous do_request call unwinds.
     if (batch_request_active)
         in->stop_uploads.store(true, std::memory_order_release);
-    cancel_current(in, SnapLogPolicy::Buffered);
+    cancel_current(in);
 
     if (in->bt_worker.joinable()) {
         // Set drain_and_flush so bt_worker drains the remaining bt_queue to
         // active.log, rotates to sealed, uploads, then exits.
         in->drain_and_flush.store(true);
-        cancel_current(in, SnapLogPolicy::Buffered); // abort any in-flight PUT
+        cancel_current(in); // abort any in-flight PUT
 
         // Bounded join on bt_worker: same promise/future + detach + pin pattern
-        // as rt_worker. Reuses batch_join_deadline_sec.
+        // using the same bounded join pattern.
         auto                       bt_join_promise = std::make_shared<std::promise<void>>();
         auto                       bt_join_future  = bt_join_promise->get_future();
         std::shared_ptr<Internals> bt_in_pin       = in;
@@ -1396,115 +1042,63 @@ static std::string extract_event_name(const SnapLogExt& ext)
     return {};
 }
 
-void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, SnapLogPolicy policy, const char* caller_func,
-                        int /*caller_line*/, bool bypass_login_gate)
+void SnapLogClient::log(SnapLogLevel lvl, std::string msg, SnapLogExt ext, unsigned sinks)
+{
+    dispatch_event(lvl, std::move(msg), std::move(ext), (sinks & SinkSnapLog) != 0);
+}
+
+void SnapLogClient::dispatch_event(SnapLogLevel lvl, std::string msg, SnapLogExt ext, bool snaplog)
 {
     auto in = internals();
-    // 1. Not init'd → safe no-op.
-    if (!in)
+    if (!in || !in->cfg.enabled || !snaplog || !in->consent.load(std::memory_order_acquire) ||
+        in->stop_receiving.load(std::memory_order_acquire))
         return;
 
-    // 2. Config disabled → no-op (applies to both Realtime and Buffered).
-    if (!in->cfg.enabled)
+    bool snaplog_allowed = snaplog && !in->batch_locked_out.load(std::memory_order_acquire);
+    if (!snaplog_allowed)
         return;
 
-    // 3. Consent false → zero work (atomic read, no lock).
-    if (!in->consent.load(std::memory_order_relaxed))
-        return;
-
-    if (in->stop_receiving.load(std::memory_order_relaxed))
-        return;
-
-    if (!bypass_login_gate) {
+    std::string event_user_id;
+    {
         std::lock_guard<std::mutex> tk(in->token_mu);
-        if (in->user_token.empty())
-            return;
+        event_user_id = in->user_id;
     }
 
-    // 4. Disabled event name → no-op.
-    std::string event_name = extract_event_name(ext);
+    const std::string event_name = extract_event_name(ext);
     for (const auto& blocked : in->cfg.event_disable_list) {
         if (blocked == event_name)
             return;
     }
-
-    // 5. Rate limit check (O(1) token bucket).
     if (!in->rate_limiter.allow(event_name, in->cfg.default_rate_cap_per_sec, in->cfg.total_unknown_rate_cap_per_sec,
-                                in->cfg.event_rate_cap_per_sec)) {
-        return; // throttled
-    }
+                                in->cfg.event_rate_cap_per_sec))
+        return;
 
-    // 6. Enqueue under queue_mu. Branch by policy:
-    //    - Realtime: rt_queue with Error-protect admission policy.
-    //    - Buffered: bt_queue with FIFO-drop-incoming (no Error privilege).
     std::lock_guard<std::mutex> lk(in->queue_mu);
-
-    if (policy == SnapLogPolicy::Buffered) {
-        // Batch channel: FIFO-drop-incoming when full. Batch is a disk channel
-        // — Error events do NOT get eviction privilege here (unlike realtime).
-        const std::size_t bcap = in->cfg.batch_queue_cap;
-        if (bcap == 0) {
-            // cap-0 → always drop.
+    if (!in->consent.load(std::memory_order_acquire))
+        return;
+    snaplog_allowed = snaplog && !in->batch_locked_out.load(std::memory_order_acquire);
+    if (snaplog_allowed) {
+        const std::size_t cap = in->cfg.batch_queue_cap;
+        if (cap == 0 || in->bt_queue.size() >= cap) {
             in->batch_queue_dropped.fetch_add(1, std::memory_order_relaxed);
-            return;
+        } else {
+            in->bt_queue.push_back(LogEvent{lvl, std::move(msg), std::move(ext), std::move(event_user_id)});
         }
-        if (in->bt_queue.size() >= bcap) {
-            // Queue full → drop incoming event, bump counter.
-            in->batch_queue_dropped.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
-        in->bt_queue.push_back(RtEvent{lvl, std::move(msg), std::move(ext), normalize_logger(caller_func)});
-        return;
-    }
-
-    // Realtime channel (existing admission policy with Error-protect eviction).
-    const std::size_t cap = in->cfg.realtime_queue_cap;
-    if (cap == 0) {
-        in->dropped.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
-    if (in->rt_queue.size() < cap) {
-        // Room available — just push.
-        in->rt_queue.push_back(RtEvent{lvl, std::move(msg), std::move(ext), normalize_logger(caller_func)});
-        return;
-    }
-
-    // Queue is full — consult admission policy.
-    std::deque<SnapLogLevel> levels;
-    for (const auto& e : in->rt_queue)
-        levels.push_back(e.level);
-
-    auto admit = decide_realtime_admit(levels, cap, lvl);
-    switch (admit.decision) {
-    case EvictDecision::EvictOldestNonError:
-    case EvictDecision::EvictOldestError:
-        // Erase the chosen index, push incoming.
-        if (admit.evict_index && *admit.evict_index < in->rt_queue.size()) {
-            in->rt_queue.erase(in->rt_queue.begin() + static_cast<std::ptrdiff_t>(*admit.evict_index));
-        }
-        in->rt_queue.push_back(RtEvent{lvl, std::move(msg), std::move(ext), normalize_logger(caller_func)});
-        break;
-    case EvictDecision::DropIncoming: in->dropped.fetch_add(1, std::memory_order_relaxed); break;
-    case EvictDecision::Admit:
-        // Shouldn't happen (queue was full), but handle safely.
-        in->rt_queue.push_back(RtEvent{lvl, std::move(msg), std::move(ext), normalize_logger(caller_func)});
-        break;
     }
 }
+void SnapLogClient::log_event(SnapLogLevel level, SnapEvent event) { log_event(level, event, SnapLogExt{}, std::string{}); }
 
-void SnapLogClient::set_user_token(std::string t)
+void SnapLogClient::log_event(SnapLogLevel level, SnapEvent event, SnapLogExt ext)
+{ log_event(level, event, std::move(ext), std::string{}); }
+
+void SnapLogClient::log_event(SnapLogLevel level, SnapEvent event, const std::string& msg) { log_event(level, event, SnapLogExt{}, msg); }
+
+void SnapLogClient::log_event(SnapLogLevel level, SnapEvent event, SnapLogExt ext, const std::string& msg)
 {
-    auto in = internals();
-    if (!in)
-        return;
-    if (!t.empty()) {
-        in->auth_known_dead.store(false, std::memory_order_relaxed);
-        in->auth_dead_skip_counted.store(false, std::memory_order_relaxed);
-    }
-    std::lock_guard<std::mutex> lk(in->token_mu);
-    in->user_token = std::move(t);
+    ext.emplace(ext.begin(), "eventName", std::string(snap_event_name(event)));
+    const SnapLogEventRoute route = snap_event_route(event, level);
+    dispatch_event(level, std::move(msg), std::move(ext), route.snaplog);
 }
-
 void SnapLogClient::set_user_id(std::string u)
 {
     auto in = internals();
@@ -1512,24 +1106,6 @@ void SnapLogClient::set_user_id(std::string u)
         return;
     std::lock_guard<std::mutex> lk(in->token_mu);
     in->user_id = std::move(u);
-}
-
-void SnapLogClient::set_device_id(std::string d)
-{
-    auto in = internals();
-    if (!in)
-        return;
-    std::lock_guard<std::mutex> lk(in->token_mu);
-    in->device_id = std::move(d);
-}
-
-void SnapLogClient::set_connect_clientid(std::string v)
-{
-    auto in = internals();
-    if (!in)
-        return;
-    std::lock_guard<std::mutex> lk(in->token_mu);
-    in->connect_clientid = std::move(v);
 }
 
 void SnapLogClient::set_print_sn(std::string v)
@@ -1547,12 +1123,24 @@ void SnapLogClient::set_consent(bool ok)
     auto                        in = internals();
     if (!in)
         return;
-    in->consent.store(ok);
-    // Both transitions clear the queues (symmetric — avoids OFF-period
+    // shutdown() may keep Internals published for a deferred privacy purge;
+    // never restart a worker after stop_receiving has been set.
+    if (in->stop_receiving.load(std::memory_order_acquire))
+        return;
+    const bool previous_consent = in->consent.exchange(ok, std::memory_order_acq_rel);
+    if (previous_consent == ok) {
+        // A repeated consent ON must recover a worker that never started because
+        // the spool lock was held at startup. A pending purge keeps its own
+        // deferred starter, so only retry when no purge is in flight.
+        if (ok && !in->bt_worker.joinable() && !purge_completion_active(m_purge_completion))
+            start_batch_worker_after_purge(in);
+        return;
+    }
+
+    // Actual transitions clear the queues (symmetric — avoids OFF-period
     // backlog flushing on ON; avoids stale events lingering after OFF).
     {
         std::lock_guard<std::mutex> lk(in->queue_mu);
-        in->rt_queue.clear();
         in->bt_queue.clear();
     }
 
@@ -1563,8 +1151,7 @@ void SnapLogClient::set_consent(bool ok)
         in->batch_deps_invalid.store(true, std::memory_order_release);
         in->stop_uploads.store(true, std::memory_order_release);
         in->batch_worker_generation.fetch_add(1, std::memory_order_acq_rel);
-        cancel_current(in, SnapLogPolicy::Realtime);
-        cancel_current(in, SnapLogPolicy::Buffered);
+        cancel_current(in);
 
         std::thread retired_worker;
         if (in->bt_worker.joinable())
@@ -1578,54 +1165,15 @@ void SnapLogClient::set_consent(bool ok)
     }
 }
 
-void SnapLogClient::cancel_current(const std::shared_ptr<Internals>& in, SnapLogPolicy p)
+// --- Test-only accessors ---
+
+void SnapLogClient::cancel_current(const std::shared_ptr<Internals>& in)
 {
     if (!in)
         return;
     std::lock_guard<std::mutex> lk(in->m_h_mu);
-    auto&                       h = (p == SnapLogPolicy::Realtime) ? in->rt_handle : in->bt_handle;
-    if (h)
-        h->cancel();
-}
-
-// --- Test-only accessors ---
-
-std::size_t SnapLogClient::realtime_queue_size_for_test() const
-{
-    std::lock_guard<std::mutex> state_lock(m_state_mu);
-    if (!m_int)
-        return 0;
-    std::lock_guard<std::mutex> lk(m_int->queue_mu);
-    return m_int->rt_queue.size();
-}
-
-uint64_t SnapLogClient::dropped_for_test() const
-{
-    std::lock_guard<std::mutex> state_lock(m_state_mu);
-    if (!m_int)
-        return 0;
-    return m_int->dropped.load(std::memory_order_relaxed);
-}
-
-std::vector<SnapLogLevel> SnapLogClient::realtime_queue_levels_for_test() const
-{
-    std::lock_guard<std::mutex> state_lock(m_state_mu);
-    if (!m_int)
-        return {};
-    std::lock_guard<std::mutex> lk(m_int->queue_mu);
-    std::vector<SnapLogLevel>   out;
-    out.reserve(m_int->rt_queue.size());
-    for (const auto& e : m_int->rt_queue)
-        out.push_back(e.level);
-    return out;
-}
-
-void SnapLogClient::set_nonce_generator_for_test(NonceGenerator ng)
-{
-    std::lock_guard<std::mutex> state_lock(m_state_mu);
-    if (!m_int)
-        return;
-    m_int->nonce_gen_for_test = std::move(ng);
+    if (in->bt_handle)
+        in->bt_handle->cancel();
 }
 
 std::size_t SnapLogClient::batch_queue_size_for_test() const
@@ -1643,6 +1191,12 @@ uint64_t SnapLogClient::batch_queue_dropped_for_test() const
     if (!m_int)
         return 0;
     return m_int->batch_queue_dropped.load(std::memory_order_relaxed);
+}
+
+std::string SnapLogClient::snaplog_base_for_test() const
+{
+    auto in = internals();
+    return in ? in->current_site_base() : std::string{};
 }
 
 bool SnapLogClient::batch_worker_joinable_for_test() const
@@ -1822,7 +1376,7 @@ bool rotate_active(const boost::filesystem::path& spool,
 std::vector<boost::filesystem::path> list_sealed(const boost::filesystem::path& spool)
 {
     namespace fs = boost::filesystem;
-    std::vector<fs::path>     result;
+    std::vector<fs::path> result;
     if (!is_valid_spool_path(spool))
         return result;
 
@@ -1860,91 +1414,74 @@ uintmax_t sealed_total_bytes(const boost::filesystem::path& spool, const boost::
 }
 
 //
-// Three endpoints (create/completed/cancel), two auth variants each. Auth
-// selection mirrors build_realtime_request exactly: token non-empty -> Bearer
-// logged-in path; empty -> HMAC public path. The path suffix differs per
-// endpoint, so we factor a shared helper that takes the suffix and builds
-// URL + headers, then each public function supplies its own JSON body.
+// Three endpoints (create/completed/cancel). Every request uses public HMAC
+// authentication; a missing signing secret, client id, timestamp, or nonce
+// produces no request.
 
 namespace {
 
 // Shared auth+URL builder for all three batch endpoints. Mirrors the structure
-// of build_realtime_request but returns a BatchRequest (with body left empty
+// for batch endpoints and returns a BatchRequest (with body left empty
 // for the caller to fill) and takes the endpoint path suffix.
-BatchRequest build_batch_request_common(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
-                                        const std::string&   clientId,
-                                        const std::string&   token,
-                                        NonceGenerator       nonce_gen,
-                                        const std::string&   path_suffix)
+BatchRequest build_batch_request_common(const SnapLogConfig& cfg, const std::string& clientId, const std::string& path_suffix)
 {
     BatchRequest r;
+    if (cfg.public_hmac_secret.empty() || clientId.empty())
+        return r;
 
-    auto add_common = [&]() {
-        r.headers.emplace_back("X-Client-Type", kSnapLogClientType);
-        r.headers.emplace_back("X-Client-Id", clientId);
-    };
+    const std::optional<std::string> nonce = cfg.next_nonce ? cfg.next_nonce() : default_public_nonce();
+    if (!nonce.has_value() || nonce->empty())
+        return r;
 
-    if (!token.empty()) {
-        // Logged-in path: Bearer + the upload endpoint. The log gateway requires
-        // the "Bearer " prefix per the API spec (bare token -> 110002 "Missing
-        // authorization"); the app's stored token is bare, so prepend it here.
-        r.url = cfg.gateway_base + "/api/log/upload/" + path_suffix;
-        r.headers.emplace_back("Authorization", std::string("Bearer ") + token);
-        add_common();
-    } else {
-        // Public path: HMAC-signed, public endpoint.
-        r.url = cfg.gateway_base + "/api/log/public/upload/" + path_suffix;
-        add_common();
-        int64_t     ts     = deps.now_ms ? deps.now_ms() : 0;
-        std::string ts_str = std::to_string(ts);
-        std::string nonce  = nonce_gen ? nonce_gen() : default_nonce();
-        std::string sign   = hmac_sha256_hex(cfg.hmac_secret, std::string(kSnapLogClientType) + clientId + ts_str + nonce);
-        r.headers.emplace_back("X-Timestamp", ts_str);
-        r.headers.emplace_back("X-Nonce", nonce);
-        r.headers.emplace_back("X-Sign", sign);
-    }
+    const int64_t timestamp = cfg.now_ms ? cfg.now_ms() : default_public_now_ms();
+    const std::string timestamp_str = std::to_string(timestamp);
+    const std::string sign = hmac_sha256_hex(cfg.public_hmac_secret,
+                                              std::string{kSnapLogClientType} + clientId + timestamp_str + *nonce);
+
+    r.url = cfg.snaplog_base + "/api/log/public/upload/" + path_suffix;
+    r.headers.emplace_back("X-Client-Type", kSnapLogClientType);
+    r.headers.emplace_back("X-Client-Id", clientId);
+    r.headers.emplace_back("X-Timestamp", timestamp_str);
+    r.headers.emplace_back("X-Nonce", *nonce);
+    r.headers.emplace_back("X-Sign", sign);
     return r;
 }
 
 } // anonymous namespace
 
-BatchRequest build_batch_create_request(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_create_request(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
-                                        const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   fileName)
 {
-    BatchRequest   r = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "create");
+    BatchRequest r = build_batch_request_common(cfg, clientId, "create");
+    if (r.url.empty())
+        return r;
     nlohmann::json body;
     body["fileName"] = fileName;
     r.body           = body.dump();
     return r;
 }
 
-BatchRequest build_batch_complete_request(const SnapLogDeps&   deps,
-                                          const SnapLogConfig& cfg,
+BatchRequest build_batch_complete_request(const SnapLogConfig& cfg,
                                           const std::string&   clientId,
-                                          const std::string&   token,
-                                          NonceGenerator       nonce_gen,
                                           const std::string&   full_key)
 {
-    BatchRequest   r = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "completed");
+    BatchRequest r = build_batch_request_common(cfg, clientId, "completed");
+    if (r.url.empty())
+        return r;
     nlohmann::json body;
     body["fileName"] = full_key;
     r.body           = body.dump();
     return r;
 }
 
-BatchRequest build_batch_cancel_request(const SnapLogDeps&   deps,
-                                        const SnapLogConfig& cfg,
+BatchRequest build_batch_cancel_request(const SnapLogConfig& cfg,
                                         const std::string&   clientId,
-                                        const std::string&   token,
-                                        NonceGenerator       nonce_gen,
                                         const std::string&   uploadId)
 {
-    BatchRequest   r    = build_batch_request_common(deps, cfg, clientId, token, nonce_gen, "cancel");
+    BatchRequest r = build_batch_request_common(cfg, clientId, "cancel");
+    if (r.url.empty())
+        return r;
     nlohmann::json body = nlohmann::json::object();
     if (!uploadId.empty()) {
         body["uploadId"] = uploadId;
@@ -1955,7 +1492,7 @@ BatchRequest build_batch_cancel_request(const SnapLogDeps&   deps,
 
 //
 // The batch flusher is a single thread that owns all spool file operations
-// (append/rotate/upload). It polls (non-blocking), mirroring rt_worker_loop.
+// (append/rotate/upload). It polls without blocking.
 // Part A implements drain -> active.log, rotate at thresholds, backpressure
 // eviction of oldest sealed, and all exit conditions. Upload is a stub
 // (attempt_upload returns false) — Part B fills create -> PUT -> completed.
@@ -2001,7 +1538,7 @@ static void reset_batch_upload_state(SnapLogClient::Internals& in)
     in.bt_in_flight_sealed.clear();
     in.bt_put_url.clear();
     in.bt_put_key.clear();
-    in.bt_frozen_token.clear();
+    in.bt_site_base.clear();
     in.bt_frozen_client_id.clear();
     in.bt_frozen_batch_id.clear();
     in.bt_upload_attempt = 0;
@@ -2027,18 +1564,18 @@ static void handle_bt_retry_or_fail(std::shared_ptr<SnapLogClient::Internals> in
 // This is a PER-TICK STEP function: it advances the upload by at most one phase
 // per call (issue a request OR consume a completed handle), then returns. The
 // bt_worker_loop calls it every poll tick, so an upload naturally spans ticks:
-//   tick N   : Idle -> freeze token + issue create -> AwaitCreate
+//   tick N   : Idle -> issue signed create -> AwaitCreate
 //   tick N+1 : AwaitCreate -> create done: issue PUT -> AwaitPut
 //   tick N+2 : AwaitPut -> PUT done: issue completed -> AwaitComplete
 //   tick N+3 : AwaitComplete -> completed done: delete sealed -> Idle
 // On failure (non-2xx or body code!=200), it takes the cancel+retry path: fire-
 // and-forget a cancel request, then either re-create (retry, fresh URL, same
-// frozen token) or leave the sealed on disk (at-least-once, retried next
+// the same public credentials) or leave the sealed on disk (at-least-once, retried next
 // session). We never block the loop on a handle.
 //
 // In-flight handle lives in in->bt_handle (guarded by m_h_mu) so
-// cancel_current(Buffered) can abort it during shutdown/consent. The phase +
-// url/key/token/attempt fields (in->bt_upload_*) are written ONLY by this single
+// cancel_current() can abort it during shutdown/consent. The phase +
+// url/key/attempt fields (in->bt_upload_*) are written ONLY by this single
 // thread, so they need no mutex — same ownership as active_path.
 //
 // deps_invalid: when set, we cannot touch Deps (production do_request may touch
@@ -2079,9 +1616,9 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
         return;
     }
 
-    // auth_known_dead: the server rejected auth on a prior create (401/403).
-    // Skip all further create attempts (sealed retained, retried next session
-    // after re-login). Count the skip once per auth-dead period.
+    // auth_known_dead: the server rejected public authentication on a prior
+    // create (401/403). Skip further create attempts for this session and
+    // retain sealed files. Count the skip once per auth-dead period.
     if (in->auth_known_dead.load(std::memory_order_relaxed) && in->bt_upload_phase == Phase::Idle) {
         bool already_counted = false;
         if (!in->auth_dead_skip_counted.compare_exchange_strong(already_counted, true, std::memory_order_relaxed)) {
@@ -2093,8 +1630,8 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
 
     auto issue_request = [&](const std::string& method, const std::string& url, std::vector<std::pair<std::string, std::string>> headers,
                              const fs::path* body_file, const std::string* body_str) -> bool {
-        if (!batch_worker_current(in, generation) || in->stop_uploads.load(std::memory_order_acquire) || batch_deps_unavailable(*in) ||
-            !in->deps.do_request)
+        if (url.empty() || !batch_worker_current(in, generation) || in->stop_uploads.load(std::memory_order_acquire) ||
+            batch_deps_unavailable(*in) || !in->deps.do_request)
             return false;
 
         std::shared_ptr<SnapLogHandle> h;
@@ -2108,7 +1645,7 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
         // racing cancel_current/consent transition cannot miss the handle.
         std::lock_guard<std::mutex> hk(in->m_h_mu);
         if (!batch_worker_current(in, generation) || in->stop_uploads.load(std::memory_order_acquire) || batch_deps_unavailable(*in) ||
-            !in->consent.load(std::memory_order_relaxed)) {
+            !in->consent.load(std::memory_order_acquire)) {
             h->cancel();
             return false;
         }
@@ -2126,13 +1663,6 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
             return;
         fs::path target = sealed.front();
 
-        // Freeze token + clientId ONCE for this sealed's entire upload (create/
-        // PUT-n/a/completed/cancel + all retries reuse the snapshot). Do NOT
-        // switch Bearer<->HMAC mid-batch.
-        {
-            std::lock_guard<std::mutex> tk(in->token_mu);
-            in->bt_frozen_token = in->user_token;
-        }
         std::string client_id = in->machine_id_snapshot;
         if (client_id.empty() && in->deps.machine_id)
             client_id = in->deps.machine_id();
@@ -2167,8 +1697,28 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
         uint64_t    seq       = in->upload_seq.fetch_add(1, std::memory_order_relaxed);
         std::string file_name = make_upload_file_name(in->bt_frozen_client_id, seg_batch, now_ms, seq);
 
-        BatchRequest req = build_batch_create_request(in->deps, in->cfg, in->bt_frozen_client_id, in->bt_frozen_token,
-                                                      in->nonce_gen_for_test, file_name);
+        SnapLogConfig request_cfg = in->cfg;
+        request_cfg.snaplog_base  = in->current_site_base();
+        in->bt_site_base          = request_cfg.snaplog_base;
+        BatchRequest req          = build_batch_create_request(request_cfg, in->bt_frozen_client_id, file_name);
+        if (req.url.empty()) {
+            const bool terminal = in->cfg.public_hmac_secret.empty() || in->bt_frozen_client_id.empty();
+            if (terminal) {
+                // A missing signing secret or client id cannot recover on the
+                // next tick. Returning lets bt_worker_loop observe stop_uploads
+                // and exit once the queue is drained.
+                in->stop_uploads.store(true, std::memory_order_release);
+                BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload disabled: missing signing secret or client id";
+                abandon_upload();
+                return;
+            }
+            // Nonce/timestamp generation is transient; back off and retry on a
+            // later tick instead of permanently disabling uploads.
+            BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload request could not be built; retrying";
+            abandon_upload();
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+            return;
+        }
         if (issue_request("POST", req.url, req.headers, nullptr, &req.body)) {
             in->bt_upload_phase = Phase::AwaitCreate;
         } else {
@@ -2218,7 +1768,7 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
             }
         }
 
-        if (ok && !url.empty()) {
+        if (ok && !url.empty() && url.rfind("https://", 0) == 0) {
             in->bt_put_url = url;
             in->bt_put_key = key;
             // PUT the sealed FILE bytes to the presigned URL (no extra auth
@@ -2230,6 +1780,15 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
                 // Could not issue PUT (consent/stop raced). Fall through to retry path.
                 handle_bt_retry_or_fail(in, generation);
             }
+        } else if (ok && !url.empty()) {
+            // The create response is server-controlled; never send sanitized
+            // logs to a non-HTTPS target. Treat it as terminal for this
+            // session and retain the sealed file; retrying cannot fix it.
+            BOOST_LOG_TRIVIAL(warning) << "SnapLog batch upload refused a non-HTTPS PUT URL";
+            in->stop_uploads.store(true, std::memory_order_release);
+            in->bt_upload_phase = Phase::Idle;
+            in->bt_in_flight_sealed.clear();
+            in->bt_upload_attempt = 0;
         } else if (res.status == 401 || res.status == 403) {
             // Auth dead — terminal. Mark, leave sealed on disk, reset session.
             in->auth_known_dead.store(true);
@@ -2237,8 +1796,8 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
             in->bt_in_flight_sealed.clear();
             in->bt_upload_attempt = 0;
         } else {
-            // Fix C: body code==110004 (token expired/revoked at app level)
-            // is also an auth-dead signal even on non-4xx HTTP status.
+            // Fix C: body code==110004 is also a public-auth failure signal
+            // even on a non-4xx HTTP status.
             bool body_auth_dead = false;
             if (!res.body.empty()) {
                 auto bj = nlohmann::json::parse(res.body, nullptr, false);
@@ -2279,8 +1838,9 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
         bool ok = (res.status >= 200 && res.status < 300);
         if (ok) {
             // completed: POST {fileName: key}. Success = 2xx + code==200 -> delete sealed.
-            BatchRequest req = build_batch_complete_request(in->deps, in->cfg, in->bt_frozen_client_id, in->bt_frozen_token,
-                                                            in->nonce_gen_for_test, in->bt_put_key);
+            SnapLogConfig request_cfg = in->cfg;
+            request_cfg.snaplog_base  = in->bt_site_base;
+            BatchRequest req          = build_batch_complete_request(request_cfg, in->bt_frozen_client_id, in->bt_put_key);
             if (issue_request("POST", req.url, req.headers, nullptr, &req.body)) {
                 in->bt_upload_phase = Phase::AwaitComplete;
             } else {
@@ -2334,7 +1894,7 @@ static void attempt_upload(std::shared_ptr<SnapLogClient::Internals> in, uint64_
 
 // Retry/cancel path: fire-and-forget a best-effort cancel (we don't wait for it
 // — the handle self-cleans via its promise/shared_ptr), then either re-create
-// with a fresh presigned URL (same frozen token) or, if retries are exhausted,
+// with a fresh presigned URL (same public credentials) or, if retries are exhausted,
 // leave the sealed on disk (at-least-once; retried next session).
 static void handle_bt_retry_or_fail(std::shared_ptr<SnapLogClient::Internals> in, uint64_t generation)
 {
@@ -2348,11 +1908,14 @@ static void handle_bt_retry_or_fail(std::shared_ptr<SnapLogClient::Internals> in
     // Best-effort cancel (single-part: empty uploadId). Fire-and-forget — ignore
     // its result; the handle cleans itself up.
     if (in->deps.do_request) {
-        BatchRequest creq = build_batch_cancel_request(in->deps, in->cfg, in->bt_frozen_client_id, in->bt_frozen_token,
-                                                       in->nonce_gen_for_test, /*uploadId*/ "");
-        in->batch_requests_in_progress.fetch_add(1, std::memory_order_acq_rel);
-        (void) in->deps.do_request("POST", creq.url, creq.headers, nullptr, &creq.body);
-        in->batch_requests_in_progress.fetch_sub(1, std::memory_order_acq_rel);
+        SnapLogConfig request_cfg = in->cfg;
+        request_cfg.snaplog_base  = in->bt_site_base;
+        BatchRequest creq         = build_batch_cancel_request(request_cfg, in->bt_frozen_client_id, /*uploadId*/ "");
+        if (!creq.url.empty()) {
+            in->batch_requests_in_progress.fetch_add(1, std::memory_order_acq_rel);
+            (void) in->deps.do_request("POST", creq.url, creq.headers, nullptr, &creq.body);
+            in->batch_requests_in_progress.fetch_sub(1, std::memory_order_acq_rel);
+        }
     }
 
     if (!batch_worker_current(in, generation))
@@ -2369,12 +1932,14 @@ static void handle_bt_retry_or_fail(std::shared_ptr<SnapLogClient::Internals> in
         int64_t now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         uint64_t     seq       = in->upload_seq.fetch_add(1, std::memory_order_relaxed);
         std::string  file_name = make_upload_file_name(in->bt_frozen_client_id, in->bt_frozen_batch_id, now_ms, seq);
-        BatchRequest req       = build_batch_create_request(in->deps, in->cfg, in->bt_frozen_client_id, in->bt_frozen_token,
-                                                            in->nonce_gen_for_test, file_name);
+        SnapLogConfig request_cfg = in->cfg;
+        request_cfg.snaplog_base  = in->bt_site_base.empty() ? in->current_site_base() : in->bt_site_base;
+        in->bt_site_base          = request_cfg.snaplog_base;
+        BatchRequest req          = build_batch_create_request(request_cfg, in->bt_frozen_client_id, file_name);
 
         bool issued = false;
-        if (batch_worker_current(in, generation) && !in->stop_uploads.load(std::memory_order_acquire) && !batch_deps_unavailable(*in) &&
-            in->consent.load(std::memory_order_relaxed) && in->deps.do_request) {
+        if (!req.url.empty() && batch_worker_current(in, generation) && !in->stop_uploads.load(std::memory_order_acquire) &&
+            !batch_deps_unavailable(*in) && in->consent.load(std::memory_order_acquire) && in->deps.do_request) {
             std::shared_ptr<SnapLogHandle> h;
             in->batch_requests_in_progress.fetch_add(1, std::memory_order_acq_rel);
             h = in->deps.do_request("POST", req.url, req.headers, nullptr, &req.body);
@@ -2382,7 +1947,7 @@ static void handle_bt_retry_or_fail(std::shared_ptr<SnapLogClient::Internals> in
             if (h) {
                 std::lock_guard<std::mutex> hk(in->m_h_mu);
                 if (batch_worker_current(in, generation) && !in->stop_uploads.load(std::memory_order_acquire) &&
-                    !batch_deps_unavailable(*in) && in->consent.load(std::memory_order_relaxed)) {
+                    !batch_deps_unavailable(*in) && in->consent.load(std::memory_order_acquire)) {
                     in->bt_handle = std::move(h);
                     issued        = true;
                 } else {
@@ -2451,10 +2016,9 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
 
         // 1. Exit conditions (lock-free atomics).
         //    consent-false -> exit (B6 will purge spool + restart on ON).
-        if (!in->consent.load(std::memory_order_relaxed))
+        if (!in->consent.load(std::memory_order_acquire))
             return;
-        //    NOTE: deps_invalid does NOT exit the batch flusher (unlike the
-        //    realtime worker). Per spec §4.6, the batch flusher instead keeps
+        //    NOTE: deps_invalid does NOT exit the batch flusher. The batch flusher keeps
         //    draining the queue to active.log using cached_context (no Deps
         //    calls) and skips uploads (attempt_upload is a no-op under
         //    deps_invalid). This lets a detached flusher after a shutdown-timeout
@@ -2476,7 +2040,7 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
                 return;
         }
         //    stop_receiving && !drain_and_flush && queue empty -> exit.
-        if (in->stop_receiving.load(std::memory_order_relaxed) && !in->drain_and_flush.load(std::memory_order_relaxed)) {
+        if (in->stop_receiving.load(std::memory_order_acquire) && !in->drain_and_flush.load(std::memory_order_acquire)) {
             std::size_t qsize;
             {
                 std::lock_guard<std::mutex> qk(in->queue_mu);
@@ -2485,8 +2049,25 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
             if (qsize == 0)
                 return;
         }
+        //    stop_uploads && queue empty && no in-flight -> exit. A terminal
+        //    request-build failure sets stop_uploads; without this the worker
+        //    would spin every poll interval.
+        if (in->stop_uploads.load(std::memory_order_acquire)) {
+            std::size_t qsize;
+            {
+                std::lock_guard<std::mutex> qk(in->queue_mu);
+                qsize = in->bt_queue.size();
+            }
+            bool no_inflight = true;
+            {
+                std::lock_guard<std::mutex> hk(in->m_h_mu);
+                no_inflight = (in->bt_handle == nullptr);
+            }
+            if (qsize == 0 && no_inflight)
+                return;
+        }
         //    drain_and_flush && queue empty && no in-flight && (no sealed || auth_dead) -> exit.
-        if (in->drain_and_flush.load(std::memory_order_relaxed)) {
+        if (in->drain_and_flush.load(std::memory_order_acquire)) {
             std::size_t qsize;
             {
                 std::lock_guard<std::mutex> qk(in->queue_mu);
@@ -2516,7 +2097,7 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
             if (!batch_worker_current(in, generation))
                 return;
             // Pop one event under queue_mu.
-            std::optional<RtEvent> ev_opt;
+            std::optional<LogEvent> ev_opt;
             {
                 std::lock_guard<std::mutex> qk(in->queue_mu);
                 if (!in->bt_queue.empty()) {
@@ -2526,7 +2107,7 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
             }
             if (!ev_opt.has_value())
                 break; // queue drained
-            const RtEvent& ev = *ev_opt;
+            const LogEvent& ev = *ev_opt;
 
             // Build the per-event context. If deps are valid, (re)build the
             // cached context from Deps/Internals and cache it. If deps_invalid
@@ -2542,12 +2123,9 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
                 }
                 {
                     std::lock_guard<std::mutex> tk(in->token_mu);
-                    c.nodeId           = in->user_id;
                     c.userId           = in->user_id;
-                    c.deviceId         = in->device_id;
-                    c.connect_clientid = in->connect_clientid;
                     c.print_sn         = in->print_sn;
-                    // Publish batch id for rt_worker (current_batch_id is
+                    // Publish batch id for log() rendering (current_batch_id is
                     // bt_worker-owned; this snapshot is the cross-thread copy).
                     in->current_batch_id_snapshot = in->current_batch_id;
                 }
@@ -2555,14 +2133,11 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
                 c.clientType             = kSnapLogClientType;
                 c.processId              = in->cfg.process_id;
                 c.appVersion             = in->cfg.app_version;
-                c.appBuild               = in->cfg.app_build;
-                c.platform               = in->cfg.platform;
+                c.profileVersion         = in->cfg.profile_version;
+                c.controlVersion         = in->cfg.control_version;
                 c.osVersion              = in->cfg.os_version;
-                c.sessionId              = in->cfg.session_id;
-                c.region                 = in->cfg.region;
                 c.batchId                = in->current_batch_id;
                 c.home_for_redact        = in->cfg.home_for_redact;
-                c.thread                 = "bt-worker";
                 in->cached_context_valid = true;
             }
             if (in->cached_context_valid) {
@@ -2570,13 +2145,13 @@ void SnapLogClient::bt_worker_loop(std::shared_ptr<Internals> in, uint64_t gener
                 // Per-event fields.
                 ctx.ts_ms   = in->deps.now_ms ? in->deps.now_ms() : 0;
                 ctx.batchId = in->current_batch_id;
-                ctx.logger  = ev.logger;
-                // Extract opId + eventName from the ext payload.
+                ctx.userId  = ev.user_id;
+                // Extract eventName from the event payload.
                 for (const auto& kv : ev.ext) {
-                    if (kv.first == "opId")
-                        ctx.opId = kv.second;
-                    else if (kv.first == "eventName")
+                    if (kv.first == "eventName") {
                         ctx.eventName = kv.second;
+                        break;
+                    }
                 }
                 have_ctx = true;
             } else {
@@ -2680,7 +2255,7 @@ make_production_do_request(SnapLogConfig cfg)
         for (const auto& kv : headers) {
             http.header(kv.first, kv.second);
         }
-        // Ensure Content-Type for POST with a string body (realtime JSON events).
+        // Ensure Content-Type for POST with a string JSON body.
         if (method != "PUT" && body_str && !body_str->empty()) {
             bool has_ct = false;
             for (const auto& kv : headers) {
@@ -2709,11 +2284,12 @@ make_production_do_request(SnapLogConfig cfg)
         h->prom   = std::make_shared<std::promise<SnapLogResult>>();
         auto prom = h->prom;
         // weak_ptr breaks the Handle -> Http -> callback -> Handle cycle. The
- // io_thread inside Http::perform() keeps the Http object alive, so the
- // callbacks can safely observe an expired handle after the worker resets it.
+        // io_thread inside Http::perform() keeps the Http object alive, so the
+        // callbacks can safely observe an expired handle after the worker resets it.
         auto hweak = std::weak_ptr<SnapLogHandle>(h);
         http.on_complete([prom, hweak](std::string body, unsigned http_status) {
             if (auto hcap = hweak.lock()) {
+                hcap->completion_status.store(static_cast<int>(http_status), std::memory_order_release);
                 if (!hcap->fulfilled.exchange(true)) {
                     prom->set_value({static_cast<int>(http_status), std::move(body), false});
                 }
@@ -2721,6 +2297,7 @@ make_production_do_request(SnapLogConfig cfg)
         });
         http.on_error([prom, hweak](std::string body, std::string /*err*/, unsigned http_status) {
             if (auto hcap = hweak.lock()) {
+                hcap->completion_status.store(static_cast<int>(http_status), std::memory_order_release);
                 if (!hcap->fulfilled.exchange(true)) {
                     prom->set_value({static_cast<int>(http_status), std::move(body), false});
                 }

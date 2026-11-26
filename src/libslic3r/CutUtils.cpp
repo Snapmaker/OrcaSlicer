@@ -300,16 +300,14 @@ void Cut::finalize(const ModelObjectPtrs& objects, const std::vector<std::pair<s
     // the source volume index; -1 marks newly generated geometry - cut faces,
     // connectors - which has no painting source). The output meshes live in the
     // space of (instance_matrix * volume_matrix) applied to the source mesh
-    // (the cut matrices cancel), but add_volume() re-centered them, so the
-    // relative transform is the inverse of the composite matrix composed with
-    // the volume's own init shift.
+    // (the cut matrices cancel), and add_volume() re-centered them; the helper
+    // composes the inverse composite with the centering compensation.
     for (const auto& [volume, source_index] : output_sources) {
         if (source_index < 0 || source_index >= int(saved_paintings.size()))
             continue;
         const auto& [saved_painting, inverse_composite] = saved_paintings[source_index];
         if (saved_painting)
-            volume->restore_painting(saved_painting,
-                                     inverse_composite * Geometry::translation_transform(volume->mesh().get_init_shift()), true);
+            volume->restore_painting_on_centered_result(saved_painting, inverse_composite, true);
     }
 
     //clear model from temporary objects
@@ -521,6 +519,22 @@ static void merge_solid_parts_inside_object(ModelObjectPtrs& objects, bool carry
     }
 }
 
+
+Model Cut::prepare_for_contour_cut(const ModelObject& object, const int instance_idx, const Transform3d& cut_matrix)
+{
+    Cut cut(&object, instance_idx, cut_matrix,
+            ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::KeepLower | ModelObjectCutAttribute::KeepAsParts |
+            ModelObjectCutAttribute::KeepPaint);
+    Model model;
+    model.add_object(*cut.perform_with_plane().front());
+    ModelObject* parts = model.objects.front();
+    // Split into connected components; the split remaps each part's own
+    // painting onto its pieces (nothing is remapped for unpainted volumes).
+    for (int id = int(parts->volumes.size()) - 1; id >= 0; --id)
+        if (parts->volumes[id]->is_splittable())
+            parts->volumes[id]->split(1, true);
+    return model;
+}
 
 const ModelObjectPtrs& Cut::perform_by_contour(const ModelObject* src_object, std::vector<Part> parts, int dowels_count)
 {

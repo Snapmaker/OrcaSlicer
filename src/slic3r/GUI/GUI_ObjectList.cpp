@@ -3257,7 +3257,9 @@ void ObjectList::boolean()
                 // that placement back into the volume's own coordinate space.
                 for (const ModelInstance* i : object->instances) {
                     const Transform3d target_to_source = (i->get_matrix() * volume_matrix).inverse();
-                    new_volume->restore_painting(saved_painting, target_to_source, true);
+                    // The result volume was created through add_volume(), which
+                    // re-centered the stored mesh: compensate the centering.
+                    new_volume->restore_painting_on_centered_result(saved_painting, target_to_source, true);
                 }
             }
         }

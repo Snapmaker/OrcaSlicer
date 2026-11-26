@@ -933,6 +933,23 @@ public:
     void restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, const Transform3d& target_to_source,
                           bool keep_existing_paint = false, bool transfer_by_projection = false);
 
+    // Restore painting onto a mesh that was just produced by add_volume()
+    // (boolean result, split piece, cut part): add_volume() re-centers the
+    // stored mesh, so the relative transform first un-does that centering
+    // (mesh().get_init_shift() holds the centering translation) and then maps
+    // the result coordinates back into the snapshot's space through
+    // `inverse_composite`, the inverse of the source-to-result placement.
+    // Precondition: the mesh handed to add_volume() was freshly built, i.e.
+    // had a zero init_shift. That holds for split pieces (TriangleMesh::split()
+    // constructs new meshes), boolean results and cut outputs; a mesh COPIED
+    // from an already centered volume keeps that volume's init_shift and must
+    // not go through this helper. center_geometry_after_creation() overwrites
+    // init_shift with the shift it applies and leaves an approximately zero
+    // shift untouched (it then stays zero), so init_shift is exactly the
+    // centering this call has to compensate.
+    void restore_painting_on_centered_result(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                             const Transform3d& inverse_composite, bool keep_existing_paint = false);
+
     // Restore painting across one global-smooth subdivision (see
     // TriangleSelector::remap_painting_smooth). `target_origins` maps every face
     // of this volume's mesh to (source face, child ordinal) as produced by

@@ -2189,6 +2189,15 @@ void ModelVolume::restore_painting(const std::optional<TriangleSelector::SavedPa
     remap_one(saved->fuzzy,     fuzzy_skin_facets);
 }
 
+void ModelVolume::restore_painting_on_centered_result(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                                      const Transform3d& inverse_composite, const bool keep_existing_paint)
+{
+    // add_volume() / center_geometry_after_creation() moved the stored mesh by
+    // -init_shift and left init_shift as the centering translation: un-do that
+    // first, then map the result coordinates into the snapshot's space.
+    restore_painting(saved, inverse_composite * Geometry::translation_transform(mesh().get_init_shift()), keep_existing_paint);
+}
+
 void ModelVolume::restore_painting_smooth(const std::optional<TriangleSelector::SavedPainting>& saved,
                                           const std::vector<std::pair<int, int>>& target_origins)
 {
@@ -2451,8 +2460,10 @@ void ModelObject::split(ModelObjectPtrs* new_objects, const bool remap_paint)
                 COPY_FACETS(mmu_segmentation_facets);
                 COPY_FACETS(fuzzy_skin_facets);
             } else if (saved_painting) {
-                // The pieces stay in the volume's own stored coordinate space,
-                new_vol->restore_painting(saved_painting, Transform3d::Identity());
+                // add_volume(*volume, mesh) re-centered the piece, so the piece's
+                // stored coordinates differ from the snapshot's by the piece
+                // centering (init_shift); the helper compensates it.
+                new_vol->restore_painting_on_centered_result(saved_painting, Transform3d::Identity());
             }
 
             // BBS: clear volume's config, as we already set them into object
@@ -3234,7 +3245,7 @@ size_t ModelVolume::split(unsigned int max_extruders, bool remap_paint)
         this->object->volumes[ivolume]->config.set("extruder", this->extruder_id());
         //this->object->volumes[ivolume]->config.set("extruder", auto_extruder_id(max_extruders, extruder_counter));
         this->object->volumes[ivolume]->m_is_splittable = 0;
-        this->object->volumes[ivolume]->restore_painting(saved_painting, Transform3d::Identity());
+        this->object->volumes[ivolume]->restore_painting_on_centered_result(saved_painting, Transform3d::Identity());
 
         ++ idx;
     }

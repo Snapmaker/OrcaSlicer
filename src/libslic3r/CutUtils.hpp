@@ -59,6 +59,16 @@ public:
     const ModelObjectPtrs& perform_with_plane();
     const ModelObjectPtrs& perform_by_contour(const ModelObject* src_object, std::vector<Part> parts, int dowels_count);
 
+    // Preprocessing the cut gizmo runs before a by-contour cut: a plane pre-cut
+    // into the upper/lower parts (kept as whole volumes), then a split of every
+    // splittable part into its connected components. Each source volume's
+    // painting is carried through both steps ALWAYS, independently of the
+    // keep_painting preference: the selection built on this model lives until
+    // the user performs the cut and the preference may change in between. The
+    // final cut alone decides, through its KeepPaint attribute, whether the
+    // painting is written back or dropped.
+    static Model prepare_for_contour_cut(const ModelObject& object, int instance_idx, const Transform3d& cut_matrix);
+
     /// Cut the object with a single dovetail groove (legacy signature).
     /// \param groove Dovetail groove dimensions and angles.
     /// \param rotation_m Rotation from world to the groove coordinate system.

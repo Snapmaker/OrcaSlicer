@@ -8,9 +8,12 @@
 
 #include <array>
 #include <chrono>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "libslic3r/CutUtils.hpp"
 #include "libslic3r/Geometry.hpp"
@@ -40,6 +43,73 @@ std::pair<float, Vec3f> painted_area_and_centroid(const indexed_triangle_set& it
     if (area_sum > 0.f)
         centroid /= area_sum;
     return { area_sum, centroid };
+}
+
+// Area-weighted centroid of a facet tiling after an affine transform, summed
+// triangle by triangle. A triangle with unit normal n scales by
+// |det(A)| * ||A^-T n||, which depends on n - so the expectation is computed
+// from the transformed triangles and never from |det(A)| alone.
+std::pair<float, Vec3f> transformed_area_and_centroid(const indexed_triangle_set& its, const Transform3d& trafo)
+{
+    double   area_sum = 0.;
+    Vec3d    centroid = Vec3d::Zero();
+    for (const auto& face : its.indices) {
+        const Vec3d a = trafo * its.vertices[face(0)].cast<double>();
+        const Vec3d b = trafo * its.vertices[face(1)].cast<double>();
+        const Vec3d c = trafo * its.vertices[face(2)].cast<double>();
+        const double area = 0.5 * ((b - a).cross(c - a)).norm();
+        area_sum += area;
+        centroid += area * (a + b + c) / 3.0;
+    }
+    if (area_sum > 0.)
+        centroid /= area_sum;
+    return { float(area_sum), centroid.cast<float>() };
+}
+
+// Area-weighted centroid of the part of a facet tiling on one side of the
+// plane z = z_plane (keep_above selects z >= z_plane). Every facet is clipped
+// exactly and the remainder is fanned from its first vertex.
+std::pair<float, Vec3f> clipped_area_and_centroid(const indexed_triangle_set& its, float z_plane, bool keep_above)
+{
+    float area_sum = 0.f;
+    Vec3f centroid = Vec3f::Zero();
+    for (const auto& face : its.indices) {
+        const std::array<Vec3f, 3> tri = { its.vertices[face(0)], its.vertices[face(1)], its.vertices[face(2)] };
+        std::vector<Vec3f> poly;
+        for (int i = 0; i < 3; ++i) {
+            const Vec3f& a    = tri[i];
+            const Vec3f& b    = tri[(i + 1) % 3];
+            const float  da   = keep_above ? a.z() - z_plane : z_plane - a.z();
+            const float  db   = keep_above ? b.z() - z_plane : z_plane - b.z();
+            const bool   a_in = da >= 0.f;
+            const bool   b_in = db >= 0.f;
+            if (a_in)
+                poly.push_back(a);
+            if (a_in != b_in)
+                poly.push_back(a + (da / (da - db)) * (b - a));
+        }
+        for (size_t i = 1; i + 1 < poly.size(); ++i) {
+            const float area = 0.5f * (poly[i] - poly[0]).cross(poly[i + 1] - poly[0]).norm();
+            area_sum += area;
+            centroid += area * (poly[0] + poly[i] + poly[i + 1]) / 3.f;
+        }
+    }
+    if (area_sum > 0.f)
+        centroid /= area_sum;
+    return { area_sum, centroid };
+}
+
+// True when every facet of the tiling is parallel to `normal` (either
+// orientation): the painting stayed on its original face and did not spread
+// onto faces meeting it at an angle.
+bool facets_parallel_to(const indexed_triangle_set& its, const Vec3f& normal)
+{
+    for (const auto& face : its.indices) {
+        const Vec3f n = (its.vertices[face(1)] - its.vertices[face(0)]).cross(its.vertices[face(2)] - its.vertices[face(0)]);
+        if (n.squaredNorm() <= 0.f || std::abs(n.normalized().dot(normal)) < 0.99f)
+            return false;
+    }
+    return true;
 }
 
 // Paint a circular brush stroke at `center` (world coordinates of the mesh,
@@ -975,6 +1045,761 @@ TEST_CASE("Paint commit: a cancel request racing the commit reports committed", 
         CHECK(centroid.z() > 0.f);
     }
 }
+
+// Review report (2026-11-25) item 1: both split entry points re-center the
+// pieces through add_volume() / center_geometry_after_creation(), so the piece
+// STORED vertices are shifted by the piece center while the snapshot is still
+// in the original stored coordinate system. Restoring with the identity
+// transform then lost the painting whenever a piece center is non-zero.
+TEST_CASE("Paint remap: split to parts and objects keeps the painting across piece centering", "[TriangleSelector][PaintRemap][Model]")
+{
+    const EnforcerBlockerType state = EnforcerBlockerType::Extruder3;
+
+    // One volume containing two disconnected 12 mm cubes, X ranges [0,12] and
+    // [30,42]; only the first cube's top face is painted. The whole volume is
+    // auto-centered at creation (center (21,6,6)), so the stored coordinates of
+    // cube A span x [-21,-9], y [-6,6], z [-6,6] and its painted top sits at
+    // stored z = 6.
+    auto make_volume = [&](Model& model) {
+        ModelObject* obj = model.add_object();
+        TriangleMesh both(box_mesh(0.f, 12.f, 12.f, 12.f));
+        both.merge(TriangleMesh(box_mesh(30.f, 42.f, 12.f, 12.f)));
+        ModelVolume* volume = obj->add_volume(std::move(both));
+        obj->add_instance();
+        TriangleSelector selector(volume->mesh());
+        selector.set_facet(2, state);
+        selector.set_facet(3, state);
+        volume->mmu_segmentation_facets.set(selector);
+        return volume;
+    };
+    const auto painted_of = [state](const ModelVolume* volume) {
+        return painted_area_and_centroid(volume->mmu_segmentation_facets.get_facets(*volume, state));
+    };
+
+    // ModelVolume::split(): the parts stay in the same object.
+    {
+        Model model;
+        ModelVolume* volume = make_volume(model);
+        ModelObject* obj = volume->get_object();
+        // World position of the painted top before the split, for the
+        // scene-consistency check below.
+        const auto [orig_area, orig_centroid] = painted_of(volume);
+        const Vec3d original_world_top = volume->get_matrix() * orig_centroid.cast<double>();
+
+        REQUIRE(volume->split(4, true) == 2);
+        REQUIRE(obj->volumes.size() == 2);
+
+        float  total_area = 0.f;
+        int    painted_parts = 0;
+        Vec3f  painted_stored_centroid = Vec3f::Zero();
+        for (ModelVolume* part : obj->volumes) {
+            const auto [area, centroid] = painted_of(part);
+            INFO("part area " << area << ", centroid " << centroid.transpose());
+            if (area > 1.f) {
+                ++painted_parts;
+                painted_stored_centroid = centroid;
+            }
+            total_area += area;
+        }
+        // Exactly one part carries the painting, with the full 12x12 top face.
+        CHECK(painted_parts == 1);
+        CHECK_THAT(total_area, WithinAbs(144.f, 1.f));
+        // The painted part is cube A: its stored centroid after the piece
+        // centering is (0,0,6) - the top face centered on x/y.
+        CHECK_THAT(painted_stored_centroid.x(), WithinAbs(0.f, 0.1f));
+        CHECK_THAT(painted_stored_centroid.y(), WithinAbs(0.f, 0.1f));
+        CHECK_THAT(painted_stored_centroid.z(), WithinAbs(6.f, 0.1f));
+        // The split must not move the geometry in the scene: the world position
+        // of the painted top (instance * volume * stored) stays where it was.
+        for (ModelVolume* part : obj->volumes) {
+            const auto [area, centroid] = painted_of(part);
+            if (area > 1.f) {
+                const Vec3d world = obj->instances.front()->get_matrix() * part->get_matrix() * centroid.cast<double>();
+                INFO("world painted centroid " << world.transpose());
+                CHECK_THAT((world - original_world_top).norm(), WithinAbs(0., 0.2));
+            }
+        }
+    }
+
+    // ModelObject::split(): each part becomes its own object. The object-level
+    // split absorbs the piece offset into the instances, so the scene position
+    // must be computed as instance * volume * stored.
+    {
+        Model model;
+        ModelVolume* volume = make_volume(model);
+        ModelObject* obj = volume->get_object();
+        const auto [orig_area, orig_centroid] = painted_of(volume);
+        const Vec3d original_world_top = volume->get_matrix() * orig_centroid.cast<double>();
+
+        ModelObjectPtrs out;
+        obj->split(&out, true);
+        REQUIRE(out.size() == 2);
+
+        float total_area = 0.f;
+        int   painted_objects = 0;
+        for (ModelObject* o : out) {
+            for (ModelVolume* part : o->volumes) {
+                const auto [area, centroid] = painted_of(part);
+                if (area > 1.f) {
+                    ++painted_objects;
+                    // Same stored position as the volume-level split.
+                    CHECK_THAT(centroid.z(), WithinAbs(6.f, 0.1f));
+                    const Vec3d world = o->instances.front()->get_matrix() * part->get_matrix() * centroid.cast<double>();
+                    INFO("object-split world painted centroid " << world.transpose());
+                    CHECK_THAT((world - original_world_top).norm(), WithinAbs(0., 0.2));
+                }
+                total_area += area;
+            }
+        }
+        CHECK(painted_objects == 1);
+        CHECK_THAT(total_area, WithinAbs(144.f, 1.f));
+    }
+
+    // A rotated + offset volume: the remap happens in stored coordinates, so
+    // the painting must survive unchanged and follow the piece geometry. The
+    // piece-relative invariant is the stored centroid (0,0,6) - the volume's
+    // own placement (rotation/offset) never enters the remap.
+    {
+        Model model;
+        ModelVolume* volume = make_volume(model);
+        volume->set_rotation(Vec3d(0., 0., PI / 2.));
+        volume->set_offset(Vec3d(30., 40., 0.));
+
+        REQUIRE(volume->split(4, true) == 2);
+        float total_area = 0.f;
+        int   painted_parts = 0;
+        for (ModelVolume* part : volume->get_object()->volumes) {
+            const auto [area, centroid] = painted_of(part);
+            if (area > 1.f) {
+                ++painted_parts;
+                INFO("rotated part stored painted centroid " << centroid.transpose());
+                CHECK_THAT(centroid.x(), WithinAbs(0.f, 0.1f));
+                CHECK_THAT(centroid.y(), WithinAbs(0.f, 0.1f));
+                CHECK_THAT(centroid.z(), WithinAbs(6.f, 0.1f));
+            }
+            total_area += area;
+        }
+        CHECK(painted_parts == 1);
+        CHECK_THAT(total_area, WithinAbs(144.f, 1.f));
+    }
+}
+
+// Review report (2026-11-25) item 2: both boolean entries create the result
+// through add_volume(), which re-centers the stored mesh, but the restore only
+// applied the inverse of the source-to-result placement - the result's
+// centering shift was not compensated. The expected chain is
+// inverse_composite * Translation(init_shift). The GUI entries and this test
+// share the same production helper.
+TEST_CASE("Paint remap: boolean result centering compensation keeps a local stroke", "[TriangleSelector][PaintRemap][Model]")
+{
+    const EnforcerBlockerType state = EnforcerBlockerType::Extruder3;
+    const indexed_triangle_set source_its = box_mesh(0.f, 12.f, 12.f, 12.f);
+
+    // Asymmetric local stroke on the top face (z = 12), far from the face center.
+    TriangleSelector source_selector{ TriangleMesh(source_its) };
+    auto stroke = TriangleSelector::SinglePointCursor::cursor_factory(
+        Vec3f(9.f, 3.f, 12.f), Vec3f(9.f, 3.f, 22.f), 1.5f, TriangleSelector::CursorType::CIRCLE,
+        Transform3d::Identity(), TriangleSelector::ClippingPlane());
+    source_selector.select_patch(2, std::move(stroke), state, Transform3d::Identity(), true);
+    const auto painting = source_selector.serialize();
+    REQUIRE(TriangleSelector::has_facets(painting, state));
+    const auto [baseline_area, baseline_centroid] = painted_area_and_centroid(source_selector.get_facets(state));
+    REQUIRE(baseline_area > 5.f);
+
+    const std::vector<Transform3d> placements = {
+        translation_transform(Vec3d(100., 100., 6.)),                                               // translation
+        translation_transform(Vec3d(100., 100., 6.)) * rotation_transform(PI / 2. * Vec3d::UnitZ()), // rotation + translation
+        translation_transform(Vec3d(100., 100., 6.)) * scale_transform(Vec3d(2., 1., 1.)),           // non-uniform scale, in the face plane
+        translation_transform(Vec3d(100., 100., 6.)) * scale_transform(Vec3d(1., 1., 2.)),           // non-uniform scale, along the face normal
+        translation_transform(Vec3d(100., 100., 6.)) * rotation_transform(PI / 4. * Vec3d::UnitX()) *
+            scale_transform(Vec3d(2., 1., 1.)),                                                      // tilted stroke + non-uniform scale
+        translation_transform(Vec3d(100., 100., 6.)) * scale_transform(Vec3d(-1., 1., 1.)),          // mirror
+    };
+    for (size_t pi = 0; pi < placements.size(); ++pi) {
+        const Transform3d& placement = placements[pi];
+        INFO("placement " << pi);
+
+        Model model;
+        ModelObject* obj = model.add_object();
+        ModelVolume* src = obj->add_volume(TriangleMesh(source_its), /*modify_to_center_geometry=*/false);
+        obj->add_instance();
+        src->mmu_segmentation_facets.set(source_selector);
+        auto saved = src->save_painting();
+        REQUIRE(saved.has_value());
+
+        // The boolean result mesh, placed like the boolean engine outputs it.
+        TriangleMesh result(source_its);
+        result.transform(placement, true);
+        ModelVolume* dst = obj->add_volume(std::move(result)); // re-centers the stored mesh
+
+        // Production restore: the shared helper used by both GUI boolean entries.
+        dst->restore_painting_on_centered_result(saved, placement.inverse(), true);
+
+        const auto [area, centroid] = painted_area_and_centroid(dst->mmu_segmentation_facets.get_facets(*dst, state));
+        INFO("remapped area " << area << ", centroid " << centroid.transpose()
+                              << ", init_shift " << dst->mesh().get_init_shift().transpose());
+        // Expected: the source painting's own facet tiling mapped through the
+        // placement, triangle by triangle. A triangle's area scales by
+        // |det(A)| * ||A^-T n|| with n its unit normal, so the expectation is
+        // computed from the transformed triangles and NOT from |det(A)| alone
+        // (for the scale along the face normal |det| = 2 while the top face's
+        // area is unchanged). The result volume was re-centered by add_volume().
+        const auto [expected_area, placed_centroid] = transformed_area_and_centroid(source_selector.get_facets(state), placement);
+        const Vec3d expected_stored = placed_centroid.cast<double>() - dst->mesh().get_init_shift();
+        CHECK_THAT(area, WithinAbs(expected_area, expected_area * 0.1f));
+        CHECK_THAT(centroid.x(), WithinAbs(float(expected_stored.x()), 0.5));
+        CHECK_THAT(centroid.y(), WithinAbs(float(expected_stored.y()), 0.5));
+        CHECK_THAT(centroid.z(), WithinAbs(float(expected_stored.z()), 0.5));
+        // A blank point of the top face (far from the stroke) stays blank.
+        const Vec3d blank_stored = (placement * Vec3d(3., 9., 12.)) - dst->mesh().get_init_shift();
+        for (const Vec3f& v : dst->mmu_segmentation_facets.get_facets(*dst, state).vertices)
+            CHECK(((Vec3d(v.cast<double>()) - blank_stored).norm()) > 1.f);
+    }
+
+    // Multiple instances: the same painting restored once per instance
+    // placement must produce one stroke per placement.
+    {
+        Model model;
+        ModelObject* obj = model.add_object();
+        ModelVolume* src = obj->add_volume(TriangleMesh(source_its), /*modify_to_center_geometry=*/false);
+        obj->add_instance();
+        src->mmu_segmentation_facets.set(source_selector);
+        auto saved = src->save_painting();
+        REQUIRE(saved.has_value());
+
+        const Transform3d place1 = translation_transform(Vec3d(100., 100., 6.));
+        const Transform3d place2 = translation_transform(Vec3d(140., 100., 6.));
+        TriangleMesh result(source_its);
+        result.transform(place1, true);
+        TriangleMesh second(source_its);
+        second.transform(place2, true);
+        result.merge(second);
+        ModelVolume* dst = obj->add_volume(std::move(result));
+
+        dst->restore_painting_on_centered_result(saved, place1.inverse(), true);
+        dst->restore_painting_on_centered_result(saved, place2.inverse(), true);
+
+        const auto [area, centroid] = painted_area_and_centroid(dst->mmu_segmentation_facets.get_facets(*dst, state));
+        INFO("two-instance area " << area << ", centroid " << centroid.transpose());
+        CHECK_THAT(area, WithinAbs(2.f * baseline_area, 2.f * baseline_area * 0.1f));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// By-contour cut (GLGizmoCut3D). When the contour selection starts, the gizmo
+// preprocesses the object ONCE - Cut::prepare_for_contour_cut(): plane pre-cut
+// plus split into connected components - and keeps that model while the user
+// assigns the parts to the upper/lower result; the cut then runs
+// Cut::perform_by_contour() over it. The tests below drive exactly these two
+// production entry points. Only the creation of connector volumes is GUI-only
+// code (GLGizmoCut3D::apply_cut_connectors) and is mirrored below.
+namespace {
+
+// World matrix of a volume (first instance x volume matrix). A result object
+// left with a single volume carries its placement on the INSTANCE
+// (ModelObject::delete_volume collapses the volume transform), so positions
+// must always be evaluated through both matrices.
+Transform3d world_matrix(const ModelVolume* volume)
+{
+    return volume->get_object()->instances.front()->get_matrix() * volume->get_matrix();
+}
+
+// World-space bounding box of a volume (identity instance on the preprocessed
+// parts, the placement folded into the instance on cut results).
+BoundingBoxf3 object_bbox(const ModelVolume* volume)
+{
+    return volume->mesh().transformed_bounding_box(world_matrix(volume));
+}
+
+// Index of the preprocessed part whose object-space bounding-box center is
+// nearest to `center`. The part order is an implementation detail, so parts
+// are always looked up by their geometry.
+size_t find_part(const ModelObject* obj, const Vec3d& center)
+{
+    size_t best    = 0;
+    double best_d2 = std::numeric_limits<double>::max();
+    for (size_t i = 0; i < obj->volumes.size(); ++i) {
+        const double d2 = (object_bbox(obj->volumes[i]).center() - center).squaredNorm();
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            best    = i;
+        }
+    }
+    REQUIRE(std::sqrt(best_d2) < 0.5);
+    return best;
+}
+
+// The part list PartSelection hands to the final cut
+// (GLGizmoCut3D::PartSelection::get_cut_parts()): one entry per preprocessed
+// part, `selected` being the user's upper/lower assignment and `is_modifier`
+// marking non-model volumes. Connector volumes appended afterwards are not
+// parts.
+std::vector<Cut::Part> contour_parts(const ModelObject* obj, const std::vector<bool>& to_upper)
+{
+    REQUIRE(to_upper.size() <= obj->volumes.size());
+    std::vector<Cut::Part> parts;
+    for (size_t i = 0; i < to_upper.size(); ++i)
+        parts.push_back({ to_upper[i], !obj->volumes[i]->is_model_part() });
+    return parts;
+}
+
+// Runs perform_by_contour() with the gizmo's attribute set for a by-contour cut
+// (KeepPaint exactly when keep_painting is on at the time of the cut) and hands
+// the results to `check` while they are alive.
+template<class Check>
+void contour_cut(const ModelObject* parts_obj, const ModelObject* src, const std::vector<bool>& to_upper, const Transform3d& plane,
+                 bool keep_painting, int dowels_count, bool create_dowels, Check&& check)
+{
+    Cut cut(parts_obj, 0, plane,
+            ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::KeepLower |
+                (keep_painting ? ModelObjectCutAttribute::KeepPaint : ModelObjectCutAttributes()) |
+                (create_dowels ? ModelObjectCutAttribute::CreateDowels : ModelObjectCutAttributes()));
+    check(cut.perform_by_contour(src, contour_parts(parts_obj, to_upper), dowels_count));
+}
+
+// Whole-face painting of a volume in one pass (any number of states).
+void paint_faces(ModelVolume* volume, const std::vector<std::pair<int, EnforcerBlockerType>>& faces)
+{
+    TriangleSelector selector(volume->mesh());
+    for (const auto& [face, state] : faces)
+        selector.set_facet(face, state);
+    volume->mmu_segmentation_facets.set(selector);
+}
+
+// The merged solid body of a cut result (connectors stay separate volumes).
+const ModelVolume* result_body(const ModelObject* obj)
+{
+    const ModelVolume* body = nullptr;
+    for (const ModelVolume* v : obj->volumes)
+        if (v->is_model_part() && !v->is_cut_connector()) {
+            REQUIRE(body == nullptr);
+            body = v;
+        }
+    REQUIRE(body != nullptr);
+    return body;
+}
+
+// Painted area of one state over every volume of an object.
+float painted_area(const ModelObject* obj, EnforcerBlockerType state)
+{
+    float area = 0.f;
+    for (const ModelVolume* v : obj->volumes)
+        area += painted_area_and_centroid(v->mmu_segmentation_facets.get_facets(*v, state)).first;
+    return area;
+}
+
+// True when no volume of the object carries any painting class.
+bool nothing_painted(const ModelObject* obj)
+{
+    for (const ModelVolume* v : obj->volumes)
+        if (v->is_any_painted())
+            return false;
+    return true;
+}
+
+// Mirror of GLGizmoCut3D::apply_cut_connectors() (GUI code, not linkable into
+// this test): a unit cylinder as NEGATIVE_VOLUME, placed and sized by the
+// volume transformation and tagged through cut_info. Zero tolerances.
+ModelVolume* add_connector(ModelObject* parts_obj, CutConnectorType type, const Vec3d& pos, double radius, double height)
+{
+    ModelVolume* vol = parts_obj->add_volume(TriangleMesh(its_make_cylinder(1.0, 1.0, PI / 180.)), ModelVolumeType::NEGATIVE_VOLUME);
+    vol->set_transformation(translation_transform(pos) * scale_transform(Vec3d(radius, radius, height)));
+    vol->cut_info = ModelVolume::CutInfo(type, 0.f, 0.f);
+    vol->name     = "Connector-test";
+    return vol;
+}
+
+// One volume holding two disconnected 12 mm cubes, x ranges [0,12] and
+// [30,42], re-centered by add_volume(); cube A's top carries color_a, cube B's
+// top color_b (top faces are 2/3 and 14/15 of the merged mesh).
+ModelObject* make_two_painted_cubes(Model& model, EnforcerBlockerType color_a, EnforcerBlockerType color_b)
+{
+    ModelObject* obj = model.add_object();
+    TriangleMesh both(box_mesh(0.f, 12.f, 12.f, 12.f));
+    both.merge(TriangleMesh(box_mesh(30.f, 42.f, 12.f, 12.f)));
+    ModelVolume* volume = obj->add_volume(std::move(both));
+    obj->add_instance();
+    paint_faces(volume, { { 2, color_a }, { 3, color_a }, { 14, color_b }, { 15, color_b } });
+    return obj;
+}
+
+} // namespace
+
+// Review report (2026-11-25) item 3: the contour flow pre-processes the object
+// through a plane cut and a split-to-parts step before the real
+// perform_by_contour() runs. The pre-cut used default flags (no KeepPaint) and
+// the split remapped nothing, so the volumes the contour cut copied had
+// already lost their painting.
+//
+// Follow-up (2026-11-26): the preprocessing consulted keep_painting when the
+// selection was built, and the cut consulted it again. The preference can
+// change in between (the modal Preferences dialog writes it on every toggle,
+// while the gizmo and its cached selection stay alive), so "off when the
+// selection was built, on when the cut runs" restored nothing. The
+// preprocessing now always carries the painting; the cut alone decides. The
+// cut plane is at mid-height (object z = 6).
+TEST_CASE("Paint remap: contour cut follows the keep_painting setting at the time of the cut", "[TriangleSelector][PaintRemap][Cut]")
+{
+    const EnforcerBlockerType color_a = EnforcerBlockerType::Extruder3;
+    const EnforcerBlockerType color_b = EnforcerBlockerType::Extruder4;
+    const Transform3d        plane    = translation_transform(Vec3d(0., 0., 6.));
+
+    // (setting while the selection was built, setting when the cut runs)
+    const bool scenarios[4][2] = { { false, true }, { true, false }, { true, true }, { false, false } };
+    for (const auto& scenario : scenarios) {
+        const bool setting_at_selection = scenario[0];
+        const bool setting_at_cut       = scenario[1];
+        INFO("keep_painting when the selection was built: " << setting_at_selection
+                                                             << "; when the cut runs: " << setting_at_cut);
+
+        Model        model;
+        ModelObject* obj = make_two_painted_cubes(model, color_a, color_b);
+
+        // The gizmo's one-time preprocessing. It takes no setting on purpose,
+        // so `setting_at_selection` only labels the scenario: what the
+        // selection holds while the user works no longer depends on it.
+        Model        parts_model = Cut::prepare_for_contour_cut(*obj, 0, plane);
+        ModelObject* parts_obj   = parts_model.objects.front();
+        // Upper and lower half of each cube, as separate connected parts.
+        REQUIRE(parts_obj->volumes.size() == 4);
+        const size_t a_up = find_part(parts_obj, Vec3d(6., 6., 9.));
+        const size_t a_lo = find_part(parts_obj, Vec3d(6., 6., 3.));
+        const size_t b_up = find_part(parts_obj, Vec3d(36., 6., 9.));
+        const size_t b_lo = find_part(parts_obj, Vec3d(36., 6., 3.));
+
+        // A mixed assignment that must survive untouched: both halves of cube A
+        // go to the upper result, both halves of cube B to the lower result.
+        std::vector<bool> to_upper(4, false);
+        to_upper[a_up] = to_upper[a_lo] = true;
+
+        contour_cut(parts_obj, obj, to_upper, plane, setting_at_cut, 0, false, [&](const ModelObjectPtrs& out) {
+            REQUIRE(out.size() == 2);
+            // Which result is which follows from the assignment, not from the order.
+            ModelObject* upper_a = (object_bbox(result_body(out[0])).center() - Vec3d(6., 6., 6.)).norm() < 1. ? out[0] : out[1];
+            ModelObject* lower_b = upper_a == out[0] ? out[1] : out[0];
+
+            // The assignment is honored in every scenario: each result is
+            // exactly one whole cube (its two halves merged back), 12 x 12 x 12.
+            for (const auto& [result, center] : { std::make_pair(upper_a, Vec3d(6., 6., 6.)), std::make_pair(lower_b, Vec3d(36., 6., 6.)) }) {
+                const BoundingBoxf3 bbox = object_bbox(result_body(result));
+                CHECK((bbox.center() - center).norm() < 1e-6);
+                CHECK((bbox.max - bbox.min - Vec3d(12., 12., 12.)).norm() < 1e-6);
+                CHECK(result->volumes.size() == 1);
+            }
+
+            if (setting_at_cut) {
+                // Cube A's top (144 mm^2) in the upper result and cube B's top
+                // in the lower result, each at the top of its merged body
+                // (stored z = +6 after the re-centering). Nothing else painted:
+                // no other color, no other painting class.
+                const ModelVolume* body_a = result_body(upper_a);
+                const ModelVolume* body_b = result_body(lower_b);
+                const auto [area_a, centroid_a] = painted_area_and_centroid(body_a->mmu_segmentation_facets.get_facets(*body_a, color_a));
+                const auto [area_b, centroid_b] = painted_area_and_centroid(body_b->mmu_segmentation_facets.get_facets(*body_b, color_b));
+                INFO("A top: area " << area_a << " centroid " << centroid_a.transpose()
+                                    << "; B top: area " << area_b << " centroid " << centroid_b.transpose());
+                CHECK_THAT(area_a, WithinAbs(144.f, 1.f));
+                CHECK_THAT(area_b, WithinAbs(144.f, 1.f));
+                for (const Vec3f& centroid : { centroid_a, centroid_b })
+                    for (int axis = 0; axis < 3; ++axis)
+                        CHECK_THAT(centroid(axis), WithinAbs(axis == 2 ? 6.f : 0.f, 0.05f));
+                CHECK(painted_area(upper_a, color_b) < 0.5f);
+                CHECK(painted_area(lower_b, color_a) < 0.5f);
+                CHECK(facets_parallel_to(body_a->mmu_segmentation_facets.get_facets(*body_a, color_a), Vec3f::UnitZ()));
+                CHECK(facets_parallel_to(body_b->mmu_segmentation_facets.get_facets(*body_b, color_b), Vec3f::UnitZ()));
+                for (const ModelVolume* body : { body_a, body_b })
+                    CHECK_FALSE((body->is_fdm_support_painted() || body->is_seam_painted() || body->is_fuzzy_skin_painted()));
+            } else {
+                // keep_painting off when the cut runs: the results carry no painting at all.
+                CHECK(nothing_painted(upper_a));
+                CHECK(nothing_painted(lower_b));
+            }
+        });
+    }
+}
+
+// Two overlapping source volumes with different colors, assigned to the two
+// results in a mixed way. Every result must carry exactly the painting of the
+// parts it received - in the overlap region both sources have coplanar top
+// and bottom faces, so a painting restored across sources would show up as an
+// area above 144 mm^2 or in the other color.
+TEST_CASE("Paint remap: contour cut keeps each source's painting on its own parts across a mixed assignment",
+          "[TriangleSelector][PaintRemap][Cut]")
+{
+    const EnforcerBlockerType color_a = EnforcerBlockerType::Extruder3;
+    const EnforcerBlockerType color_b = EnforcerBlockerType::Extruder4;
+    const Transform3d        plane    = translation_transform(Vec3d(0., 0., 6.));
+
+    Model        model;
+    ModelObject* obj = model.add_object();
+    // Cube A spans x [0,12], cube B x [6,18]: they overlap in x [6,12].
+    ModelVolume* cube_a = obj->add_volume(TriangleMesh(box_mesh(0.f, 12.f, 12.f, 12.f)));
+    ModelVolume* cube_b = obj->add_volume(TriangleMesh(box_mesh(6.f, 18.f, 12.f, 12.f)));
+    obj->add_instance();
+    // Top AND bottom faces: color_a on source A, color_b on source B.
+    paint_faces(cube_a, { { 0, color_a }, { 1, color_a }, { 2, color_a }, { 3, color_a } });
+    paint_faces(cube_b, { { 0, color_b }, { 1, color_b }, { 2, color_b }, { 3, color_b } });
+
+    Model        parts_model = Cut::prepare_for_contour_cut(*obj, 0, plane);
+    ModelObject* parts_obj   = parts_model.objects.front();
+    REQUIRE(parts_obj->volumes.size() == 4);
+    const size_t a_up = find_part(parts_obj, Vec3d(6., 6., 9.));
+    const size_t a_lo = find_part(parts_obj, Vec3d(6., 6., 3.));
+    const size_t b_up = find_part(parts_obj, Vec3d(12., 6., 9.));
+    const size_t b_lo = find_part(parts_obj, Vec3d(12., 6., 3.));
+
+    // A's upper half and B's lower half to the upper result; A's lower half and
+    // B's upper half to the lower result.
+    std::vector<bool> to_upper(4, false);
+    to_upper[a_up] = to_upper[b_lo] = true;
+
+    contour_cut(parts_obj, obj, to_upper, plane, true, 0, false, [&](const ModelObjectPtrs& out) {
+        REQUIRE(out.size() == 2);
+        // Both results span x [0,18] x [0,12] x [0,12] (merged body re-centered
+        // on (9,6,6)), so they are told apart by where the colors landed:
+        //   result with A_up + B_lo: color_a at A's top (stored z +6), color_b at B's bottom (stored z -6)
+        //   result with A_lo + B_up: color_a at A's bottom (stored z -6), color_b at B's top (stored z +6)
+        int seen[2] = { 0, 0 };
+        for (ModelObject* result : out) {
+            REQUIRE(result->volumes.size() == 1);
+            const ModelVolume* body = result_body(result);
+            const BoundingBoxf3 bbox = object_bbox(body);
+            CHECK((bbox.center() - Vec3d(9., 6., 6.)).norm() < 1e-6);
+
+            const auto facets_a = body->mmu_segmentation_facets.get_facets(*body, color_a);
+            const auto facets_b = body->mmu_segmentation_facets.get_facets(*body, color_b);
+            const auto [area_a, centroid_a] = painted_area_and_centroid(facets_a);
+            const auto [area_b, centroid_b] = painted_area_and_centroid(facets_b);
+            INFO("color A: area " << area_a << " centroid " << centroid_a.transpose()
+                                  << "; color B: area " << area_b << " centroid " << centroid_b.transpose());
+            CHECK_THAT(area_a, WithinAbs(144.f, 1.f));
+            CHECK_THAT(area_b, WithinAbs(144.f, 1.f));
+            // Stored x: A's cube maps to [-9,3], B's to [-3,9] (object x minus 9).
+            CHECK_THAT(centroid_a.x(), WithinAbs(-3.f, 0.05f));
+            CHECK_THAT(centroid_b.x(), WithinAbs(3.f, 0.05f));
+            CHECK_THAT(centroid_a.y(), WithinAbs(0.f, 0.05f));
+            CHECK_THAT(centroid_b.y(), WithinAbs(0.f, 0.05f));
+            // The two colors are on opposite faces of the result.
+            CHECK_THAT(centroid_a.z() + centroid_b.z(), WithinAbs(0.f, 0.05f));
+            CHECK(std::abs(centroid_a.z()) > 5.f);
+            // The colors stay on horizontal faces only: side faces and the two
+            // cut caps of every half cube are unpainted.
+            CHECK(facets_parallel_to(facets_a, Vec3f::UnitZ()));
+            CHECK(facets_parallel_to(facets_b, Vec3f::UnitZ()));
+            for (const Vec3f& v : facets_a.vertices)
+                CHECK((v.x() >= -9.f - 1e-3f && v.x() <= 3.f + 1e-3f));
+            for (const Vec3f& v : facets_b.vertices)
+                CHECK((v.x() >= -3.f - 1e-3f && v.x() <= 9.f + 1e-3f));
+            const int which = centroid_a.z() > 0.f ? 0 : 1;
+            ++seen[which];
+        }
+        // Each assignment pattern appears exactly once.
+        CHECK(seen[0] == 1);
+        CHECK(seen[1] == 1);
+    });
+}
+
+// Two local strokes on a 12 mm cube: one on the front face crossing the cut
+// plane, one on the top face above it. Both halves of the crossing stroke
+// must survive on the original outer surface (area, position and state), and
+// the caps generated by the cut must stay unpainted although they touch the
+// crossing stroke along an edge and lie directly under the top stroke.
+TEST_CASE("Paint remap: contour cut keeps a stroke crossing the cut plane and leaves the new caps unpainted",
+          "[TriangleSelector][PaintRemap][Cut]")
+{
+    // The crossing stroke is a SUPPORT painting, the top stroke a SEAM painting:
+    // two of the four painting classes go through the contour flow here.
+    const EnforcerBlockerType state_front = EnforcerBlockerType::ENFORCER;
+    const EnforcerBlockerType state_top   = EnforcerBlockerType::BLOCKER;
+    const Transform3d        plane        = translation_transform(Vec3d(0., 0., 6.));
+    const float              radius       = 2.f;
+
+    Model        model;
+    ModelObject* obj = model.add_object();
+    ModelVolume* volume = obj->add_volume(TriangleMesh(box_mesh(0.f, 12.f, 12.f, 12.f)));
+    obj->add_instance();
+    // Stored coordinates: the cube spans [-6,6]^3 (volume offset (6,6,6)), the
+    // cut plane is stored z = 0. Front face (-Y) is faces 4/5, top (+Z) 2/3.
+    TriangleSelector front_selector(volume->mesh());
+    auto front_stroke = TriangleSelector::SinglePointCursor::cursor_factory(
+        Vec3f(0.f, -6.f, 0.f), Vec3f(0.f, -16.f, 0.f), radius, TriangleSelector::CursorType::CIRCLE, Transform3d::Identity(),
+        TriangleSelector::ClippingPlane());
+    front_selector.select_patch(4, std::move(front_stroke), state_front, Transform3d::Identity(), true);
+    volume->supported_facets.set(front_selector);
+    TriangleSelector top_selector(volume->mesh());
+    auto top_stroke = TriangleSelector::SinglePointCursor::cursor_factory(
+        Vec3f(0.f, 0.f, 6.f), Vec3f(0.f, 0.f, 16.f), radius, TriangleSelector::CursorType::CIRCLE, Transform3d::Identity(),
+        TriangleSelector::ClippingPlane());
+    top_selector.select_patch(2, std::move(top_stroke), state_top, Transform3d::Identity(), true);
+    volume->seam_facets.set(top_selector);
+
+    // Baseline: the source painting itself, the front stroke clipped at the cut plane.
+    const indexed_triangle_set front_facets = front_selector.get_facets(state_front);
+    const indexed_triangle_set top_facets   = top_selector.get_facets(state_top);
+    const auto [front_up_area, front_up_centroid] = clipped_area_and_centroid(front_facets, 0.f, true);
+    const auto [front_lo_area, front_lo_centroid] = clipped_area_and_centroid(front_facets, 0.f, false);
+    const auto [top_area, top_centroid]           = painted_area_and_centroid(top_facets);
+    REQUIRE(front_up_area > 5.f);
+    REQUIRE(front_lo_area > 5.f);
+    REQUIRE(top_area > 10.f);
+    // Tolerance derived from the remap's resolution: boundaries are resolved
+    // down to the 0.05 mm subdivision limit, so the area may differ from the
+    // exact clipped region by at most (boundary length x 0.06 mm).
+    const float tol_half = float(PI * radius) * 0.06f;
+    const float tol_full = float(2.f * PI * radius) * 0.06f;
+
+    const Vec3d source_offset(6., 6., 6.); // world = stored + offset on the source volume
+
+    // One region of the source painting, measured on a volume holding the
+    // corresponding part of the cube: area, world position and the face it
+    // lies on must all match the baseline (the world matrix includes the
+    // instance, which carries the placement of single-volume results).
+    auto check_region = [&](const char* what, const ModelVolume* part, const FacetsAnnotation ModelVolume::*annotation,
+                            EnforcerBlockerType state, float expected_area, float tol, const Vec3f& expected_stored_centroid,
+                            const Vec3f& face_normal) {
+        const indexed_triangle_set facets = (part->*annotation).get_facets(*part, state);
+        const auto [area, stored_centroid] = painted_area_and_centroid(facets);
+        const Vec3d world_centroid  = world_matrix(part) * stored_centroid.cast<double>();
+        const Vec3d expected_world  = source_offset + expected_stored_centroid.cast<double>();
+        INFO(what << ": area " << area << " (expected " << expected_area << "), world centroid " << world_centroid.transpose()
+                  << " (expected " << expected_world.transpose() << ")");
+        CHECK_THAT(area, WithinAbs(expected_area, tol));
+        for (int axis = 0; axis < 3; ++axis)
+            CHECK_THAT(world_centroid(axis), WithinAbs(expected_world(axis), 0.3));
+        CHECK(facets_parallel_to(facets, face_normal));
+    };
+    const FacetsAnnotation ModelVolume::*supports = &ModelVolume::supported_facets;
+    const FacetsAnnotation ModelVolume::*seams    = &ModelVolume::seam_facets;
+
+    Model        parts_model = Cut::prepare_for_contour_cut(*obj, 0, plane);
+    ModelObject* parts_obj   = parts_model.objects.front();
+    REQUIRE(parts_obj->volumes.size() == 2);
+    const size_t up = find_part(parts_obj, Vec3d(6., 6., 9.));
+    const size_t lo = find_part(parts_obj, Vec3d(6., 6., 3.));
+
+    // After the preprocessing.
+    const ModelVolume* upper_part = parts_obj->volumes[up];
+    const ModelVolume* lower_part = parts_obj->volumes[lo];
+    check_region("upper part, front stroke", upper_part, supports, state_front, front_up_area, tol_half, front_up_centroid, -Vec3f::UnitY());
+    check_region("lower part, front stroke", lower_part, supports, state_front, front_lo_area, tol_half, front_lo_centroid, -Vec3f::UnitY());
+    check_region("upper part, top stroke", upper_part, seams, state_top, top_area, tol_full, top_centroid, Vec3f::UnitZ());
+    // The lower part's top cap lies 6 mm under the top stroke, directly inside
+    // its projection: it must not inherit anything.
+    CHECK(lower_part->seam_facets.get_facets(*lower_part, state_top).indices.empty());
+    // Only the two painting classes that were painted are present on the parts.
+    CHECK(upper_part->is_fdm_support_painted());
+    CHECK(upper_part->is_seam_painted());
+    CHECK(lower_part->is_fdm_support_painted());
+    CHECK_FALSE((upper_part->is_mm_painted() || upper_part->is_fuzzy_skin_painted()));
+    CHECK_FALSE((lower_part->is_mm_painted() || lower_part->is_fuzzy_skin_painted() || lower_part->is_seam_painted()));
+
+    // The final cut with the halves swapped between the results.
+    std::vector<bool> to_upper(2, false);
+    to_upper[lo] = true;
+    contour_cut(parts_obj, obj, to_upper, plane, true, 0, false, [&](const ModelObjectPtrs& out) {
+        REQUIRE(out.size() == 2);
+        for (ModelObject* result : out) {
+            REQUIRE(result->volumes.size() == 1);
+            const ModelVolume* body = result_body(result);
+            const bool is_upper_half = object_bbox(body).min.z() > 5.f;
+            INFO("result holding the " << (is_upper_half ? "upper" : "lower") << " half");
+            if (is_upper_half) {
+                check_region("final upper half, front stroke", body, supports, state_front, front_up_area, tol_half, front_up_centroid, -Vec3f::UnitY());
+                check_region("final upper half, top stroke", body, seams, state_top, top_area, tol_full, top_centroid, Vec3f::UnitZ());
+                CHECK_FALSE((body->is_mm_painted() || body->is_fuzzy_skin_painted()));
+            } else {
+                check_region("final lower half, front stroke", body, supports, state_front, front_lo_area, tol_half, front_lo_centroid, -Vec3f::UnitY());
+                // The new top cap of the lower half stays unpainted.
+                CHECK_FALSE((body->is_seam_painted() || body->is_mm_painted() || body->is_fuzzy_skin_painted()));
+            }
+        }
+    });
+}
+
+// Connectors through the by-contour cut: a plug reaching from the cut plane up
+// to the painted top face and a dowel straddling the plane. The newly created
+// connector volumes (hole in the upper result, plug solid in the lower result,
+// separate dowel object) must not inherit the outer-surface painting although
+// the plug's top cap lies exactly in the painted top plane, and the source
+// body must keep its painting.
+TEST_CASE("Paint remap: contour cut with connectors keeps the body painting and leaves connectors unpainted",
+          "[TriangleSelector][PaintRemap][Cut]")
+{
+    const EnforcerBlockerType color = EnforcerBlockerType::Extruder3;
+    const Transform3d        plane  = translation_transform(Vec3d(0., 0., 6.));
+
+    Model        model;
+    ModelObject* obj    = model.add_object();
+    ModelVolume* volume = obj->add_volume(TriangleMesh(box_mesh(0.f, 12.f, 12.f, 12.f)));
+    obj->add_instance();
+    paint_faces(volume, { { 2, color }, { 3, color } }); // top face
+
+    Model        parts_model = Cut::prepare_for_contour_cut(*obj, 0, plane);
+    ModelObject* parts_obj   = parts_model.objects.front();
+    REQUIRE(parts_obj->volumes.size() == 2);
+    const size_t up = find_part(parts_obj, Vec3d(6., 6., 9.));
+    const size_t lo = find_part(parts_obj, Vec3d(6., 6., 3.));
+
+    // What GLGizmoCut3D::apply_connectors_in_model() adds to the preprocessed
+    // object before the cut: a plug (center half a height above the plane,
+    // reaching the painted top) and a dowel (centered on the plane, tangent to
+    // the front face).
+    ModelVolume* plug  = add_connector(parts_obj, CutConnectorType::Plug, Vec3d(6., 6., 9.), 2., 6.);
+    ModelVolume* dowel = add_connector(parts_obj, CutConnectorType::Dowel, Vec3d(6., 2., 6.), 2., 4.);
+    REQUIRE(parts_obj->volumes.size() == 4);
+    // Freshly added connectors are tagged but not processed yet
+    // (is_cut_connector() only turns true during the cut); they are negative
+    // volumes, hence not parts of the solid body.
+    REQUIRE(plug->cut_info.is_connector);
+    REQUIRE(dowel->cut_info.is_connector);
+    REQUIRE_FALSE(plug->is_model_part());
+    REQUIRE_FALSE(dowel->is_model_part());
+
+    std::vector<bool> to_upper(2, false);
+    to_upper[up] = true;
+    contour_cut(parts_obj, obj, to_upper, plane, true, /*dowels_count=*/1, /*create_dowels=*/true, [&](const ModelObjectPtrs& out) {
+        // upper result, lower result, and the dowel as its own object.
+        REQUIRE(out.size() == 3);
+        ModelObject* upper = object_bbox(result_body(out[0])).min.z() > 5.f ? out[0] : out[1];
+        ModelObject* lower = upper == out[0] ? out[1] : out[0];
+        ModelObject* dowel_object = out[2];
+
+        // Upper result: body (z 6..12) with the painted top, the plug hole and
+        // the upper half of the dowel hole.
+        REQUIRE(upper->volumes.size() == 3);
+        const ModelVolume* upper_body = result_body(upper);
+        const auto [area, centroid] = painted_area_and_centroid(upper_body->mmu_segmentation_facets.get_facets(*upper_body, color));
+        INFO("upper body: area " << area << " centroid " << centroid.transpose());
+        CHECK_THAT(area, WithinAbs(144.f, 1.f));
+        CHECK_THAT(centroid.z(), WithinAbs(3.f, 0.05f)); // top of the re-centered body
+        CHECK(facets_parallel_to(upper_body->mmu_segmentation_facets.get_facets(*upper_body, color), Vec3f::UnitZ()));
+        for (const ModelVolume* v : upper->volumes)
+            if (v != upper_body) {
+                CHECK(v->is_cut_connector());
+                CHECK_FALSE(v->is_any_painted());
+            }
+
+        // Lower result: body (z 0..6) without painting, the plug as a solid
+        // connector part whose top cap lies in the painted top plane, and the
+        // lower half of the dowel hole. None of them painted.
+        REQUIRE(lower->volumes.size() == 3);
+        CHECK(nothing_painted(lower));
+        int plugs = 0;
+        for (const ModelVolume* v : lower->volumes)
+            if (v->is_cut_connector() && v->is_model_part()) {
+                ++plugs;
+                const BoundingBoxf3 bbox = object_bbox(v);
+                CHECK((bbox.max.z() - 12.f) < 1e-3); // reaches the painted top plane
+            }
+        CHECK(plugs == 1);
+
+        // The dowel is a separate solid object, unpainted.
+        REQUIRE(dowel_object->volumes.size() == 1);
+        CHECK(dowel_object->volumes[0]->is_cut_connector());
+        CHECK_FALSE(dowel_object->volumes[0]->is_any_painted());
+    });
+}
+
 // Review item 3: mirroring (volume mirror, instance mirror, or both) used to
 // pre-transform the snapshot mesh with transform(..., true), which swaps face
 // corners 1 and 2 for negative determinants while the painting tree is still

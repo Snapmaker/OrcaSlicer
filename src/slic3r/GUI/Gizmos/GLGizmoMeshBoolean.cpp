@@ -454,9 +454,11 @@ void GLGizmoMeshBoolean::generate_new_volume(const bool delete_input, TriangleMe
     ModelVolume* new_volume = curr_model_object->add_volume(std::move(mesh_result));
 
     // Remap paintings: each snapshot is restored with the relative transform
-    // that maps the boolean result back into that snapshot's own space.
+    // that maps the boolean result back into that snapshot's own space. The
+    // result volume was created through add_volume(), which re-centered the
+    // stored mesh, so the centering is compensated as well.
     for (const auto& [saved_painting, target_to_source] : saved_paintings) {
-        new_volume->restore_painting(saved_painting, target_to_source, true);
+        new_volume->restore_painting_on_centered_result(saved_painting, target_to_source, true);
     }
 
     // assign to new_volume from old_volume

@@ -19,6 +19,7 @@
 #include <igl/unproject.h>
 
 #include <cstdint>
+#include <mutex>
 
 
 namespace Slic3r {
@@ -409,9 +410,29 @@ void MeshClipper::recalculate_triangles()
 }
 
 
+// A volume can remain registered for picking while a different canvas displays the plate.
+struct MeshRaycaster::RaycastTree {
+    std::once_flag once;
+    std::unique_ptr<AABBMesh> mesh;
+};
+
+MeshRaycaster::MeshRaycaster(std::shared_ptr<const TriangleMesh> mesh)
+    : m_mesh(std::move(mesh)), m_tree(std::make_shared<RaycastTree>())
+{
+    assert(m_mesh);
+}
+
+const AABBMesh& MeshRaycaster::get_aabb_mesh() const
+{
+    std::call_once(m_tree->once, [this] {
+        m_tree->mesh = std::make_unique<AABBMesh>(*m_mesh, true);
+    });
+    return *m_tree->mesh;
+}
+
 Vec3f MeshRaycaster::get_triangle_normal(size_t facet_idx) const
 {
-    return m_normals[facet_idx];
+    return its_face_normal(m_mesh->its, m_mesh->its.indices[facet_idx]);
 }
 
 void MeshRaycaster::line_from_mouse_pos(const Vec2d& mouse_pos, const Transform3d& trafo, const Camera& camera, Vec3d& point, Vec3d& direction)
@@ -433,7 +454,7 @@ bool MeshRaycaster::unproject_on_mesh(const Vec2d& mouse_pos, const Transform3d&
     point     = inv*point;
     direction = inv.linear()*direction;
 
-    std::vector<AABBMesh::hit_result> hits = m_emesh.query_ray_hits(point, direction);
+    std::vector<AABBMesh::hit_result> hits = get_aabb_mesh().query_ray_hits(point, direction);
 
     if (hits.empty())
         return false; // no intersection found
@@ -474,8 +495,8 @@ bool MeshRaycaster::intersects_line(Vec3d point, Vec3d direction, const Transfor
     point = trafo_inv * point;
     direction = (to-point).normalized();
 
-    std::vector<AABBMesh::hit_result> hits      = m_emesh.query_ray_hits(point, direction);
-    std::vector<AABBMesh::hit_result> neg_hits  = m_emesh.query_ray_hits(point, -direction);
+    std::vector<AABBMesh::hit_result> hits      = get_aabb_mesh().query_ray_hits(point, direction);
+    std::vector<AABBMesh::hit_result> neg_hits  = get_aabb_mesh().query_ray_hits(point, -direction);
 
     return !hits.empty() || !neg_hits.empty();
 }
@@ -501,7 +522,7 @@ std::vector<unsigned> MeshRaycaster::get_unobscured_idxs(const Geometry::Transfo
         // Cast a ray in the direction of the camera and look for intersection with the mesh:
         std::vector<AABBMesh::hit_result> hits;
         // Offset the start of the ray by EPSILON to account for numerical inaccuracies.
-        hits = m_emesh.query_ray_hits((inverse_trafo * pt.cast<double>() + direction_to_camera_mesh * EPSILON),
+        hits = get_aabb_mesh().query_ray_hits((inverse_trafo * pt.cast<double>() + direction_to_camera_mesh * EPSILON),
                                       direction_to_camera_mesh);
 
         if (! hits.empty()) {
@@ -536,7 +557,7 @@ bool MeshRaycaster::closest_hit(const Vec2d& mouse_pos, const Transform3d& trafo
     Vec3d direction;
     line_from_mouse_pos(mouse_pos, trafo, camera, point, direction);
 
-    const std::vector<AABBMesh::hit_result> hits = m_emesh.query_ray_hits(point, direction.normalized());
+    const std::vector<AABBMesh::hit_result> hits = get_aabb_mesh().query_ray_hits(point, direction.normalized());
 
     if (hits.empty())
         return false; // no intersection found
@@ -567,10 +588,10 @@ Vec3f MeshRaycaster::get_closest_point(const Vec3f& point, Vec3f* normal) const
     int idx = 0;
     Vec3d closest_point;
     Vec3d pointd = point.cast<double>();
-    m_emesh.squared_distance(pointd, idx, closest_point);
+    get_aabb_mesh().squared_distance(pointd, idx, closest_point);
     if (normal)
         // TODO: consider: get_normal(m_emesh, pointd).cast<float>();
-        *normal = m_normals[idx];
+        *normal = get_triangle_normal(idx);
 
     return closest_point.cast<float>();
 }
@@ -579,7 +600,7 @@ int MeshRaycaster::get_closest_facet(const Vec3f &point) const
 {
     int   facet_idx = 0;
     Vec3d closest_point;
-    m_emesh.squared_distance(point.cast<double>(), facet_idx, closest_point);
+    get_aabb_mesh().squared_distance(point.cast<double>(), facet_idx, closest_point);
     return facet_idx;
 }
 

@@ -158,13 +158,7 @@ private:
 // whether certain points are visible or obscured by the mesh etc.
 class MeshRaycaster {
 public:
-    explicit MeshRaycaster(std::shared_ptr<const TriangleMesh> mesh)
-        : m_mesh(std::move(mesh))
-        , m_emesh(*m_mesh, true) // calculate epsilon for triangle-ray intersection from an average edge length
-        , m_normals(its_face_normals(m_mesh->its))
-    {
-        assert(m_mesh);
-    }
+    explicit MeshRaycaster(std::shared_ptr<const TriangleMesh> mesh);
 
     explicit MeshRaycaster(const TriangleMesh &mesh)
         : MeshRaycaster(std::make_unique<TriangleMesh>(mesh))
@@ -186,7 +180,7 @@ public:
         bool sinking_limit = true
     ) const;
     
-    const AABBMesh &get_aabb_mesh() const { return m_emesh; }
+    const AABBMesh &get_aabb_mesh() const;
 
     // Given a point and direction in world coords, returns whether the respective line
     // intersects the mesh if it is transformed into world by trafo.
@@ -227,8 +221,8 @@ public:
 
 private:
     std::shared_ptr<const TriangleMesh> m_mesh;
-    AABBMesh m_emesh;
-    std::vector<stl_normal> m_normals;
+    struct RaycastTree;
+    std::shared_ptr<RaycastTree> m_tree;
 };
 
 struct PickingModel

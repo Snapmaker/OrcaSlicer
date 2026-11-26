@@ -3023,6 +3023,23 @@ void ModelVolume::remap_extruder_ids(size_t extruder_count, const EnforcerBlocke
     }
 }
 
+void ModelVolume::set_mesh_preserving_init_shift(TriangleMesh &&mesh)
+{
+    // The replacement is expressed in the same stored coordinates as the
+    // current mesh (the caller's contract), so the source-file centering that
+    // produced those coordinates still applies: re-attach it to the fresh
+    // mesh, whose own init_shift is zero.
+    mesh.set_init_shift(m_mesh ? m_mesh->get_init_shift() : Vec3d::Zero());
+    this->set_mesh(std::move(mesh));
+}
+
+void ModelVolume::set_mesh_preserving_init_shift(indexed_triangle_set &&mesh)
+{
+    TriangleMesh replacement(std::move(mesh));
+    replacement.set_init_shift(m_mesh ? m_mesh->get_init_shift() : Vec3d::Zero());
+    this->set_mesh(std::move(replacement));
+}
+
 void ModelVolume::center_geometry_after_creation(bool update_source_offset)
 {
     Vec3d shift = this->mesh().bounding_box().center();

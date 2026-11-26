@@ -6041,10 +6041,13 @@ void GUI::ObjectList::smooth_mesh()
                     const std::optional<TriangleSelector::SavedPainting> saved_painting = keep_painting ?
                         result->volume->save_painting() :
                         std::optional<TriangleSelector::SavedPainting>{};
-                    result->volume->set_mesh(std::move(*result->smoothed));
+                    result->volume->set_mesh_preserving_init_shift(std::move(*result->smoothed));
                     // The subdivision moved vertices and changed normals, so the
                     // painting is remapped in the parent faces' barycentric domain
-                    // using the per-output-face origins computed by the worker.
+                    // using the per-output-face origins computed by the worker. The
+                    // smoothed mesh is expressed in the same stored coordinates, so
+                    // the helper above also carries the source-file centering shift
+                    // (init_shift) over for a later reload from disk.
                     result->volume->restore_painting_smooth(saved_painting, result->origins);
                     result->volume->calculate_convex_hull();
                     result->volume->invalidate_convex_hull_2d();

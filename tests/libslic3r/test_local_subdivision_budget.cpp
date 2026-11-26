@@ -11,6 +11,7 @@
 #include <limits>
 #include <vector>
 
+#include "libslic3r/PreviewBudgetGate.hpp"
 #include "libslic3r/TriangleMesh.hpp"
 #include "libslic3r/TriangleMeshDeal.hpp"
 
@@ -191,4 +192,286 @@ TEST_CASE("Budget decision flips exactly at the threshold", "[TriangleMeshDeal][
     // Overflow counts as exceeding - never as within budget.
     CHECK(TriangleMeshDeal::local_subdivision_exceeds_face_budget(std::numeric_limits<size_t>::max(), 1, 100, budget));
     CHECK(TriangleMeshDeal::local_subdivision_exceeds_face_budget(std::numeric_limits<size_t>::max(), std::numeric_limits<size_t>::max(), 3, budget));
+}
+
+TEST_CASE("Preview budget gate blocks for the declined selection state only", "[LocalSubdivision][BudgetGate]")
+{
+    const size_t      budget = 1000000;
+    PreviewBudgetGate gate;
+
+    // An over-budget selection asks for confirmation.
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+    // Decline: the stepper must follow the level that is actually shown.
+    CHECK(gate.resolve_confirmation(false, 3, 2) == 2);
+    CHECK(gate.blocked());
+
+    // No edits (same selection size): no recompute, no dialog.
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Blocked);
+    // A larger selection stays blocked too (the estimate is monotonic).
+    CHECK(gate.evaluate(3, 60000, 0, budget) == PreviewBudgetGate::Verdict::Blocked);
+    CHECK(gate.blocked());
+
+    // Erasing parts of the selection but still over the budget: silent block.
+    CHECK(gate.evaluate(3, 20000, 0, budget) == PreviewBudgetGate::Verdict::Blocked);
+    CHECK(gate.blocked());
+
+    // Shrunk back under the budget: the block lifts and the preview computes.
+    CHECK(gate.evaluate(3, 9000, 0, budget) == PreviewBudgetGate::Verdict::Compute);
+    CHECK_FALSE(gate.blocked());
+}
+
+TEST_CASE("Preview budget gate recovers on erase-all and re-asks on level changes", "[LocalSubdivision][BudgetGate]")
+{
+    const size_t      budget = 1000000;
+    PreviewBudgetGate gate;
+
+    // Decline an over-budget level-3 selection.
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+    CHECK(gate.resolve_confirmation(false, 3, 2) == 2);
+    CHECK(gate.blocked());
+
+    // Erase all: an empty selection always fits and the block lifts.
+    CHECK(gate.evaluate(3, 0, 2000000, budget) == PreviewBudgetGate::Verdict::Compute);
+    CHECK_FALSE(gate.blocked());
+
+    // Level changes while blocked re-evaluate from scratch. Re-block at level 3,
+    // then request level 2 with the same selection: 50,000 * 15 = 750,000 fits.
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+    CHECK(gate.resolve_confirmation(false, 3, 2) == 2);
+    CHECK(gate.evaluate(2, 50000, 0, budget) == PreviewBudgetGate::Verdict::Compute);
+    CHECK_FALSE(gate.blocked());
+
+    // Re-block at level 3 again; level 2 with a still-too-large selection
+    // (80,000 * 15 = 1,200,000) asks again instead of staying silently blocked.
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+    CHECK(gate.resolve_confirmation(false, 3, 2) == 2);
+    CHECK(gate.evaluate(2, 80000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+    CHECK(gate.resolve_confirmation(true, 2, 2) == 2);
+    CHECK_FALSE(gate.blocked());
+}
+
+TEST_CASE("Preview budget gate confirmation and reset", "[LocalSubdivision][BudgetGate]")
+{
+    const size_t      budget = 1000000;
+    PreviewBudgetGate gate;
+
+    // Accept: the level stays and the gate forgets the question.
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+    CHECK(gate.resolve_confirmation(true, 3, 2) == 3);
+    CHECK_FALSE(gate.blocked());
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+
+    // A within-budget selection computes without asking.
+    CHECK(gate.evaluate(3, 9000, 0, budget) == PreviewBudgetGate::Verdict::Compute);
+
+    // reset() forgets a decline (selection rebuilt from scratch / gizmo opened).
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+    CHECK(gate.resolve_confirmation(false, 3, 2) == 2);
+    CHECK(gate.blocked());
+    gate.reset();
+    CHECK_FALSE(gate.blocked());
+    CHECK(gate.evaluate(3, 50000, 0, budget) == PreviewBudgetGate::Verdict::Confirm);
+}
+
+namespace {
+
+// Drives PreviewBudgetFlow through the same sequences the gizmo executes
+// (panel frame, apply-time re-confirmation and forced recompute). The dialog
+// and the expensive computation are injected stand-ins with call counters;
+// last_computed_painted identifies which selection the produced caches were
+// built for, mirroring the gizmo's guarantee that the previews are rebuilt
+// from the current selectors inside the computation.
+struct BudgetFlowHarness {
+    PreviewBudgetFlow flow;
+    int               ask_calls             = 0;
+    int               compute_calls          = 0;
+    bool              dialog_answer          = true;
+    bool              compute_ok             = true;
+    int               level                  = 0;
+    int               shown                  = 0;
+    size_t            painted                = 0;
+    size_t            total                  = 0;
+    bool              work_pending           = false;
+    const size_t      budget                 = 1000000;
+    size_t            last_computed_painted  = 0;
+    size_t            applied_painted        = 0;
+    bool              applied                = false;
+    // Optional hook running while the apply-time dialog would be open.
+    std::function<void()> on_dialog          = nullptr;
+
+    PreviewUpdateOutcome frame(BudgetPromptMode mode)
+    {
+        const auto result = flow.update(
+            PreviewBudgetFlow::FrameInputs{ level, shown, painted, total, budget, work_pending }, mode,
+            [this](size_t &p, size_t &t) { p = painted; t = total; },
+            [this]() { ++ask_calls; return dialog_answer; },
+            [this]() { ++compute_calls; last_computed_painted = painted; return compute_ok; });
+        level = result.stepper_level;
+        return result.outcome;
+    }
+
+    // The gizmo's apply_subdivision budget orchestration: returns whether the
+    // apply is allowed to proceed.
+    bool apply()
+    {
+        const bool was_blocked_before_update = flow.blocked();
+        const PreviewUpdateOutcome first      = frame(BudgetPromptMode::Ask);
+        if (first == PreviewUpdateOutcome::Blocked && ! was_blocked_before_update)
+            return false; // declined inside the update_preview call above
+        if (first != PreviewUpdateOutcome::Ready && first != PreviewUpdateOutcome::Blocked)
+            return false; // reentered / inputs changed / no object: nothing safe to apply
+        if (painted == 0 || level <= 0)
+            return false;
+
+        if (flow.blocked()) { // was_blocked_before_update is necessarily true here
+            // Re-confirm against the current selection; the dialog may pump
+            // events that change the inputs afterwards, so the authorization
+            // is recorded for the inputs gathered BEFORE the dialog.
+            const size_t gathered_painted = painted;
+            const size_t gathered_total   = total;
+            const bool   over = TriangleMeshDeal::local_subdivision_exceeds_face_budget(gathered_total, gathered_painted, level, budget);
+            if (over) {
+                ++ask_calls;
+                if (on_dialog)
+                    on_dialog();
+                if (! dialog_answer)
+                    return false;
+            }
+            flow.authorize_recompute(level, gathered_painted, gathered_total, budget);
+            // Forced recompute: no further dialog, the authorization must
+            // match the current inputs, and the recompute must complete.
+            if (frame(BudgetPromptMode::ConfirmedOnly) != PreviewUpdateOutcome::Ready)
+                return false;
+            if (painted == 0 || level <= 0)
+                return false;
+        }
+
+        // The caches now match the current selection (the recompute above ran
+        // for it); the final budget question was already answered.
+        applied         = true;
+        applied_painted = last_computed_painted;
+        return true;
+    }
+};
+
+} // namespace
+
+TEST_CASE("Apply after a decline recomputes exactly once and uses the new selection", "[LocalSubdivision][BudgetFlow]")
+{
+    BudgetFlowHarness h;
+    h.level = 3;
+    h.shown = 3;
+    h.painted = 50000;
+    h.work_pending = true;
+
+    // Panel: raising to level 3 exceeds the budget and the user declines; the
+    // stepper follows the level that is actually shown (3: the preview was
+    // already displayed at level 3), so the level stays put.
+    h.dialog_answer = false;
+    CHECK(h.frame(BudgetPromptMode::Ask) == PreviewUpdateOutcome::Blocked);
+    CHECK(h.ask_calls == 1);
+    CHECK(h.compute_calls == 0);
+    CHECK(h.level == 3);
+    CHECK(h.flow.blocked());
+
+    // The user enlarges the selection (still over the budget at level 2) and
+    // clicks Apply, then confirms the re-confirmation.
+    h.painted       = 80000;
+    h.dialog_answer = true;
+    REQUIRE(h.apply());
+    // Exactly one re-confirmation dialog was shown in total (panel decline +
+    // apply confirm; the forced recompute must not ask a third time).
+    CHECK(h.ask_calls == 2);
+    // The recompute really ran after the confirmation - the old caches were
+    // never applied directly.
+    CHECK(h.compute_calls == 1);
+    CHECK(h.last_computed_painted == 80000);
+    CHECK(h.applied_painted == 80000);
+    CHECK_FALSE(h.flow.blocked());
+}
+
+TEST_CASE("Apply then declining again keeps the old preview and submits nothing", "[LocalSubdivision][BudgetFlow]")
+{
+    BudgetFlowHarness h;
+    h.level = 3;
+    h.shown = 3;
+    h.painted = 50000;
+    h.work_pending = true;
+    h.dialog_answer = false;
+    CHECK(h.frame(BudgetPromptMode::Ask) == PreviewUpdateOutcome::Blocked);
+
+    h.painted       = 80000;
+    h.dialog_answer = false;
+    CHECK_FALSE(h.apply());
+    CHECK(h.compute_calls == 0); // no recompute
+    CHECK(h.ask_calls == 2);     // panel decline + apply decline
+    CHECK(h.flow.blocked());     // the old preview stays blocked and kept
+    CHECK_FALSE(h.applied);
+}
+
+TEST_CASE("Apply aborts when the forced recompute cannot complete", "[LocalSubdivision][BudgetFlow]")
+{
+    BudgetFlowHarness h;
+    h.level = 3;
+    h.shown = 3;
+    h.painted = 50000;
+    h.work_pending = true;
+    h.dialog_answer = false;
+    CHECK(h.frame(BudgetPromptMode::Ask) == PreviewUpdateOutcome::Blocked);
+
+    // The recompute is authorized but fails (reentry / failure).
+    h.painted = 80000;
+    h.dialog_answer = true;
+    h.compute_ok    = false;
+    CHECK_FALSE(h.apply());
+    CHECK(h.compute_calls == 1); // the recompute was attempted...
+    CHECK_FALSE(h.applied);      // ...and nothing was applied
+}
+
+TEST_CASE("Apply aborts when the confirmed inputs change while the dialog is open", "[LocalSubdivision][BudgetFlow]")
+{
+    BudgetFlowHarness h;
+    h.level = 3;
+    h.shown = 3;
+    h.painted = 50000;
+    h.work_pending = true;
+    h.dialog_answer = false;
+    CHECK(h.frame(BudgetPromptMode::Ask) == PreviewUpdateOutcome::Blocked);
+
+    // The apply-time dialog pumps events that enlarge the selection beyond
+    // the confirmed size: the old confirmation must not authorize the
+    // recompute, and nothing may be applied.
+    h.painted       = 80000;
+    h.dialog_answer = true;
+    h.on_dialog     = [&h]() { h.painted = 90000; };
+    CHECK_FALSE(h.apply());
+    CHECK(h.compute_calls == 0);
+    CHECK_FALSE(h.applied);
+}
+
+TEST_CASE("Shrinking the selection back under the budget recovers and applies without extra confirmation", "[LocalSubdivision][BudgetFlow]")
+{
+    BudgetFlowHarness h;
+    h.level = 3;
+    h.shown = 3;
+    h.painted = 50000;
+    h.work_pending = true;
+    h.dialog_answer = false;
+    CHECK(h.frame(BudgetPromptMode::Ask) == PreviewUpdateOutcome::Blocked);
+    CHECK(h.flow.blocked());
+
+    // The user erases most of the selection: the next frame re-checks cheaply,
+    // lifts the block and computes the latest preview without any dialog.
+    h.painted     = 9000;
+    h.dialog_answer = true;
+    CHECK(h.frame(BudgetPromptMode::Ask) == PreviewUpdateOutcome::Ready);
+    CHECK(h.ask_calls == 1);      // only the initial decline
+    CHECK(h.compute_calls == 1);
+    CHECK_FALSE(h.flow.blocked());
+
+    // Applying the recovered preview needs no further confirmation.
+    h.work_pending = false;
+    REQUIRE(h.apply());
+    CHECK(h.ask_calls == 1);
+    CHECK(h.applied_painted == 9000);
 }

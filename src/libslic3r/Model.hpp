@@ -901,6 +901,19 @@ public:
     void                set_mesh(std::shared_ptr<const TriangleMesh> &mesh) { m_mesh = mesh; }
     void                set_mesh(std::unique_ptr<const TriangleMesh> &&mesh) { m_mesh = std::move(mesh); }
 	void				reset_mesh() { m_mesh = std::make_shared<const TriangleMesh>(); }
+
+    // Replace the mesh with a mesh rebuilt in the SAME stored coordinates
+    // (simplify, global smooth, local subdivision results). Such results are
+    // fresh TriangleMesh objects whose init_shift is zero; carrying the
+    // current init_shift over keeps the source-file <-> stored-mesh
+    // relationship intact. reload from disk and replace with STL map the
+    // painting between the two spaces through those shifts
+    // (paint_relink_transform), so a same-coordinate replacement without this
+    // helper would relink the painting at a wrong offset whenever the source
+    // file's center is not the origin. Callers must guarantee the replacement
+    // is expressed in the current stored coordinates.
+    void                set_mesh_preserving_init_shift(TriangleMesh &&mesh);
+    void                set_mesh_preserving_init_shift(indexed_triangle_set &&mesh);
     const std::shared_ptr<const TriangleMesh>& get_mesh_shared_ptr() const { return m_mesh; }
     // Configuration parameters specific to an object model geometry or a modifier volume, 
     // overriding the global Slic3r settings and the ModelObject settings.

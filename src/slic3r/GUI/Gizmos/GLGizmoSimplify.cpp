@@ -580,13 +580,16 @@ void GLGizmoSimplify::apply_simplify() {
     // Save paint
     std::optional<TriangleSelector::SavedPainting> saved_painting = keep_painting ? mv->save_painting() :
                                                                                     std::optional<TriangleSelector::SavedPainting>{};
-    mv->set_mesh(std::move(*m_state.result));
+    mv->set_mesh_preserving_init_shift(std::move(*m_state.result));
     // Remap paint. Simplification moves the surface away from the original one, so
     // the intersection-based remap would leave fragmented gaps; use the projection
     // state-query transfer instead (the painting is re-established over the
     // simplified surface as one continuous region assignment). Both meshes share
     // the volume's stored coordinate space, so the relative transform is the
-    // identity (a pure translation, as before, is equivalent).
+    // identity (a pure translation, as before, is equivalent). The helper above
+    // keeps the source-file centering shift (init_shift) on the rebuilt mesh, so
+    // a later reload from disk / replace with STL still relinks the painting at
+    // the right offset.
     mv->restore_painting(saved_painting, Transform3d::Identity(), false, /*transfer_by_projection=*/true);
     BOOST_LOG_TRIVIAL(info) << "apply_simplify: snapshot=" << (saved_painting ? "captured" : "none")
                             << ", painting_after_restore=" << (mv->is_any_painted() ? "present" : "LOST");

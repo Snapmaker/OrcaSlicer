@@ -3345,13 +3345,15 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting(
     if (source_painting.bitstream.empty())
         return result;
 
+    const bool identical_roots = target_to_source.isApprox(Transform3d::Identity()) &&
+        source_its.vertices == target_its.vertices && source_its.indices == target_its.indices;
+
     // Identical geometry and an identity transform can copy a replacement
     // exactly. With existing painting, use the region overlay below instead:
     // deserialize() replaces whole root subtrees, including NONE leaves, and
     // therefore cannot merge disjoint strokes on the same root face. The
     // generic path only writes non-NONE source leaves (new source wins overlaps).
-    if (!existing_painting && target_to_source.isApprox(Transform3d::Identity()) &&
-        source_its.vertices == target_its.vertices && source_its.indices == target_its.indices) {
+    if (!existing_painting && identical_roots) {
         if (stats)
             stats->identity_path = true;
         return source_painting;
@@ -3471,6 +3473,11 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting(
             size_t face_idx = node.idx;
             if (face_idx >= target_mesh.its.indices.size())
                 return true;
+            // An identical mesh already has exact root correspondence. Overlay
+            // non-NONE leaves only within that root's common parameter domain;
+            // nearby or coincident different roots must never be candidates.
+            if (identical_roots && face_idx != size_t(tri.source_triangle))
+                return true;
 
             const Vec3f& norm_b = target_selector.m_face_normals[face_idx];
 
@@ -3581,8 +3588,9 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
         return point_in_tri2d(p, leaf.lam[0], leaf.lam[1], leaf.lam[2]);
     };
 
-    // Full 3-side subdivision of a target face without a paint cursor (mirrors
-    // split_triangle() mechanics: division + perform_split + topology notify).
+    // Subdivide a target face without a paint cursor: a representable median
+    // uses a one-side split; otherwise use full three-side subdivision.
+    // Both mirror split_triangle(): division + perform_split + topology notify.
     // Neighbors are passed as -1 on purpose: the midpoint sharing through
     // neighbor_child() assumes both adjacent faces subdivided to the SAME depth
     // along the shared edge, which the independent per-face resolution below
@@ -3590,14 +3598,14 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
     // and corrupt the subtree geometry. The serialized painting data only
     // stores the split structure (midpoint positions are re-derived from the
     // mesh on deserialize), so unshared midpoints are safe here.
-    auto try_subdivide = [&target_selector](int facet_idx) -> bool {
+    auto try_subdivide = [&target_selector](int facet_idx, int median_corner) -> bool {
         Triangle& tr = target_selector.m_triangles[facet_idx];
         if (tr.is_split())
             return true;
         target_selector.PrepareForLeafIdentityChange();
         const int               source_triangle = tr.source_triangle;
         const EnforcerBlockerType old_state     = tr.get_state();
-        tr.set_division(3, 0);
+        tr.set_division(median_corner >= 0 ? 1 : 3, median_corner >= 0 ? median_corner : 0);
         target_selector.perform_split(facet_idx, Vec3i32(-1, -1, -1), old_state);
         target_selector.NotifyTopologyMutation(source_triangle);
         return target_selector.m_triangles[facet_idx].is_split();
@@ -3649,8 +3657,32 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
         // the source leaf scale bound boundary quantization independently of
         // object placement and of the smoothed surface's geometric distortion.
         const float longest = std::max({ (S[1] - S[0]).norm(), (S[2] - S[1]).norm(), (S[0] - S[2]).norm() });
+        // Prefer an EXACT representable boundary over a four-way approximation.
+        // A source edge through one corner and the opposite edge midpoint is
+        // directly encodable by the selector's one-side (two-child) split.
+        int median_corner = -1;
+        const auto cross2 = [](const Vec2f& a, const Vec2f& b) { return a.x()*b.y() - a.y()*b.x(); };
+        for (const SourceLeaf& leaf : leaves) {
+            for (int e = 0; e < 3 && median_corner < 0; ++e) {
+                const Vec2f edge = leaf.lam[(e+1)%3] - leaf.lam[e];
+                const float tol = 8.f * std::numeric_limits<float>::epsilon() * edge.norm() * longest;
+                for (int k = 0; k < 3; ++k) {
+                    const Vec2f middle = 0.5f * (S[(k+1)%3] + S[(k+2)%3]);
+                    const float d0 = cross2(edge, S[k] - leaf.lam[e]);
+                    const float dm = cross2(edge, middle - leaf.lam[e]);
+                    const float d1 = cross2(edge, S[(k+1)%3] - leaf.lam[e]);
+                    const float d2 = cross2(edge, S[(k+2)%3] - leaf.lam[e]);
+                    if (std::abs(d0) <= tol && std::abs(dm) <= tol && d1*d2 < 0.f) {
+                        median_corner = k;
+                        break;
+                    }
+                }
+            }
+            if (median_corner >= 0) break;
+        }
         constexpr int max_depth = 16;
-        if (depth < max_depth && longest > 0.25f * local_scale && try_subdivide(facet_idx)) {
+        if (depth < max_depth && (median_corner >= 0 || longest > 0.25f * local_scale) &&
+            try_subdivide(facet_idx, median_corner)) {
             const Triangle split_tr        = target_selector.m_triangles[facet_idx]; // copy: recursion may reallocate
             const int       num_of_children = split_tr.number_of_split_sides() + 1;
             // Child regions of a full split (perform_split case 3):
@@ -3661,14 +3693,38 @@ TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
             const std::array<Vec2f, 3> child_S[4] = {
                 { S[0], m01, m20 }, { m01, S[1], m12 }, { m12, S[2], m20 }, { m01, m12, m20 }
             };
-            for (int i = 0; i < num_of_children; ++i)
-                resolve(split_tr.children[i], child_S[i], depth + 1, leaves);
-        } else if (leaf_c >= 0) {
-            // A terminal boundary cell still needs a state. Leaving it blank
-            // systematically erodes strokes (and can erase small ones). Use
-            // the source leaf at its parameter-space centroid, including NONE
-            // for erased regions, at the source-relative resolution above.
-            target_selector.CollapseSubtreeToState(facet_idx, leaves[leaf_c].state);
+            if (num_of_children == 2) {
+                const int k = split_tr.special_side();
+                const Vec2f mid = 0.5f * (S[(k+1)%3] + S[(k+2)%3]);
+                resolve(split_tr.children[0], {S[k], S[(k+1)%3], mid}, depth + 1, leaves);
+                resolve(split_tr.children[1], {mid, S[(k+2)%3], S[k]}, depth + 1, leaves);
+            } else {
+                for (int i = 0; i < num_of_children; ++i)
+                    resolve(split_tr.children[i], child_S[i], depth + 1, leaves);
+            }
+        } else {
+            // Non-representable terminal boundary: aggregate actual overlap by
+            // STATE (including NONE). A centroid on a shared edge cannot choose
+            // an arbitrary first leaf. Ordered state keys make exact ties stable,
+            // independent of source-child traversal order. Quantization remains
+            // bounded by this cell at the source-relative resolution above.
+            std::map<EnforcerBlockerType, double> coverage;
+            for (const SourceLeaf& leaf : leaves) {
+                const auto poly = clip_polygon_by_triangle_2d({S[0], S[1], S[2]},
+                                                              leaf.lam[0], leaf.lam[1], leaf.lam[2]);
+                coverage[leaf.state] += polygon_area_2d(poly);
+            }
+            double best_area = 0.;
+            EnforcerBlockerType best_state = EnforcerBlockerType::NONE;
+            const double area_eps = 8. * std::numeric_limits<float>::epsilon() *
+                std::abs(cross2(S[1]-S[0], S[2]-S[0]));
+            for (const auto& entry : coverage) {
+                if (entry.second > best_area + area_eps) {
+                    best_area = entry.second;
+                    best_state = entry.first;
+                }
+            }
+            target_selector.CollapseSubtreeToState(facet_idx, best_state);
         }
     };
 

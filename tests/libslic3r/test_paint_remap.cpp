@@ -2026,3 +2026,55 @@ TEST_CASE("Same-mesh paint merging preserves disjoint strokes and source wins ov
     CHECK_THAT(painted_area_and_centroid(painted_facets(mesh, overwritten, EnforcerBlockerType::Extruder4)).first,
                WithinAbs(first_area, first_area * 0.05f));
 }
+
+TEST_CASE("Identical-mesh overlay cannot paint a nearby different root face", "[PaintRemap][Review24]")
+{
+    for (float gap : {0.f, 0.005f, 0.02f}) {
+        indexed_triangle_set its;
+        its.vertices = {Vec3f(0,0,0), Vec3f(10,0,0), Vec3f(0,10,0),
+                        Vec3f(0,0,gap), Vec3f(10,0,gap), Vec3f(0,10,gap)};
+        its.indices = {stl_triangle_vertex_indices(0,1,2), stl_triangle_vertex_indices(3,4,5)};
+        const TriangleMesh mesh(its);
+        TriangleSelector source(mesh), existing(mesh);
+        source.set_facet(0, EnforcerBlockerType::Extruder3);
+        existing.set_facet(1, EnforcerBlockerType::Extruder4);
+        const auto old = existing.serialize();
+        const auto merged = TriangleSelector::remap_painting(its, source.serialize(), its, Transform3d::Identity(), std::cref(old));
+        TriangleSelector result(mesh);
+        result.deserialize(merged, false);
+        INFO("gap=" << gap);
+        CHECK(result.get_facets_indices_by_state(EnforcerBlockerType::Extruder3) == std::vector<int>{0});
+        CHECK(result.get_facets_indices_by_state(EnforcerBlockerType::Extruder4) == std::vector<int>{1});
+    }
+}
+
+TEST_CASE("Smooth median coverage is symmetric under side and corner order changes", "[PaintRemap][Smooth][Review24]")
+{
+    for (float scale : {0.1f, 10.f}) {
+        for (int rotation : {0,1,2}) {
+            indexed_triangle_set its;
+            its.vertices = {scale * Vec3f(0,1,0), scale * Vec3f(-1,0,0), scale * Vec3f(1,0,0)};
+            its.indices.emplace_back(rotation, (rotation+1)%3, (rotation+2)%3);
+            const TriangleMesh mesh(its);
+            bool ok = false;
+            std::vector<std::pair<int,int>> origins;
+            const auto smooth = TriangleMeshDeal::smooth_triangle_mesh(mesh, ok, &origins);
+            REQUIRE(ok);
+            const float total = painted_area_and_centroid(smooth.its).first;
+            for (int side : {0,1}) {
+                // Exact, representable split from apex to midpoint of the base.
+                TriangleSelector::TriangleSplittingData data;
+                data.triangles_to_split.emplace_back(0,0);
+                const int apex_corner = (3-rotation)%3;
+                for (int nibble : {1 | (apex_corner<<2), side==0 ? 4 : 0, side==1 ? 4 : 0})
+                    for (int bit=0; bit<4; ++bit) data.bitstream.push_back((nibble>>bit)&1);
+                data.used_states[0] = data.used_states[1] = true;
+                const auto mapped = TriangleSelector::remap_painting_smooth(its, data, smooth.its, origins, std::nullopt);
+                const auto [area, centroid] = painted_area_and_centroid(painted_facets(smooth, mapped, EnforcerBlockerType::ENFORCER));
+                INFO("scale=" << scale << " corner rotation=" << rotation << " side=" << side << " coverage=" << area/total);
+                CHECK_THAT(area/total, WithinAbs(0.5f, 0.00001f));
+                CHECK((side==0 ? centroid.x() : -centroid.x()) > 0);
+            }
+        }
+    }
+}

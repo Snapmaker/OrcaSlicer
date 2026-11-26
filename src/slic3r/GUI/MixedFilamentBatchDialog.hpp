@@ -97,17 +97,19 @@ private:
 
     void set_match_buttons_state(bool matching);
     // Predict whether applying m_result would exceed MAXIMUM_FILAMENT_NUMBER (64)
-    // at the add_batch_custom_filaments gate (the authoritative cap). The estimate
-    // is an UPPER BOUND: post_apply_total = n + enabled_mixed + new_mixed_rows.
-    // It does NOT subtract the mixed rows cleanup_unused_filaments_after_batch_match
-    // will delete, because cleanup runs AFTER add_batch (Plater.cpp: add_batch at
-    // 2594, cleanup at 2627) — so the cap is hit at add_batch time, before any
-    // redundant_mixed deletion can lower the count. The bound is therefore
-    // conservative (may over-warn) but never under-warns: if it predicts overflow,
-    // colour will in fact be lost at the gate. Called from the Confirm button
-    // handler so the user is asked to proceed (or cancel) at the point of
-    // commitment, not as a banner at match-completion time. See the .cpp impl for
-    // the precise n / enabled_mixed / new_mixed_rows derivations.
+    // AFTER the post-apply cleanup. The estimate is the final total:
+    //   post_apply_total = n + enabled_mixed + new_mixed_rows - cleanup_freed,
+    // where cleanup_freed is the number of physical filaments
+    // cleanup_unused_filaments_after_batch_match will free (all physicals not in
+    // m_result.selected_physical_ids, survivor floor of one kept physical) — the
+    // identical computation to the batch_headroom the Plater apply path passes to
+    // add_batch_custom_filaments as reserved_headroom (GH #786). The add gate caps
+    // at kMax + reserved_headroom, so the transient peak at add time may exceed 64
+    // by exactly cleanup_freed; predicting the post-cleanup total keeps the dialog
+    // consistent with the backend (a 33-physical + 33-mix match predicts no overflow:
+    // 66 at add time, 37 after cleanup). Surfaced as a non-blocking advisory at
+    // match-completion time; Confirm stays enabled. See the .cpp impl for the
+    // precise n / enabled_mixed / new_mixed_rows / cleanup_freed derivations.
     bool predict_slot_overflow() const;
     // Post-match advisory priority: slot overflow (data-loss) outranks the ratio hint —
     // the red error banner and the orange ratio banner are mutually exclusive. Shows the

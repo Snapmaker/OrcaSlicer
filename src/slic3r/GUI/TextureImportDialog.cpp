@@ -1905,8 +1905,10 @@ void TexturePreviewCanvas::render()
     glDisable(GL_SCISSOR_TEST);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // Pane placeholder tone (#F5F5F5).
-    const wxColour pane_clr = StateColor::darkModeColorFor(wxColour("#F5F5F5"));
+    // Pane placeholder tone: same plate as the mixed-color-match preview
+    // panel (#E7E7E7, dark #54545B). #F5F5F5 has NO dark-mode mapping and
+    // stayed light grey in the dark theme (2026-11 feedback).
+    const wxColour pane_clr = StateColor::darkModeColorFor(wxColour("#E7E7E7"));
     const auto panes = pane_rects();
     auto draw_pane = [&, this](const wxRect& pane, float radius, const std::array<float, 3>& center, auto&& draw_fn) {
         if (pane.width <= 0 || pane.height <= 0) return;
@@ -3194,6 +3196,9 @@ static int unique_face_color_count(const std::vector<std::array<std::size_t, 3>>
 
 // Right end of the gap area slider, in percent of the total patch area.
 static constexpr double kGapAreaMaxPercent = 5.0;
+// Step-1 parameter layout: reserve room for the localized Gap Area (%) label.
+static constexpr int kGapSliderWidthDip = 188;
+static constexpr int kColorPresetGapDip = 16;
 // CIEDE2000 difference at which a neighbor's boundary counts half when the gap
 // merge picks the region a fragment is absorbed into.
 static constexpr double kGapMergeColorSigma = 10.0;
@@ -3837,7 +3842,7 @@ TextureImportDialog::~TextureImportDialog()
 bool TextureImportDialog::confirm_terminate_import()
 {
     MessageDialog dlg(this,
-        _L("Are you sure you want to terminate the entire import process?"),
+        _L("This action will end the entire import process. Are you sure you want to continue?"),
         _L("Texture Import Warning"), wxOK | wxCANCEL | wxICON_WARNING);
     return dlg.ShowModal() == wxID_OK;
 }
@@ -4012,7 +4017,10 @@ void TextureImportDialog::apply_preview_metrics()
 
 void TextureImportDialog::build_preview_panel(wxWindow* parent, wxSizer* sizer)
 {
-    const wxColour secondary_fg = StateColor::darkModeColorFor(wxColour("#71717A"));
+    // Muted caption color: same pair as the mixed feature's label text
+    // (#8F8F8F, dark #8A8A95). #71717A has NO dark-mode mapping and washed
+    // out on the dark dialog background (2026-11 feedback).
+    const wxColour secondary_fg = StateColor::darkModeColorFor(wxColour("#8F8F8F"));
 
     // Same split-screen idea as before (one GL canvas, one camera, two
     // viewports), restyled per the 2026-11 step-1 design: the canvas renders
@@ -4155,7 +4163,7 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
 
         auto* pills = new wxBoxSizer(wxHORIZONTAL);
         for (auto* btn : {m_btn_color_4, m_btn_color_8, m_btn_color_16, m_btn_color_32, m_btn_color_64})
-            pills->Add(btn, 0, wxLEFT, FromDIP(12));
+            pills->Add(btn, 0, wxLEFT, btn == m_btn_color_4 ? 0 : FromDIP(kColorPresetGapDip));
         row->Add(pills, 0, wxALIGN_CENTER_VERTICAL);
 
         card_sizer->Add(row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, FromDIP(16));
@@ -4173,14 +4181,14 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
         auto* row = new wxBoxSizer(wxHORIZONTAL);
 
         auto build_slider_group = [&](const wxString& label, AccentSlider*& slider, TextInput*& input,
-                                      int value, int min_v, int max_v,
+                                      int value, int min_v, int max_v, int slider_width_dip,
                                       void (TextureImportDialog::*on_slider)(wxCommandEvent&),
                                       void (TextureImportDialog::*on_text)(wxCommandEvent&)) {
             auto* group = new wxBoxSizer(wxHORIZONTAL);
             group->Add(add_param_label(m_params_panel, label),
                        0, wxALIGN_CENTER_VERTICAL | wxRIGHT, FromDIP(8));
             slider = new AccentSlider(m_params_panel, value, min_v, max_v);
-            slider->SetMinSize(wxSize(FromDIP(208), FromDIP(24)));
+            slider->SetMinSize(wxSize(FromDIP(slider_width_dip), FromDIP(24)));
             // Plain numeric input, same as the color-count one (no arrows).
             input = new TextInput(m_params_panel, wxString::Format("%d", value),
                                   "", "", wxDefaultPosition,
@@ -4193,14 +4201,14 @@ void TextureImportDialog::build_params_panel(wxWindow* parent, wxSizer* sizer)
         };
 
         row->Add(build_slider_group(_L("Smooth Level"), m_smooth_slider, m_smooth_spin,
-                                    m_param_smooth, 0, 10,
+                                    m_param_smooth, 0, 10, 208,
                                     &TextureImportDialog::on_smooth_slider_changed,
                                     &TextureImportDialog::on_smooth_spin_text_changed),
                  0, wxALIGN_CENTER_VERTICAL);
         row->AddStretchSpacer();
-        row->Add(build_slider_group(_L("Gap Area"), m_gap_slider, m_gap_spin,
+        row->Add(build_slider_group(_L("Gap Area (%)"), m_gap_slider, m_gap_spin,
                                     gap_value_to_slider(m_param_gap_area), 0,
-                                    gap_value_to_slider(kGapAreaMaxPercent),
+                                    gap_value_to_slider(kGapAreaMaxPercent), kGapSliderWidthDip,
                                     &TextureImportDialog::on_gap_slider_changed,
                                     &TextureImportDialog::on_gap_spin_text_changed),
                  0, wxALIGN_CENTER_VERTICAL);
@@ -4801,7 +4809,10 @@ void TextureImportDialog::update_ui_for_state()
     m_preview_canvas->set_computing_overlay(computing);
 
     if (ready && valid)
-        style_confirm_button(is_params_dirty());
+        // 2026-11 spec: confirm always reads as clickable accent here -
+        // unapplied param edits do not mute it (they are discarded on
+        // confirm, the last applied result is exported).
+        style_confirm_button(false);
     else if (m_hint_label)
         m_hint_label->Hide();
 
@@ -4810,7 +4821,7 @@ void TextureImportDialog::update_ui_for_state()
     // disabled (2026-11 design), also while the color count exceeds the
     // original palette (doc section 3.3.1 note 4) or a computation runs.
     if (m_gap_warning_label) {
-        m_gap_warning_label->SetLabel(_L("Tip: gap area exceeds the range (0.00-5.00)"));
+        m_gap_warning_label->SetLabel(_L("Notice: Gap area out of range (0.00-5.00%)."));
         m_gap_warning_label->Show(m_gap_out_of_range);
     }
     style_apply_button(!computing && color_count_input_valid() && !m_color_max_exceeded
@@ -5047,10 +5058,17 @@ void TextureImportDialog::on_computation_complete(wxCommandEvent&)
     sort_current_matches_by_filament_index();
     update_filament_color_map();
     rebuild_mapping_rows();
-    // A fresh computation rebuilds the baseline mapping; any applied
-    // one-click mix (and its snapshot) is obsolete now.
+    // A fresh computation rebuilds the baseline mapping and DISCARDS manual
+    // row adjustments; the stale mix snapshot must not be restored onto the
+    // new clusters either. The selected MATCHING MODE however survives a
+    // re-Apply (2026-11 spec): a CMYW user gets CMYW re-run on the fresh
+    // result via the m_auto_mix_pending hook in set_state(Ready). The
+    // cancel and failure paths of on_computation_complete return BEFORE
+    // this code, so the previous successful mapping and mode survive
+    // untouched there.
     m_auto_mix_snapshot.reset();
-    m_auto_mix_pending = false;
+    const bool reapply_mix = (m_mix_mode_index == 1);
+    m_auto_mix_pending = reapply_mix;
 
     m_applied_color_count = m_param_color_count;
     m_applied_smooth      = m_param_smooth;
@@ -5058,8 +5076,11 @@ void TextureImportDialog::on_computation_complete(wxCommandEvent&)
 
     set_state(TextureImportState::Ready);
     update_drop_warning_visibility();
-    // Fresh result is the unmixed baseline; reflect it in the dropdown.
-    set_mix_mode_ui(0);
+    // Direct-mapping baseline: reflect it in the dropdown. A re-applied
+    // CMYW — or its failure fallback to direct mapping inside
+    // apply_auto_standard_mix — already synced the mode UI in set_state.
+    if (!reapply_mix)
+        set_mix_mode_ui(0);
 
     GetSizer()->Layout();
 
@@ -7432,7 +7453,8 @@ void TextureImportDialog::update_smooth_input_error_style()
             std::pair<wxColour, int>(wxColour(0x00, 0x96, 0x88), StateColor::Hovered),
             std::pair<wxColour, int>(wxColour(0xDB, 0xDB, 0xDB), StateColor::Normal)));
         if (auto* tc = m_smooth_spin->GetTextCtrl()) {
-            tc->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT));
+            // TextInput default Normal text (#262E30 -> #EFEFF0 in dark mode).
+            tc->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#262E30")));
             tc->Refresh();
         }
     }
@@ -7460,7 +7482,8 @@ void TextureImportDialog::update_gap_input_error_style()
             std::pair<wxColour, int>(wxColour(0x00, 0x96, 0x88), StateColor::Hovered),
             std::pair<wxColour, int>(wxColour(0xDB, 0xDB, 0xDB), StateColor::Normal)));
         if (auto* tc = m_gap_spin->GetTextCtrl()) {
-            tc->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT));
+            // TextInput default Normal text (#262E30 -> #EFEFF0 in dark mode).
+            tc->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#262E30")));
             tc->Refresh();
         }
     }
@@ -7489,7 +7512,8 @@ void TextureImportDialog::update_color_input_error_style()
             std::pair<wxColour, int>(wxColour(0x00, 0x96, 0x88), StateColor::Hovered),
             std::pair<wxColour, int>(wxColour(0xDB, 0xDB, 0xDB), StateColor::Normal)));
         if (auto* tc = m_color_spin->GetTextCtrl()) {
-            tc->SetForegroundColour(wxSystemSettings::GetColour(wxSYS_COLOUR_WINDOWTEXT));
+            // TextInput default Normal text (#262E30 -> #EFEFF0 in dark mode).
+            tc->SetForegroundColour(StateColor::darkModeColorFor(wxColour("#262E30")));
             tc->Refresh();
         }
     }
@@ -7629,7 +7653,7 @@ void TextureImportDialog::on_gap_spin_text_changed(wxCommandEvent& evt)
     update_gap_input_error_style();
     update_confirm_button_state();
     if (m_gap_warning_label) {
-        m_gap_warning_label->SetLabel(_L("Tip: gap area exceeds the range (0.00-5.00)"));
+        m_gap_warning_label->SetLabel(_L("Notice: Gap area out of range (0.00-5.00%)."));
         m_gap_warning_label->Show(m_gap_out_of_range);
     }
 }
@@ -7965,11 +7989,11 @@ void TextureImportDialog::update_confirm_button_state()
         m_color_warning_label->Show(color_err);
     }
     if (m_gap_warning_label) {
-        m_gap_warning_label->SetLabel(_L("Tip: gap area exceeds the range (0.00-5.00)"));
+        m_gap_warning_label->SetLabel(_L("Notice: Gap area out of range (0.00-5.00%)."));
         m_gap_warning_label->Show(gap_err && !color_err);
     }
     if (m_smooth_warning_label) {
-        m_smooth_warning_label->SetLabel(_L("Tip: smooth level exceeds the range (0-10)"));
+        m_smooth_warning_label->SetLabel(_L("Notice: Smooth level out of range (0-10)."));
         m_smooth_warning_label->Show(smooth_err && !color_err && !gap_err);
     }
     if (m_hint_label)
@@ -7990,7 +8014,13 @@ void TextureImportDialog::update_confirm_button_state()
     }
 
     m_btn_ok->Enable(true);
-    style_confirm_button(is_params_dirty());
+    // 2026-11 spec: confirming with UNAPPLIED step-1 param edits is allowed -
+    // it exports the last APPLIED simplification and the mapping built on it.
+    // The button therefore always reads as the clickable accent here; the
+    // muted "go apply first" look read as a disabled control (2026-11
+    // feedback). The step-1 change hint above is untouched.
+    apply_accent_button_colours(m_btn_ok);
+    m_btn_ok->UnsetToolTip();
 
     m_btn_ok->Refresh();
     Layout();
@@ -8032,7 +8062,11 @@ void TextureImportDialog::style_apply_button(bool actionable)
 
 void TextureImportDialog::on_ok_clicked(wxCommandEvent&)
 {
-    if (m_state != TextureImportState::Ready || !has_valid_result() || is_params_dirty())
+    // 2026-11 spec: UNAPPLIED step-1 param edits do NOT block confirming -
+    // confirm exports the last APPLIED simplification (m_painted) and the
+    // mapping built on it, manual row adjustments included. The unapplied
+    // values are simply discarded with the dialog.
+    if (m_state != TextureImportState::Ready || !has_valid_result())
         return;
 
     // The gap merge is folded into m_painted at Apply time (both the
@@ -8083,6 +8117,10 @@ void TextureImportDialog::on_dpi_changed(const wxRect&)
         if (btn) {
             btn->SetCornerRadius(FromDIP(4));
             btn->SetMinSize(wxSize(FromDIP(56), FromDIP(24)));
+            if (auto* owner = btn->GetContainingSizer()) {
+                if (auto* item = owner->GetItem(btn))
+                    item->SetBorder(btn == m_btn_color_4 ? 0 : FromDIP(kColorPresetGapDip));
+            }
         }
     }
 
@@ -8103,7 +8141,7 @@ void TextureImportDialog::on_dpi_changed(const wxRect&)
     if (m_smooth_slider)
         m_smooth_slider->SetMinSize(wxSize(FromDIP(208), FromDIP(24)));
     if (m_gap_slider)
-        m_gap_slider->SetMinSize(wxSize(FromDIP(208), FromDIP(24)));
+        m_gap_slider->SetMinSize(wxSize(FromDIP(kGapSliderWidthDip), FromDIP(24)));
 
     if (m_step_indicator)
         m_step_indicator->SetMinSize(wxSize(-1, FromDIP(38)));

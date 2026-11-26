@@ -253,8 +253,17 @@ void UpdatePluginDialog::update_info(std::string json_path)
     Fit();
 }
 
+// Compose the guarded theme-switch script pushed into the shell page. The page
+// side checks window.SwitchDarkMode, so old data_dir shell pages without it
+// degrade to the light default. The dark flag is read from the app's live
+// dark_mode() at the injection site, never from a cached value.
+static std::string page_theme_script(bool dark)
+{
+    return "if (window.SwitchDarkMode) SwitchDarkMode(" + std::string(dark ? "true" : "false") + ");";
+}
+
 UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
-    : DPIDialog(parent, wxID_ANY, _L("New version of Snapmaker Orca"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX | wxRESIZE_BORDER)
+    : DPIDialog(parent, wxID_ANY, _L("New version of Snapmaker Orca"), wxDefaultPosition, wxDefaultSize, wxCAPTION | wxCLOSE_BOX)
 {
     std::string icon_path = (boost::format("%1%/images/Snapmaker_OrcaTitle.ico") % resources_dir()).str();
     SetIcon(wxIcon(encode_path(icon_path.c_str()), wxBITMAP_TYPE_ICO));
@@ -436,6 +445,40 @@ UpdateVersionDialog::UpdateVersionDialog(wxWindow *parent)
 
     Centre(wxBOTH);
     wxGetApp().UpdateDlgDarkUI(this);
+    // Non-Windows: the DPIAware base class already binds wxEVT_SYS_COLOUR_CHANGED
+    // (DpiAware.hpp), but its body is empty on Windows. On macOS/Linux the OS
+    // appearance flip must also re-walk the chrome and push the new theme into
+    // the page. Skip() keeps the base handler (update_dark_config(); the default
+    // on_sys_color_changed() is empty) running after this one. RecreateAll is
+    // driven by MainFrame's own handler (MainFrame.cpp:2398), not by this chain.
+    // Windows compiles this binding out, matching the base class gate.
+#ifndef __WINDOWS__
+    Bind(wxEVT_SYS_COLOUR_CHANGED, [this](wxSysColourChangedEvent& event) {
+        wxGetApp().UpdateDlgDarkUI(this);
+        if (m_webview_loaded) {
+            RunScript(page_theme_script(wxGetApp().dark_mode()));
+        }
+        event.Skip();
+    });
+#endif
+    // Minimal idle-time theme detection for the Windows in-app switch (no
+    // SYS_COLOUR_CHANGED there): only apply when the dialog is shown and
+    // dark_mode() changed since the last idle pass. The previous value lives in
+    // the mutable lambda capture, so no header member is needed. No Skip():
+    // nothing else on this dialog needs idle events.
+    Bind(wxEVT_IDLE, [this, last_dark = wxGetApp().dark_mode()](wxIdleEvent&) mutable {
+        if (!IsShown()) {
+            return;
+        }
+        const bool dark = wxGetApp().dark_mode();
+        if (dark != last_dark) {
+            last_dark = dark;
+            wxGetApp().UpdateDlgDarkUI(this);
+            if (m_webview_loaded) {
+                RunScript(page_theme_script(dark));
+            }
+        }
+    });
 }
 
 UpdateVersionDialog::~UpdateVersionDialog() {}
@@ -549,6 +592,9 @@ void UpdateVersionDialog::inject_release_note()
     // Keep the source for page reloads. The page skips duplicate renders within
     // its document, so height notifications do not rebuild the note or its images.
     ShowReleaseNote(m_pending_release_note);
+    // Push the current theme right after the note: covers the cold-start
+    // injection and the re-injection after a page reload (RecreateAll).
+    RunScript(page_theme_script(wxGetApp().dark_mode()));
 }
 
 /** @brief Rebuild the plain-text page and switch to it (webview shell page unavailable). */

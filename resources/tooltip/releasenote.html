@@ -3,6 +3,40 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <script>
+            // Authoritative page-side theme switch; the C++ side drives it via
+            // RunScript once the shell page is ready. The force argument keeps
+            // repeated injections with the same value idempotent.
+            window.SwitchDarkMode = function (isDark) {
+                document.documentElement.classList.toggle('dark', isDark);
+            };
+            // Guarded first-frame bootstrap: all three backends append a
+            // "(dark)" token to the user agent in dark mode (WebView.cpp
+            // SetUserAgent: WebView2, WKWebView, WebKitGTK). Apply the dark
+            // class before the stylesheet paints, so the first frame has no
+            // light flash. The C++ injection stays the authoritative driver
+            // for later theme switches, guarded by the SwitchDarkMode check.
+            (function () {
+                try {
+                    if (navigator.userAgent.indexOf('(dark)') !== -1) {
+                        window.SwitchDarkMode(true);
+                    }
+                } catch (e) {
+                    // Any error: keep the light default.
+                }
+            })();
+        </script>
+        <style>
+            /* Pre-stylesheet dark-canvas guard: the first frame paints before
+               releasenote.css loads, so keep this background-color in sync with
+               the html.dark body rule in releasenote.css (the palette's single
+               source of truth). color-scheme: light replicates the :root guard,
+               keeping WebView2's dark PreferredColorScheme from mutating the
+               canvas; light mode declares nothing here, the canvas still takes
+               the body #F8F8F8 propagated up (CSS Backgrounds 3, section 3.11).
+               Keep this rule before the stylesheet link below. */
+            html.dark { color-scheme: light; background-color: #36363C; color: #EFEFF0; }
+        </style>
         <link rel="stylesheet" href="./releasenote.css" />
         <script src="./main.js"></script>
     </head>
@@ -20,26 +54,105 @@
                 window.showMarkdown(encodeURIComponent(data));
             });
         }
-        // Infer vertical merges from Feishu's plain empty-cell pattern. GFM carries
-        // no merge metadata, so this remains a heuristic: genuine blanks are ambiguous.
-        // Preserve child elements and explicit spans; never infer across row groups,
-        // blank rows or rows with missing cells.
+        // Rebuild Feishu's merged cells in both directions: empty cells in header
+        // continuation columns merge left (colSpan), empties in other columns merge
+        // up (rowSpan). GFM carries no merge metadata, so this remains a heuristic
+        // with known limits: a blank header cell plus a vertical merge are
+        // indistinguishable, header-only tables (no data rows) are never merged, and
+        // malformed raw HTML -- no single-row thead, or any tbody whose column count
+        // differs from the header's -- keeps the legacy vertical-only behavior.
+        // Otherwise every tbody is processed on its own; extra thead rows or tfoot
+        // rows are ignored. Preserve child elements
+        // and explicit spans; never infer across row groups, blank rows or rows with
+        // missing cells.
         window.fixFeishuMerges = function () {
             function isEmptyCell(cell) {
                 return cell.children.length === 0 && cell.textContent.trim() === '';
             }
             document.querySelectorAll('#contents table').forEach(function (table) {
                 if (table.querySelector('[rowspan], [colspan], table') || table.parentElement.closest('table')) return;
-                Array.prototype.slice.call(table.tBodies).forEach(function (body) {
-                    // Snapshot the original grid before removing cells, including blank-row
-                    // status, so changes in one column cannot affect another column.
+                // A column whose header cell is empty is a continuation column: it
+                // anchors left merges, and a row span may only absorb the
+                // continuation columns it covers, never cells holding live content.
+                function spanFree(anchor, row, c) {
+                    for (var k = c; k < c + anchor.colSpan; k++) {
+                        if (!row.cells[k] || !isEmptyCell(row.cells[k])) return false;
+                        if (k > c && (!continuation || !continuation[k])) return false;
+                    }
+                    return true;
+                }
+                // Snapshot the original grid before removing cells, including
+                // blank-row status, so changes in one column cannot affect another
+                // column.
+                var bodies = Array.prototype.slice.call(table.tBodies).map(function (body) {
                     var rows = Array.prototype.slice.call(body.rows).map(function (row) {
                         var cells = Array.prototype.slice.call(row.cells);
                         return { cells: cells, isBlank: cells.every(isEmptyCell) };
                     });
                     var colCount = 0;
                     rows.forEach(function (row) { colCount = Math.max(colCount, row.cells.length); });
+                    return { rows: rows, colCount: colCount };
+                });
+                // Strict table-wide gate: infer in both directions only when a
+                // single-row thead exists and every row group has as many columns
+                // as the header. Otherwise the whole table keeps the legacy
+                // vertical-only behavior, byte for byte.
+                var headRow = table.tHead && table.tHead.rows.length === 1 ? table.tHead.rows[0] : null;
+                var continuation = null;
+                if (headRow && bodies.length > 0 && bodies[0].colCount > 0 && headRow.cells.length === bodies[0].colCount) {
+                    var aligned = true;
+                    bodies.forEach(function (body) {
+                        if (body.colCount !== bodies[0].colCount) aligned = false;
+                    });
+                    if (aligned) continuation = Array.prototype.slice.call(headRow.cells).map(isEmptyCell);
+                }
+                if (continuation) {
+                    // Header pass: an empty header cell extends the previous
+                    // non-empty cell on the single header row.
+                    var headAnchor = null;
+                    Array.prototype.slice.call(headRow.cells).forEach(function (th) {
+                        if (isEmptyCell(th)) {
+                            if (headAnchor) {
+                                headAnchor.colSpan = headAnchor.colSpan + 1;
+                                th.remove();
+                            }
+                        } else {
+                            headAnchor = th;
+                        }
+                    });
+                }
+                bodies.forEach(function (body) {
+                    var rows = body.rows;
+                    var colCount = body.colCount;
+                    if (continuation) {
+                        // Horizontal pass: an empty continuation cell merges into
+                        // the nearest non-empty cell on its left; an empty cell in
+                        // a non-continuation column cuts the chain and waits for
+                        // the vertical pass.
+                        rows.forEach(function (row) {
+                            if (row.isBlank || row.cells.length !== colCount) return;
+                            var anchor = null;
+                            for (var c = 0; c < colCount; c++) {
+                                var cell = row.cells[c];
+                                if (isEmptyCell(cell)) {
+                                    if (continuation[c] && anchor) {
+                                        anchor.colSpan = anchor.colSpan + 1;
+                                        cell.remove();
+                                    } else if (!continuation[c]) {
+                                        anchor = null;
+                                    }
+                                } else {
+                                    // Any non-empty content anchors the span; the
+                                    // span only widens, it never copies content.
+                                    anchor = cell;
+                                }
+                            }
+                        });
+                    }
+                    // Vertical pass: the legacy upward merge, now restricted to
+                    // non-continuation columns.
                     for (var c = colCount - 1; c >= 0; c--) {
+                        if (continuation && continuation[c]) continue;
                         var anchor = null;
                         rows.forEach(function (row) {
                             if (row.isBlank || row.cells.length !== colCount) {
@@ -47,10 +160,23 @@
                                 return;
                             }
                             var cell = row.cells[c];
+                            if (!cell.parentNode) {
+                                // Unreachable by invariant: the horizontal pass
+                                // only detaches continuation columns, which this
+                                // loop skips. Break the chain instead of merging
+                                // into a detached cell.
+                                anchor = null;
+                                return;
+                            }
                             if (isEmptyCell(cell)) {
-                                if (anchor) {
+                                if (anchor && spanFree(anchor, row, c)) {
                                     anchor.rowSpan = anchor.rowSpan + 1;
+                                    for (var k = c + 1; k < c + anchor.colSpan; k++) {
+                                        if (continuation && continuation[k] && row.cells[k]) row.cells[k].remove();
+                                    }
                                     cell.remove();
+                                } else {
+                                    anchor = null;
                                 }
                             } else {
                                 // Textless rich content is preserved and breaks the chain.
@@ -110,7 +236,8 @@
         // after height notifications; a reload creates a fresh cache and renders again.
         // Test exemption: fixFeishuMerges and this wrapper have no automated tests
         // (no JS/HTML test infrastructure in this repo); verified manually on Feishu
-        // exports -- merged tables, task lists, empty cells, nested tables, CJK text.
+        // exports -- merged tables (including colSpan tables), task lists, empty
+        // cells, nested tables, CJK text.
         (function () {
             var original = window.showMarkdown;
             var lastData = null;

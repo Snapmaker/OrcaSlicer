@@ -1,4 +1,4 @@
-// https://github.com/CedricGuillemet/ImGuizmo
+﻿// https://github.com/CedricGuillemet/ImGuizmo
 // v 1.89 WIP
 //
 // The MIT License(MIT)
@@ -32,8 +32,10 @@
 #include "ImGuizmo.h"
 
 #include <algorithm>
+#include <array>
 #include <math.h>
 #include <cmath>
+#include <vector>
 
 #if defined(_MSC_VER) || defined(__MINGW32__)
 #include <malloc.h>
@@ -2816,19 +2818,288 @@ namespace IMGUIZMO_NAMESPACE
        m16[15] = 1.0f;
    }
 
+   // ORCA: rounded navigator cube, edge length is 1, bevel radius must stay below the 0.25 panel band
+   static const float NAV_CUBE_ROUND_RADIUS   = 0.12f;
+   static const int   NAV_CUBE_ROUND_SEGMENTS = 4;
+   static const int   NAV_CUBE_SAMPLES        = NAV_CUBE_ROUND_SEGMENTS * 2 + 4;
+
+   /**
+    * @brief Build face-local sample coordinates in [0, 1]: bevel arcs at both ends plus panel borders.
+    * @param samples Output array with NAV_CUBE_SAMPLES ascending values.
+    */
+   static void BuildRoundedCubeSamples(std::array<float, NAV_CUBE_SAMPLES>& samples)
+   {
+       for (int j = 0; j <= NAV_CUBE_ROUND_SEGMENTS; ++j)
+       {
+           // uniform angle steps over the 45 degree half of the bevel owned by this face
+           const float theta = 0.25f * ZPI * static_cast<float>(NAV_CUBE_ROUND_SEGMENTS - j) / static_cast<float>(NAV_CUBE_ROUND_SEGMENTS);
+           const float u     = NAV_CUBE_ROUND_RADIUS - NAV_CUBE_ROUND_RADIUS * tanf(theta);
+           samples[j]                        = u;
+           samples[NAV_CUBE_SAMPLES - 1 - j] = 1.f - u;
+       }
+       samples[NAV_CUBE_ROUND_SEGMENTS + 1] = 0.25f;
+       samples[NAV_CUBE_ROUND_SEGMENTS + 2] = 0.75f;
+   }
+
+   /**
+    * @brief Project a point on the unit cube surface onto the rounded cube.
+    * @param p Point on the cube surface (cube centered at origin).
+    * @param normal Output outward unit normal at the projected point.
+    * @return Point on the rounded cube surface.
+    */
+   static vec_t RoundCubePoint(const vec_t& p, vec_t& normal)
+   {
+       const float h     = 0.5f - NAV_CUBE_ROUND_RADIUS;
+       const vec_t inner = makeVect(ImClamp(p.x, -h, h), ImClamp(p.y, -h, h), ImClamp(p.z, -h, h));
+       normal            = p - inner;
+       normal.Normalize();
+       return inner + normal * NAV_CUBE_ROUND_RADIUS;
+   }
+
+   /// @brief Fixed model-space geometry shared by all navigator views.
+   struct RoundedCubeMesh
+   {
+       struct Quad
+       {
+           vec_t normal;
+           size_t baseIndex;
+           int boxIndex;
+       };
+
+       std::array<vec_t, 6 * NAV_CUBE_SAMPLES * NAV_CUBE_SAMPLES> vertices;
+       std::array<Quad, 6 * (NAV_CUBE_SAMPLES - 1) * (NAV_CUBE_SAMPLES - 1)> quads;
+
+       /// @brief Build the vertices and panels in their original face and draw order.
+       RoundedCubeMesh()
+       {
+           std::array<float, NAV_CUBE_SAMPLES> samples;
+           BuildRoundedCubeSamples(samples);
+           size_t quadIndex = 0;
+
+           for (int face = 0; face < 6; ++face)
+           {
+               const int axis = face % 3;
+               const float invert = face > 2 ? -1.f : 1.f;
+               const vec_t dn = directionUnary[axis];
+               const vec_t dx = directionUnary[(axis + 1) % 3];
+               const vec_t dy = directionUnary[(axis + 2) % 3];
+               const vec_t indexVectorX = dx * invert;
+               const vec_t indexVectorY = dy * invert;
+               const vec_t boxOrigin = dn * -invert - indexVectorX - indexVectorY;
+               const size_t faceBase = static_cast<size_t>(face) * samples.size() * samples.size();
+
+               for (size_t y = 0; y < samples.size(); ++y)
+               {
+                   for (size_t x = 0; x < samples.size(); ++x)
+                   {
+                       const vec_t point = (dn * 0.5f + dx * (samples[x] - 0.5f) + dy * (samples[y] - 0.5f)) * invert;
+                       vec_t normal;
+                       vertices[faceBase + y * samples.size() + x] = RoundCubePoint(point, normal);
+                   }
+               }
+
+               for (size_t y = 0; y + 1 < samples.size(); ++y)
+               {
+                   for (size_t x = 0; x + 1 < samples.size(); ++x)
+                   {
+                       const float u = 0.5f * (samples[x] + samples[x + 1]);
+                       const float v = 0.5f * (samples[y] + samples[y + 1]);
+                       const vec_t point = (dn * 0.5f + dx * (u - 0.5f) + dy * (v - 0.5f)) * invert;
+                       Quad& quad = quads[quadIndex++];
+                       RoundCubePoint(point, quad.normal);
+                       quad.baseIndex = faceBase + y * samples.size() + x;
+
+                       // Panel indices run from the high end (0) to the low end (2).
+                       const int col = u > 0.75f ? 0 : (u > 0.25f ? 1 : 2);
+                       const int row = v > 0.75f ? 0 : (v > 0.25f ? 1 : 2);
+                       const vec_t box = boxOrigin + indexVectorX * static_cast<float>(col)
+                                         + indexVectorY * static_cast<float>(row) + makeVect(1.f, 1.f, 1.f);
+                       quad.boxIndex = static_cast<int>(box.x * 9.f + box.y * 3.f + box.z);
+                   }
+               }
+           }
+       }
+   };
+
+   static float Cross2D(const ImVec2& o, const ImVec2& a, const ImVec2& b)
+   {
+       return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+   }
+
+   /// @brief Test either winding, including shared edges and excluding edge-on triangles.
+   static bool ContainsProjectedTriangle(const ImVec2& a, const ImVec2& b, const ImVec2& c, const ImVec2& point)
+   {
+       const float area = Cross2D(a, b, c);
+       if (area < 0.f)
+       {
+           return ImTriangleContainsPoint(c, b, a, point);
+       }
+       return area > 0.f && ImTriangleContainsPoint(a, b, c, point);
+   }
+
+   /**
+    * @brief Monotone chain convex hull; output is clockwise on screen (y down) as ImGui AA fill expects.
+    * @param points Input points, sorted in place.
+    * @param hull Output hull vertices.
+    */
+   static void ConvexHull2D(std::vector<ImVec2>& points, std::vector<ImVec2>& hull)
+   {
+       hull.clear();
+       if (points.size() < 3)
+       {
+           return;
+       }
+       std::sort(points.begin(), points.end(), [](const ImVec2& a, const ImVec2& b) {
+           return a.x < b.x || (a.x == b.x && a.y < b.y);
+       });
+       hull.resize(points.size() * 2);
+       size_t k = 0;
+       for (size_t i = 0; i < points.size(); ++i)
+       {
+           while (k >= 2 && Cross2D(hull[k - 2], hull[k - 1], points[i]) <= 0.f)
+           {
+               --k;
+           }
+           hull[k++] = points[i];
+       }
+       const size_t lowerSize = k + 1;
+       for (size_t i = points.size() - 1; i > 0; --i)
+       {
+           while (k >= lowerSize && Cross2D(hull[k - 2], hull[k - 1], points[i - 1]) <= 0.f)
+           {
+               --k;
+           }
+           hull[k++] = points[i - 1];
+       }
+       hull.resize(k - 1);
+   }
+
+   // ORCA: navigator cube lighting, shade = ambient + diffuse * max(0, n.l)
+   static const float NAV_CUBE_AMBIENT = 0.6f;
+   static const float NAV_CUBE_DIFFUSE = 0.4f;
+
+   static ImU32 ShadeColor(const ImVec4& color, float shade)
+   {
+       return ImGui::ColorConvertFloat4ToU32(ImVec4(ImMin(color.x * shade, 1.f), ImMin(color.y * shade, 1.f), ImMin(color.z * shade, 1.f), color.w));
+   }
+
+   /// @brief Draw the rounded cube, using its projected faces for both rendering and picking.
+   /// @param canHover Whether mouse input is available to the navigator.
+   /// @return Hovered box index, or -1 when no panel is hit.
+   static int DrawRoundedCube(ImDrawList* drawList, const matrix_t& res, const matrix_t& cubeView, const ImRect& rect,
+                              const bool canHover)
+   {
+       if (drawList == nullptr)
+       {
+           return -1;
+       }
+
+       struct CubeQuad
+       {
+           size_t baseIndex;
+           int boxIndex;
+           float shade;
+       };
+
+       const ImVec2 position = rect.Min;
+       const ImVec2 size     = rect.GetSize();
+
+       // hover color: same blend as the former 0x80 orange overlay on the face color
+       const ImVec4 faceColorV = gContext.mStyle.Colors[FACE];
+       const ImVec4 hoverV(0xF0 / 255.f, 0xA0 / 255.f, 0x60 / 255.f, 0x80 / 255.f);
+       const float  outAlpha = hoverV.w + faceColorV.w * (1.f - hoverV.w);
+       const float  faceW    = outAlpha > 0.f ? faceColorV.w * (1.f - hoverV.w) / outAlpha : 0.f;
+       const float  hoverW   = outAlpha > 0.f ? hoverV.w / outAlpha : 0.f;
+       const ImVec4 hoverColorV(faceColorV.x * faceW + hoverV.x * hoverW, faceColorV.y * faceW + hoverV.y * hoverW,
+                                faceColorV.z * faceW + hoverV.z * hoverW, outAlpha);
+
+       vec_t viewCenter = makeVect(0.f, 0.f, 0.f);
+       viewCenter.TransformPoint(cubeView);
+
+       // light in view space: toward the viewer, tilted up-left so faces read with different brightness
+       vec_t lightDir = makeVect(-viewCenter.x, -viewCenter.y, -viewCenter.z);
+       lightDir.Normalize();
+       lightDir = lightDir + makeVect(-0.25f, 0.8f, 0.f);
+       lightDir.Normalize();
+
+       static const RoundedCubeMesh mesh;
+       std::vector<ImVec2> screenPts;
+       screenPts.reserve(mesh.vertices.size());
+       for (const vec_t& vertex : mesh.vertices)
+       {
+           screenPts.push_back(worldToPos(vertex, res, position, size));
+       }
+
+       std::vector<CubeQuad> quads;
+       quads.reserve(mesh.quads.size());
+       for (const RoundedCubeMesh::Quad& quad : mesh.quads)
+       {
+           vec_t normal = quad.normal;
+           normal.TransformVector(cubeView);
+           normal.Normalize();
+           if (normal.x * viewCenter.x + normal.y * viewCenter.y + normal.z * viewCenter.z > 0.f)
+           {
+               continue;
+           }
+
+           const float diffuse = ImMax(normal.x * lightDir.x + normal.y * lightDir.y + normal.z * lightDir.z, 0.f);
+           const float shade = NAV_CUBE_AMBIENT + NAV_CUBE_DIFFUSE * diffuse;
+           quads.push_back({quad.baseIndex, quad.boxIndex, shade});
+       }
+
+       const auto getQuadPoints = [&screenPts](const size_t baseIndex) -> std::array<ImVec2, 4>
+       {
+           return {{screenPts[baseIndex], screenPts[baseIndex + 1],
+                    screenPts[baseIndex + NAV_CUBE_SAMPLES + 1], screenPts[baseIndex + NAV_CUBE_SAMPLES]}};
+       };
+
+       int hoveredBox = -1;
+       if (canHover)
+       {
+           const ImVec2 mousePos = ImGui::GetIO().MousePos;
+           // Pick the last drawn quad at shared edges using the same triangle fan as ImGui.
+           for (auto quad = quads.crbegin(); quad != quads.crend(); ++quad)
+           {
+               const std::array<ImVec2, 4> points = getQuadPoints(quad->baseIndex);
+               if (ContainsProjectedTriangle(points[0], points[1], points[2], mousePos) ||
+                   ContainsProjectedTriangle(points[0], points[2], points[3], mousePos))
+               {
+                   hoveredBox = quad->boxIndex;
+                   break;
+               }
+           }
+       }
+
+       // anti-aliased silhouette underneath in the darkest shade: hides seams and gives a soft outline
+       std::vector<ImVec2> hull;
+       std::vector<ImVec2> hullInput(screenPts);
+       ConvexHull2D(hullInput, hull);
+       if (hull.size() >= 3)
+       {
+           drawList->AddConvexPolyFilled(hull.data(), static_cast<int>(hull.size()), ShadeColor(faceColorV, NAV_CUBE_AMBIENT));
+       }
+
+       const ImDrawListFlags oldFlags = drawList->Flags;
+       drawList->Flags &= ~ImDrawListFlags_AntiAliasedFill;
+       for (const CubeQuad& quad : quads)
+       {
+           const std::array<ImVec2, 4> quadPts = getQuadPoints(quad.baseIndex);
+           const ImVec4& color = quad.boxIndex == hoveredBox ? hoverColorV : faceColorV;
+           drawList->AddConvexPolyFilled(quadPts.data(), static_cast<int>(quadPts.size()), ShadeColor(color, quad.shade));
+       }
+       drawList->Flags = oldFlags;
+       return hoveredBox;
+   }
+
    ViewManipulateResult ViewManipulate(float* view, float length, ImVec2 position, ImVec2 size, ImU32 backgroundColor)
    {
       static bool isDraging = false;
       static bool isClicking = false;
-      static bool isInside = false;
+      static int pressedBox = -1;
       static vec_t interpolationUp;
       static vec_t interpolationDir;
       static int interpolationFrames = 0;
       const vec_t referenceUp = makeVect(0.f, 1.f, 0.f);
-
-      matrix_t svgView, svgProjection;
-      svgView = gContext.mViewMat;
-      svgProjection = gContext.mProjectionMat;
 
       ImGuiIO& io = ImGui::GetIO();
       gContext.mDrawList->AddRectFilled(position, position + size, backgroundColor);
@@ -2848,167 +3119,115 @@ namespace IMGUIZMO_NAMESPACE
       vec_t zero = makeVect(0.f, 0.f);
       LookAt(&eye.x, &zero.x, &up.x, cubeView.m16);
 
-      // set context
-      gContext.mViewMat = cubeView;
-      gContext.mProjectionMat = cubeProjection;
-      ComputeCameraRay(gContext.mRayOrigin, gContext.mRayVector, position, size);
-
       const matrix_t res = cubeView * cubeProjection;
-
-      // panels
-      static const ImVec2 panelPosition[9] = { ImVec2(0.75f,0.75f), ImVec2(0.25f, 0.75f), ImVec2(0.f, 0.75f),
-         ImVec2(0.75f, 0.25f), ImVec2(0.25f, 0.25f), ImVec2(0.f, 0.25f),
-         ImVec2(0.75f, 0.f), ImVec2(0.25f, 0.f), ImVec2(0.f, 0.f) };
-
-      static const ImVec2 panelSize[9] = { ImVec2(0.25f,0.25f), ImVec2(0.5f, 0.25f), ImVec2(0.25f, 0.25f),
-         ImVec2(0.25f, 0.5f), ImVec2(0.5f, 0.5f), ImVec2(0.25f, 0.5f),
-         ImVec2(0.25f, 0.25f), ImVec2(0.5f, 0.25f), ImVec2(0.25f, 0.25f) };
-
-      // tag faces
-      bool boxes[27]{};
-      static int overBox = -1;
-      for (int iPass = 0; iPass < 2; iPass++)
+      const ImRect rect(position, position + size);
+      const bool canHover = !isDraging && rect.Contains(io.MousePos) && IsHoveringWindow();
+      const int hoveredBox = DrawRoundedCube(gContext.mDrawList, res, cubeView, rect, canHover);
+      // An active text field can release focus later in the same frame.
+      if (!isDraging && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
       {
-         for (int iFace = 0; iFace < 6; iFace++)
-         {
-            const int normalIndex = (iFace % 3);
-            const int perpXIndex = (normalIndex + 1) % 3;
-            const int perpYIndex = (normalIndex + 2) % 3;
-            const float invert = (iFace > 2) ? -1.f : 1.f;
-            const vec_t indexVectorX = directionUnary[perpXIndex] * invert;
-            const vec_t indexVectorY = directionUnary[perpYIndex] * invert;
-            const vec_t boxOrigin = directionUnary[normalIndex] * -invert - indexVectorX - indexVectorY;
-
-            // plan local space
-            const vec_t n = directionUnary[normalIndex] * invert;
-            vec_t viewSpaceNormal = n;
-            vec_t viewSpacePoint = n * 0.f;
-            viewSpaceNormal.TransformVector(cubeView);
-            viewSpaceNormal.Normalize();
-            viewSpacePoint.TransformPoint(cubeView);
-            const vec_t viewSpaceFacePlan = BuildPlan(viewSpacePoint, viewSpaceNormal);
-
-            // back face culling
-            if (viewSpaceFacePlan.w > 0.f)
-            {
-               continue;
-            }
-
-            const vec_t facePlan = BuildPlan(n * 0.5f, n);
-
-            const float len = IntersectRayPlane(gContext.mRayOrigin, gContext.mRayVector, facePlan);
-            vec_t posOnPlan = gContext.mRayOrigin + gContext.mRayVector * len - (n * 0.5f);
-
-            float localx = Dot(directionUnary[perpXIndex], posOnPlan) * invert + 0.5f;
-            float localy = Dot(directionUnary[perpYIndex], posOnPlan) * invert + 0.5f;
-
-            // panels
-            const vec_t dx = directionUnary[perpXIndex];
-            const vec_t dy = directionUnary[perpYIndex];
-            const vec_t origin = directionUnary[normalIndex] - dx - dy;
-            ImU32 faceColor = GetColorU32(FACE);
-            for (int iPanel = 0; iPanel < 9; iPanel++)
-            {
-               vec_t boxCoord = boxOrigin + indexVectorX * float(iPanel % 3) + indexVectorY * float(iPanel / 3) + makeVect(1.f, 1.f, 1.f);
-               const ImVec2 p = panelPosition[iPanel] * 2.f;
-               const ImVec2 s = panelSize[iPanel] * 2.f;
-               ImVec2 faceCoordsScreen[4];
-               vec_t panelPos[4] = { dx * p.x + dy * p.y,
-                                     dx * p.x + dy * (p.y + s.y),
-                                     dx * (p.x + s.x) + dy * (p.y + s.y),
-                                     dx * (p.x + s.x) + dy * p.y };
-
-               for (unsigned int iCoord = 0; iCoord < 4; iCoord++)
-               {
-                  faceCoordsScreen[iCoord] = worldToPos((panelPos[iCoord] + origin) * 0.5f * invert, res, position, size);
-               }
-
-               const ImVec2 panelCorners[2] = { panelPosition[iPanel], panelPosition[iPanel] + panelSize[iPanel] };
-               bool insidePanel = localx > panelCorners[0].x && localx < panelCorners[1].x && localy > panelCorners[0].y && localy < panelCorners[1].y;
-               int boxCoordInt = int(boxCoord.x * 9.f + boxCoord.y * 3.f + boxCoord.z);
-               IM_ASSERT(boxCoordInt < 27);
-               boxes[boxCoordInt] |= insidePanel && (!isDraging) && gContext.mbMouseOver;
-
-               // draw face with lighter color
-               if (iPass)
-               {
-                  gContext.mDrawList->AddConvexPolyFilled(faceCoordsScreen, 4, faceColor);
-                  if (boxes[boxCoordInt])
-                  {
-                     gContext.mDrawList->AddConvexPolyFilled(faceCoordsScreen, 4, IM_COL32(0xF0, 0xA0, 0x60, 0x80));
-
+          pressedBox = hoveredBox;
+      }
+      if (hoveredBox >= 0)
+      {
 #if IMGUI_VERSION_NUM >= 18723
-                     ImGui::SetNextFrameWantCaptureMouse(true);
+          ImGui::SetNextFrameWantCaptureMouse(true);
 #else
-                     ImGui::CaptureMouseFromApp();
+          ImGui::CaptureMouseFromApp();
 #endif
-                     if (io.MouseDown[0] && !isClicking && !isDraging && GImGui->ActiveId == 0) {
-                        overBox = boxCoordInt;
-                        isClicking = true;
-                        isDraging  = true;
-                        interpolationFrames = 0;
-                     }
-                  }
-               }
-            }
+          const bool movedSincePress = io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] > 0.f;
+          const bool releasedClick = ImGui::IsMouseReleased(ImGuiMouseButton_Left) && !movedSincePress;
+          if (hoveredBox == pressedBox && GImGui->ActiveId == 0 && (io.MouseDown[ImGuiMouseButton_Left] || releasedClick))
+          {
+              isClicking = !movedSincePress;
+              isDraging = true;
+              interpolationFrames = 0;
+          }
+      }
 
-             if (iPass) {
-                // Draw face label
-                ImDrawList* drawList        = gContext.mDrawList;
-                int         vtx_write_start = drawList->VtxBuffer.Size;
+      for (int iFace = 0; iFace < 6; ++iFace)
+      {
+          const int normalIndex = (iFace % 3);
+          const int perpXIndex = (normalIndex + 1) % 3;
+          const int perpYIndex = (normalIndex + 2) % 3;
+          const float invert = (iFace > 2) ? -1.f : 1.f;
 
-                const auto label       = gContext.mStyle.FaceLabels[iFace];
-                ImVec2     labelSize   = ImGui::CalcTextSize(label);
-                float      scaleFactor = 2 / size.y;
-                auto       labelOrigin = labelSize * 0.5;
+          // plan local space
+          const vec_t n = directionUnary[normalIndex] * invert;
+          vec_t viewSpaceNormal = n;
+          vec_t viewSpacePoint = n * 0.f;
+          viewSpaceNormal.TransformVector(cubeView);
+          viewSpaceNormal.Normalize();
+          viewSpacePoint.TransformPoint(cubeView);
+          const vec_t viewSpaceFacePlan = BuildPlan(viewSpacePoint, viewSpaceNormal);
 
-                drawList->AddText(ImVec2(0, 0), GetColorU32(TEXT), label);
-                ImDrawVert* vtx_write_end = drawList->_VtxWritePtr;
+          // back face culling
+          if (viewSpaceFacePlan.w > 0.f)
+          {
+              continue;
+          }
 
-                vec_t tdx = directionUnary[perpXIndex];
-                vec_t tdy  = directionUnary[perpYIndex];
-                ImVec2 invert2 = {1, 1};
-                switch (iFace) {
-                case 0: // Back
-                    tdx = directionUnary[2];
-                    tdy = directionUnary[1];
-                    invert2 = {-1, - 1};
-                    break;
-                case 3: // Front
-                    tdx = directionUnary[2];
-                    tdy = directionUnary[1];
-                    invert2.x = -1;
-                    break;
-                case 1: // Top
-                    invert2.y = -1;
-                    break;
-                case 4: // Bottom
-                    invert2 = {-1, -1};
-                    break;
-                case 2: // Right
-                    invert2.y = -1;
-                    break;
-                case 5: // Left
-                    break;
-                }
+          const vec_t dx = directionUnary[perpXIndex];
+          const vec_t dy = directionUnary[perpYIndex];
+          const vec_t origin = directionUnary[normalIndex] - dx - dy;
 
-                for (auto v = (drawList->VtxBuffer.Data + vtx_write_start); v < vtx_write_end; v++) {
-                    auto  pp = ((v->pos - labelOrigin) * scaleFactor * invert2 + ImVec2{0.5, 0.5}) * 2.f;
-                    vec_t pt = tdx * pp.x + tdy * pp.y;
-                    v->pos   = worldToPos((pt + origin) * 0.5 * invert, res, position, size);
-                }
-            }
-         }
+          // Draw face label
+          ImDrawList* drawList        = gContext.mDrawList;
+          int         vtx_write_start = drawList->VtxBuffer.Size;
+
+          const auto label       = gContext.mStyle.FaceLabels[iFace];
+          ImVec2     labelSize   = ImGui::CalcTextSize(label);
+          float      scaleFactor = 2 / size.y;
+          auto       labelOrigin = labelSize * 0.5;
+
+          drawList->AddText(ImVec2(0, 0), GetColorU32(TEXT), label);
+          ImDrawVert* vtx_write_end = drawList->_VtxWritePtr;
+
+          vec_t tdx = directionUnary[perpXIndex];
+          vec_t tdy  = directionUnary[perpYIndex];
+          ImVec2 invert2 = {1, 1};
+          switch (iFace) {
+          case 0: // Back
+              tdx = directionUnary[2];
+              tdy = directionUnary[1];
+              invert2 = {-1, - 1};
+              break;
+          case 3: // Front
+              tdx = directionUnary[2];
+              tdy = directionUnary[1];
+              invert2.x = -1;
+              break;
+          case 1: // Top
+              invert2.y = -1;
+              break;
+          case 4: // Bottom
+              invert2 = {-1, -1};
+              break;
+          case 2: // Right
+              invert2.y = -1;
+              break;
+          case 5: // Left
+              break;
+          }
+
+          for (auto v = (drawList->VtxBuffer.Data + vtx_write_start); v < vtx_write_end; v++) {
+              auto  pp = ((v->pos - labelOrigin) * scaleFactor * invert2 + ImVec2{0.5, 0.5}) * 2.f;
+              vec_t pt = tdx * pp.x + tdy * pp.y;
+              v->pos   = worldToPos((pt + origin) * 0.5 * invert, res, position, size);
+          }
       }
 
       // draw axis
       {
          ImDrawList* drawList = gContext.mDrawList;
          const vec_t origin = makeVect(-0.5f, -0.5f, -0.5f);
+         // ORCA: start axes on the rounded corner surface so they hug the cube edges
+         const float axisCorner = 0.5f - NAV_CUBE_ROUND_RADIUS + NAV_CUBE_ROUND_RADIUS / sqrtf(3.f);
+         const vec_t axisOrigin = makeVect(-axisCorner, -axisCorner, -axisCorner);
          for (int i = 0; i < 3; ++i) {
             vec_t  dirAxis        = directionUnary[i];
-            ImVec2 baseSSpace     = worldToPos(origin, res, position, size);
-            ImVec2 worldDirSSpace = worldToPos(origin + dirAxis, res, position, size);
+            ImVec2 baseSSpace     = worldToPos(axisOrigin, res, position, size);
+            ImVec2 worldDirSSpace = worldToPos(axisOrigin + dirAxis, res, position, size);
 
             bool visible = false;
             {
@@ -3032,24 +3251,28 @@ namespace IMGUIZMO_NAMESPACE
                 directionColorV.w *= 0.35f;
             }
             ImU32 directionColor = ImGui::ColorConvertFloat4ToU32(directionColorV); // | IM_COL32(0x80, 0x80, 0x80, 0x00);
-            drawList->AddLine(baseSSpace, worldDirSSpace, directionColor, gContext.mStyle.TranslationLineThickness);
-            
-            /* ORCA Dont draw arrow heads
-            // Arrow head begin
-            ImVec2 dir(baseSSpace - worldDirSSpace);
-            
-            float d = sqrtf(ImLengthSqr(dir));
-            dir /= d; // Normalize
-            dir *= gContext.mStyle.TranslationLineArrowSize;
-            
-            ImVec2 ortogonalDir(dir.y, -dir.x); // Perpendicular vector
-            ImVec2 a(worldDirSSpace + dir);
-            drawList->AddTriangleFilled(worldDirSSpace - dir, a + ortogonalDir, a - ortogonalDir, directionColor);
-            // Arrow head end
-            */
+
+            // ORCA: arrow head at axis end; skipped when the axis points almost straight at the viewer
+            const float arrowSize = gContext.mStyle.TranslationLineArrowSize;
+            ImVec2 axisDirSSpace = worldDirSSpace - baseSSpace;
+            const float axisLenSSpace = sqrtf(ImLengthSqr(axisDirSSpace));
+            ImVec2 lineEndSSpace = worldDirSSpace;
+            ImVec2 labelOffset(0.f, 0.f);
+            if (axisLenSSpace > arrowSize)
+            {
+               axisDirSSpace /= axisLenSSpace;
+               const ImVec2 orthoDir(axisDirSSpace.y, -axisDirSSpace.x);
+               const ImVec2 arrowTip = worldDirSSpace + axisDirSSpace * arrowSize;
+               const ImVec2 arrowBase = worldDirSSpace - axisDirSSpace * arrowSize;
+               // clockwise order on screen, required by ImGui anti-aliased fill
+               drawList->AddTriangleFilled(arrowTip, arrowBase - orthoDir * arrowSize, arrowBase + orthoDir * arrowSize, directionColor);
+               lineEndSSpace = arrowBase;
+               labelOffset = axisDirSSpace * arrowSize;
+            }
+            drawList->AddLine(baseSSpace, lineEndSSpace, directionColor, gContext.mStyle.TranslationLineThickness);
 
             // Axis text
-            ImVec2 labelSSpace = worldToPos(origin + dirAxis * 1.2f, res, position, size);
+            ImVec2 labelSSpace = worldToPos(axisOrigin + dirAxis * 1.2f, res, position, size) + labelOffset;
             ImVec2 labelSize   = ImGui::CalcTextSize(gContext.mStyle.AxisLabels[i]);
             drawList->AddText(labelSSpace - labelSize * 0.5, directionColor, gContext.mStyle.AxisLabels[i]);
          }
@@ -3071,8 +3294,6 @@ namespace IMGUIZMO_NAMESPACE
          LookAt(&newEye.x, &camTarget.x, &newUp.x, view);
          result.changed = true;
       }
-      isInside = gContext.mbMouseOver && ImRect(position, position + size).Contains(io.MousePos);
-
       if (io.MouseDown[0] && (fabsf(io.MouseDelta[0]) || fabsf(io.MouseDelta[1])) && isClicking)
       {
          isClicking = false;
@@ -3089,15 +3310,15 @@ namespace IMGUIZMO_NAMESPACE
          if (isClicking)
          {
             // apply new view direction
-            int cx = overBox / 9;
-            int cy = (overBox - cx * 9) / 3;
-            int cz = overBox % 3;
+            int cx = pressedBox / 9;
+            int cy = (pressedBox - cx * 9) / 3;
+            int cz = pressedBox % 3;
             interpolationDir = makeVect(1.f - (float)cx, 1.f - (float)cy, 1.f - (float)cz);
             interpolationDir.Normalize();
 
             if (fabsf(Dot(interpolationDir, referenceUp)) > 1.0f - 0.01f)
             {
-               interpolationUp = overBox == 10 ? makeVect(1.f, 0.f, 0.f) : makeVect(-1.f, 0.f, 0.f);
+               interpolationUp = pressedBox == 10 ? makeVect(1.f, 0.f, 0.f) : makeVect(-1.f, 0.f, 0.f);
             }
             else
             {
@@ -3105,10 +3326,11 @@ namespace IMGUIZMO_NAMESPACE
             }
             interpolationFrames = 40;
             result.changed = true;
-            result.clicked_box = overBox;
+            result.clicked_box = pressedBox;
          }
          isClicking = false;
          isDraging = false;
+         pressedBox = -1;
       }
 
 
@@ -3157,9 +3379,6 @@ namespace IMGUIZMO_NAMESPACE
          result.changed = true;
          result.dragging = true;
       }
-
-      // restore view/projection because it was used to compute ray
-      ComputeContext(svgView.m16, svgProjection.m16, nullptr/*gContext.mModelSource.m16*/, WORLD/*gContext.mMode*/);
 
       return result;
    }

@@ -71,6 +71,20 @@ static std::map<wxColour, wxColour> gDarkColors{
     {"#019687", "#00675B"}, // rgb(1, 150, 135)    Confirm button bg (near #009688)
     {"#26A69A", "#00675B"}, // rgb(38, 166, 154)   Default target/match color
     {"#FEFEFE", "#FEFEFE"}, // rgb(254, 254, 254)   Near-white text (segment btn selected, confirm btn)
+    // TextureImportDialog dark mode (2026-11). Dark values deliberately differ
+    // by one step from look-alike entries above so revert()'s reverse map
+    // stays unambiguous (see the #939393 note).
+    {"#18181B", "#E4E4E8"}, // rgb(24, 24, 27)     Primary text (Figma zinc-900)
+    {"#71717A", "#8A8A96"}, // rgb(113, 113, 122)  Muted text / section headers / hex labels
+    {"#949494", "#A1A1AB"}, // rgb(148, 148, 148)  Chip chevron strokes / disabled fg
+    {"#9A9A9A", "#818184"}, // rgb(154, 154, 154)  Add-filament pill disabled text
+    {"#DEDEE0", "#4A4A53"}, // rgb(222, 222, 224)  Mapping chip / dialog borders
+    {"#E1E1E1", "#45454C"}, // rgb(225, 225, 225)  Teal toggle hover/pressed track
+    {"#F3F3F3", "#36363E"}, // rgb(243, 243, 243)  Step pill / inactive fills
+    {"#BEE1DB", "#223C3D"}, // rgb(190, 225, 219)  Popup row hover fill
+    {"#7B8282", "#8A8A97"}, // rgb(123, 130, 130)  Popup check glyph
+    {"#FFF4E8", "#452A1B"}, // rgb(255, 244, 232)  Orange hint band background
+    {"#FF8400", "#FF9F44"}, // rgb(255, 132, 0)    Mix-ratio warning text / icon
 };
 
 std::tuple<double, double, double> StateColor::GetLAB(const wxColour& color) {

@@ -16196,6 +16196,9 @@ msgstr "达到混色耗材数量上限（%u 个配方）。超出的混色将被
 msgid "Are you sure you want to terminate the entire import process?"
 msgstr "确定要终止整个导入流程吗？"
 
+msgid "This action will end the entire import process. Are you sure you want to continue?"
+msgstr "此操作将结束整个导入过程，确认继续吗？"
+
 msgid "Material type of the new filament"
 msgstr "新耗材的材料类型"
 
@@ -16450,8 +16453,8 @@ msgstr "重置耗材丝映射为自动匹配结果"
 msgid "Filament Mapping & Mixing"
 msgstr "耗材映射与混色"
 
-msgid "Gap Area"
-msgstr "间隙面积"
+msgid "Gap Area (%)"
+msgstr "间隙面积（%）"
 
 msgid "Before simplification: %d colors"
 msgstr "简化前：%d 颜色"
@@ -16471,10 +16474,10 @@ msgstr "原模型 %d 色 / 简化后 %d 色"
 msgid "Processing"
 msgstr "处理中"
 
-msgid "Tip: gap area exceeds the range (0.00-5.00)"
-msgstr "提示：间隙面积超出范围（0.00-5.00）"
+msgid "Notice: Gap area out of range (0.00-5.00%)."
+msgstr "提示：间隙面积超出范围（0.00-5.00%）"
 
-msgid "Tip: smooth level exceeds the range (0-10)"
+msgid "Notice: Smooth level out of range (0-10)."
 msgstr "提示：平滑等级超出范围（0-10）"
 
 msgid "Some mixed filaments could not be created (physical filament or mix quota reached). The affected rows keep their original mapping."

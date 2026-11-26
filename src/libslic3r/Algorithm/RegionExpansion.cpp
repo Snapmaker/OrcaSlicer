@@ -212,6 +212,51 @@ static int sample_in_expolygons(
 // Up to this many boundaries are scanned linearly via cached bounding boxes; above this threshold an AABB tree is built.
 static constexpr size_t boundaries_per_tree = 16;
 
+// A gap spanning both sets of boxes separates independent clipping problems.
+// Sources and boundaries touching at a projection endpoint remain in the same group.
+static std::vector<std::vector<size_t>> split_at_layer_gaps(const std::vector<size_t>&      sources,
+                                                            const std::vector<BoundingBox>& source_boxes,
+                                                            const std::vector<BoundingBox>& boundary_boxes)
+{
+    struct Projection
+    {
+        coord_t lo, hi;
+        size_t  source;
+    };
+    std::vector<Projection> intervals;
+    intervals.reserve(sources.size() + boundary_boxes.size());
+    for (int axis : {0, 1}) {
+        intervals.clear();
+        for (size_t s : sources)
+            intervals.push_back({source_boxes[s].min[axis], source_boxes[s].max[axis], s});
+        for (const BoundingBox& box : boundary_boxes)
+            if (box.defined)
+                intervals.push_back({box.min[axis], box.max[axis], source_boxes.size()});
+        std::sort(intervals.begin(), intervals.end(), [](const Projection& a, const Projection& b) { return a.lo < b.lo; });
+        std::vector<std::vector<size_t>> groups;
+        coord_t                          end         = intervals.front().hi;
+        bool                             needs_group = true;
+        for (const Projection& p : intervals) {
+            if (p.lo > end)
+                needs_group = true;
+            end = std::max(end, p.hi);
+            if (p.source < source_boxes.size()) {
+                if (needs_group) {
+                    groups.emplace_back();
+                    needs_group = false;
+                }
+                groups.back().push_back(p.source);
+            }
+        }
+        if (groups.size() > 1) {
+            for (auto& group : groups)
+                std::sort(group.begin(), group.end());
+            return groups;
+        }
+    }
+    return {};
+}
+
 struct PolyOBB
 {
     double ux = 1., uy = 0.;
@@ -342,7 +387,7 @@ static bool segments_within_tol(const Point &a1, const Point &a2, const Point &b
            point_to_segment_dist2(b1, a1, a2) <= tol2 || point_to_segment_dist2(b2, a1, a2) <= tol2;
 }
 
-static bool rings_conflict(const Polygon &pa, const Polygon &pb, coord_t tol)
+static bool ring_edges_touch(const Polygon& pa, const Polygon& pb, coord_t tol)
 {
     const Points &a = pa.points;
     const Points &b = pb.points;
@@ -403,16 +448,17 @@ static bool rings_conflict(const Polygon &pa, const Polygon &pb, coord_t tol)
                 return true;
         }
     }
-    return (na >= 3 && contains(pa, b.front(), true)) || (nb >= 3 && contains(pb, a.front(), true));
+    return false;
 }
 
 static bool expolygons_touch_or_overlap(const ExPolygon &a, const ExPolygon &b)
 {
     for (size_t ia = 0; ia < a.num_contours(); ++ ia)
         for (size_t ib = 0; ib < b.num_contours(); ++ ib)
-            if (rings_conflict(a.contour_or_hole(ia), b.contour_or_hole(ib), 1))
+            if (ring_edges_touch(a.contour_or_hole(ia), b.contour_or_hole(ib), 1))
                 return true;
-    return false;
+    // Disjoint rings can be nested. Test the filled region, including its holes.
+    return (!a.contour.empty() && b.contains(a.contour.front())) || (!b.contour.empty() && a.contains(b.contour.front()));
 }
 
 // Exact point-in-polygon for doubled 64-bit coordinates (pt2 = 2*P tested against 2*path): 1 inside, 0 outside, -1 on boundary.
@@ -682,7 +728,8 @@ std::vector<WaveSeed> wave_seeds(
             return false;
         for (const Polygon &pa : src_expanded_polys[a])
             for (const Polygon &pb : src_expanded_polys[b])
-                if (rings_conflict(pa, pb, SCALED_EPSILON))
+                if (ring_edges_touch(pa, pb, SCALED_EPSILON) || (pa.size() >= 3 && contains(pa, pb.front(), true)) ||
+                    (pb.size() >= 3 && contains(pb, pa.front(), true)))
                     return true;
         return false;
     };
@@ -749,13 +796,33 @@ std::vector<WaveSeed> wave_seeds(
         boundary_aabb_tree.build_modify_input(nodes);
     }
 
-    auto collect_boundary_candidates = [&](const BoundingBox &bbox, const std::vector<size_t> &batch, std::vector<size_t> &candidates) {
+    // Keep the scanline local when a large batch covers several disjoint rows or columns.
+    if (batches.size() == 1 && non_empty_srcs.size() >= boundaries_per_tree && !boundary_aabb_tree.empty()) {
+        auto groups = split_at_layer_gaps(non_empty_srcs, src_bboxes, boundary_bboxes);
+        if (!groups.empty()) {
+            batches = std::move(groups);
+            for (size_t i = 0; i < batches.size(); ++i)
+                for (size_t s : batches[i])
+                    batch_of[s] = i;
+        }
+    }
+
+    auto collect_boundary_candidates = [&](const BoundingBox& bbox, size_t batch_idx, std::vector<size_t>& candidates) {
+        const auto& batch = batches[batch_idx];
         candidates.clear();
         auto overlaps_any_src_obb = [&](size_t bnd_idx) -> bool {
-            for (size_t src_id : batch)
-                if (boundary_bboxes[bnd_idx].overlap(src_bboxes[src_id]) && ! obb_separated(boundary_obbs[bnd_idx], src_obbs[src_id]))
-                    return true;
-            return false;
+            const BoundingBox& bounds = boundary_bboxes[bnd_idx];
+            if (batch.size() == 1) {
+                const size_t src_id = batch.front();
+                return bounds.overlap(src_bboxes[src_id]) && !obb_separated(boundary_obbs[bnd_idx], src_obbs[src_id]);
+            }
+            const AABBTreeBBoxes::BoundingBox query(bounds.min, bounds.max);
+            bool                              hit = false;
+            AABBTreeIndirect::traverse(src_aabb_tree, AABBTreeIndirect::intersecting(query), [&](const AABBTreeBBoxes::Node& node) {
+                hit = batch_of[node.idx] == batch_idx && !obb_separated(boundary_obbs[bnd_idx], src_obbs[node.idx]);
+                return !hit;
+            });
+            return hit;
         };
         if (! boundary_aabb_tree.empty()) {
             const AABBTreeBBoxes::BoundingBox query(bbox.min, bbox.max);
@@ -825,6 +892,8 @@ std::vector<WaveSeed> wave_seeds(
     ClipperZUtils::ClipperZIntersectionVisitor visitor(intersections);
     std::vector<size_t>                        candidates;
     std::vector<size_t>                        cand_subbatch(boundary.size(), size_t(-1));
+    std::vector<size_t>                        subbatch_stamp(boundary.size(), 0);
+    size_t                                     cur_subbatch_stamp = 0;
 
     // Sort paths into their respective islands.
     // Each src x boundary will be processed (wave expanded) independently.
@@ -838,7 +907,7 @@ std::vector<WaveSeed> wave_seeds(
             bbox_batch.merge(src_bboxes[src_id]);
             num_src_paths += zsrc[src_id].size();
         }
-        collect_boundary_candidates(bbox_batch, batch, candidates);
+        collect_boundary_candidates(bbox_batch, batch_idx, candidates);
         if (candidates.empty())
             continue;
 
@@ -937,8 +1006,6 @@ std::vector<WaveSeed> wave_seeds(
             return count;
         };
 
-        std::vector<size_t>                              subbatch_stamp(boundary.size(), 0);
-        size_t                                           cur_subbatch_stamp = 0;
         std::vector<std::pair<ClipperZUtils::ZPoint, int>> zsrc_splits;
         for (const std::vector<size_t> &subbatch : bnd_subbatches) {
             ++ cur_subbatch_stamp;
@@ -976,7 +1043,7 @@ std::vector<WaveSeed> wave_seeds(
                 merge_splits(segments, zsrc_splits);
             }
 
-            out.reserve(out.size() + segments.size());
+            reserve_more_power_of_2(out, segments.size());
             for (const ClipperZUtils::ZPath &path : segments) {
                 assert(path.size() >= 2);
                 const ClipperZUtils::ZPoint &front = path.front();

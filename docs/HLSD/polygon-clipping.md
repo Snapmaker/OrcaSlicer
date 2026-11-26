@@ -71,13 +71,14 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   clip do not leave slivers. For `ExPolygon`, `ExPolygons`, `Surfaces`, and
   `SurfacesPtr` clips this goes through `c2_offset_expolygons()` to normalize
   contour/hole orientations first.
-- Open polylines are clipped per source path against an indexed clip edge set,
-  preserving source direction and vertex order. `intersection_pl` / `diff_pl`
-  and `clip_extrusion` follow Clipper1's exact boundary semantics (resolving
-  boundary-grazing intervals through a Clipper1-equivalent open-path scanline
-  pass in `OpenClipEdgeData::clip_path`, so `intersection` and `diff` remain
-  complementary across corners, rotations, and horizontal runs), while
-  `Algorithm::split_line` uses boundary-inclusive containment.
+- Open polylines are clipped independently in source order. Intersection and
+  difference preserve the direction of each input. Reordering unrelated source
+  lines leaves each line's boundary ownership unchanged.
+- A Clipper 6.4.2 open-edge scan resolves shared boundaries and sloping edges
+  that occupy the same rounded scan column. Perimeter clipping inserts the
+  subject first. Painted fuzzy-skin regions insert the clip first, preserving
+  their original boundary ownership. Other line-splitting callers default to
+  boundary-inclusive containment.
 
 ### Offsets
 
@@ -102,8 +103,11 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   inputs run as one Clipper2 group only when every path is clean-convex for its
   effective offset direction, every CW path is strictly enclosed with positive
   winding inside non-touching CCW contours, and no same-sign paths overlap
-  within offset influence range; otherwise each path is offset on its own and
-  the results are united.
+  within the offset influence range. For mixed inputs that fail the group
+  checks, independent clean rings with the same orientation can still share an
+  offset pass. The remaining paths are cleaned individually before the winding
+  union. Ordered convex insets can skip that union when the rounded results
+  have strictly disjoint projections.
 - `ExPolygons` and `Surfaces` normalize contour (CCW) and hole (CW)
   orientations, fast-batching clean-convex holeless contours and clean-convex
   holed entities whose holes stay strictly inside without pairwise
@@ -112,6 +116,12 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   subtraction and union. Two-step `offset2()` / `offset2_ex()` calls preserve
   the intermediate `PolyTree64` hierarchy across both positive and negative
   second deltas.
+- For round insets the expanding hole is traversed counterclockwise. This fixes
+  the starting edge of each sampled arc for both flat and structured inputs.
+- Arachne computes surviving convex inset corners from the intersections of
+  grid-rounded offset edges. These integer corners set the wall centerline
+  used for support classification. Collapsed edges, concave contours and
+  nearly straight joins use the polygon offset engine.
 - Only truly collinear degenerate paths are dropped under a negative offset;
   self-intersecting zero-area paths (e.g. bowties) retain their
   positive-winding lobes.

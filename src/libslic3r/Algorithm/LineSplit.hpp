@@ -10,7 +10,7 @@ struct SplitLineJunction
 {
     Point p;
 
-    // true if the line between this point and the next point is inside the clip polygon (or on the edge of the clip polygon)
+    // True if the outgoing segment is inside the clip region under the selected boundary rule.
     bool clipped;
 
     // Index from the original input.
@@ -37,11 +37,17 @@ struct SplitLineJunction
 
 using SplittedLine = std::vector<SplitLineJunction>;
 
-SplittedLine do_split_line(const ClipperZUtils::ZPath& path, const ExPolygons& clip, bool closed);
+SplittedLine do_split_line(const ClipperZUtils::ZPath&        path,
+                           const ExPolygons&                  clip,
+                           bool                               closed,
+                           ClipperUtils::OpenClipBoundaryRule rule = ClipperUtils::OpenClipBoundaryRule::Inclusive);
 
 // Return the splitted line, or empty if no intersection found
 template<class PathType>
-SplittedLine split_line(const PathType& path, const ExPolygons& clip, bool closed)
+SplittedLine split_line(const PathType&                    path,
+                        const ExPolygons&                  clip,
+                        bool                               closed,
+                        ClipperUtils::OpenClipBoundaryRule rule = ClipperUtils::OpenClipBoundaryRule::Inclusive)
 {
     if (path.empty()) {
         return {};
@@ -61,7 +67,7 @@ SplittedLine split_line(const PathType& path, const ExPolygons& clip, bool close
         p.back().z() = z;
     }
 
-    return do_split_line(p, clip, closed);
+    return do_split_line(p, clip, closed, rule);
 }
 
 } // Algorithm

@@ -1,6 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers.hpp>
 
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <iostream>
 #include <boost/filesystem.hpp>
 
@@ -9,6 +12,164 @@
 #include "libslic3r/SVG.hpp"
 
 using namespace Slic3r;
+
+TEST_CASE("Round inward offsets preserve hole vertices when the exterior has a collinear point", "[ClipperUtils]")
+{
+    const Polygon outer{{0, 0}, {40000000, 0}, {40000000, 40000000}, {0, 40000000}};
+    const Polygon hole{{6000000, 6000000}, {34000000, 6000000}, {34000000, 34000000}, {6000000, 34000000}};
+    const float   inset         = 200000.f;
+    const double  arc_tolerance = 12500.; // 0.0125 mm, as used for brim loops.
+    const auto    expected      = diff_ex(offset_ex(ExPolygon(outer), -inset, jtRound, arc_tolerance),
+                                          offset_ex(ExPolygon(hole), inset, jtRound, arc_tolerance));
+    REQUIRE(expected.size() == 1);
+    REQUIRE(expected.front().holes.size() == 1);
+
+    ExPolygon frame(outer, hole);
+    frame.holes.front().reverse();
+    for (bool add_midpoint : {false, true}) {
+        CAPTURE(add_midpoint);
+        if (add_midpoint)
+            frame.contour.points.insert(frame.contour.points.begin() + 1, Point(20000000, 0));
+        CHECK(xor_ex(offset_ex(ExPolygons{frame}, -inset, jtRound, arc_tolerance), expected).empty());
+        CHECK(xor_ex(offset_ex(to_polygons(frame), -inset, jtRound, arc_tolerance), expected).empty());
+    }
+}
+
+TEST_CASE("Mixed flat offsets preserve winding across isolated and batched contours", "[ClipperUtils]")
+{
+    auto     rect = [](coord_t x, coord_t y, coord_t side) { return Polygon{{x, y}, {x + side, y}, {x + side, y + side}, {x, y + side}}; };
+    Polygons flat;
+    ExPolygons frames;
+    for (int i = 0; i < 32; ++i) {
+        const coord_t x     = i * 1200000;
+        Polygon       outer = rect(x, 0, 500000);
+        if (i == 0)
+            outer.points.insert(outer.points.begin() + 1, Point(x + 250000, 50000));
+        Polygon hole = rect(x + 100000, 100000, 300000);
+        hole.reverse();
+        flat.push_back(outer);
+        flat.push_back(hole);
+        frames.emplace_back(outer, hole);
+    }
+    const float delta    = 50000.f;
+    const auto  expected = offset_ex(frames, delta, jtMiter, 3.);
+    REQUIRE(expected.size() == frames.size());
+    CHECK(xor_ex(offset_ex(flat, delta, jtMiter, 3.), expected).empty());
+    // The duplicate contour contributes +2 outside the hole and +1 inside it.
+    // Unioning same-sign overlaps before combining the hole would erase that distinction.
+    flat.push_back(flat[2]);
+    frames[1].holes.clear();
+    CHECK(xor_ex(offset_ex(flat, delta, jtMiter, 3.), offset_ex(frames, delta, jtMiter, 3.)).empty());
+    std::reverse(flat.begin(), flat.end());
+    CHECK(xor_ex(offset_ex(flat, delta, jtMiter, 3.), offset_ex(frames, delta, jtMiter, 3.)).empty());
+}
+
+TEST_CASE("Convex inset batches match isolated offsets across corner eligibility thresholds", "[ClipperUtils]")
+{
+    const Polygon neighbor{{-500000, 1}, {1000, 1}, {1000, 1100000}, {-500000, 1100000}};
+    const Polygon frame{{-500000, -500000}, {1500000, -500000}, {1500000, 1500000}, {-500000, 1500000}};
+    auto          check_offsets = [&](const Polygon& contour, float inset) {
+        const ExPolygons isolated = offset_ex(ExPolygon(contour), -inset, jtMiter, 3.);
+        ExPolygons       pieces   = offset_ex(ExPolygon(neighbor), -inset, jtMiter, 3.);
+        pieces.insert(pieces.end(), isolated.begin(), isolated.end());
+        const ExPolygons expected = union_ex(pieces);
+        CHECK(xor_ex(offset_ex(Polygons{contour, neighbor}, -inset, jtMiter, 3.), expected).empty());
+
+        Polygon hole = contour;
+        hole.reverse();
+        const ExPolygons cut = diff_ex(offset_ex(ExPolygon(frame), inset, jtMiter, 3.), isolated);
+        CHECK(xor_ex(offset_ex(ExPolygon(frame, hole), inset, jtMiter, 3.), cut).empty());
+        CHECK(xor_ex(offset_ex(Polygons{frame, hole}, inset, jtMiter, 3.), cut).empty());
+    };
+
+    SECTION("Acute triangle tip crosses each cosine limit")
+    {
+        // At the tip, cos(turn) = (h*h - L*L)/(h*h + L*L). The adjacent integer
+        // half-heights straddle -0.999 and -0.998 respectively for L = 1,000,000.
+        for (coord_t h : {22366, 22367, 31638, 31639}) {
+            CAPTURE(h);
+            check_offsets(Polygon{{0, -h}, {1000000, 0}, {0, h}}, 500.f);
+        }
+    }
+
+    SECTION("A short rectangle edge crosses each squared-length limit")
+    {
+        // For a right angle x = |delta|, so the two critical widths are 200,000 and 202,484.567...
+        for (coord_t width : {199999, 200000, 200001, 202484, 202485}) {
+            CAPTURE(width);
+            check_offsets(Polygon{{0, 0}, {width, 0}, {width, 1000000}, {0, 1000000}}, 100000.f);
+        }
+    }
+}
+
+static Polygons diagonal_strips(size_t count)
+{
+    Polygons      strips;
+    const coord_t length = coord_t(count) * 2000;
+    for (size_t i = 0; i < count; ++i) {
+        const coord_t x = coord_t(i) * 2000;
+        strips.emplace_back(Points{{x, 0}, {x + length, length}, {x + length - 800, length + 800}, {x - 800, 800}});
+    }
+    return strips;
+}
+
+TEST_CASE("Ordered diagonal insets retain the single-path geometry in either direction", "[ClipperUtils]")
+{
+    Polygons strips = diagonal_strips(96);
+    for (bool overlap : {false, true}) {
+        CAPTURE(overlap);
+        if (overlap)
+            strips.back() = strips[strips.size() - 2];
+        Polygons isolated;
+        for (const Polygon& strip : strips)
+            polygons_append(isolated, offset(strip, -50.f, jtMiter, 3.));
+        const ExPolygons expected = union_ex(isolated);
+        REQUIRE(expected.size() == strips.size() - size_t(overlap));
+        for (bool reverse : {false, true}) {
+            CAPTURE(reverse);
+            if (reverse)
+                std::reverse(strips.begin(), strips.end());
+            CHECK(xor_ex(offset_ex(strips, -50.f, jtMiter, 3.), expected).empty());
+            CHECK(xor_ex(union_ex(offset(strips, -50.f, jtMiter, 3.)), expected).empty());
+        }
+    }
+}
+
+TEST_CASE("Mixed flat offset and ordered strip performance", "[.mr13_bench]")
+{
+    auto median_ms = [](auto run) {
+        std::array<double, 4> times;
+        for (double& ms : times) {
+            const auto start = std::chrono::steady_clock::now();
+            run();
+            ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        }
+        std::sort(times.begin() + 1, times.end()); // Exclude warm-up.
+        return times[2];
+    };
+    Polygons flat;
+    for (int y = 0; y < 150; ++y)
+        for (int x = 0; x < 150; ++x) {
+            const coord_t a = 1200000 * x, b = 1200000 * y;
+            flat.emplace_back(Points{{a, b}, {a + 500000, b}, {a + 500000, b + 500000}, {a, b + 500000}});
+            flat.emplace_back(
+                Points{{a + 100000, b + 100000}, {a + 100000, b + 400000}, {a + 400000, b + 400000}, {a + 400000, b + 100000}});
+        }
+    flat.front().points.insert(flat.front().points.begin() + 1, Point(250000, 0));
+    for (coord_t notch : {0, 50000}) {
+        flat.front().points[1].y() = notch;
+        ExPolygons   result;
+        const double ms = median_ms([&] { result = offset_ex(flat, 50000.f, jtMiter, 3.); });
+        REQUIRE(result.size() == 22500);
+        CHECK(std::all_of(result.begin(), result.end(), [](const ExPolygon& e) { return e.holes.size() == 1; }));
+        std::cout << "[MR13_BENCH] mixed_flat_22500 notch=" << notch << " median_ms=" << ms << '\n';
+    }
+    const Polygons strips = diagonal_strips(4000);
+    Polygons       result;
+    const double   ms = median_ms([&] { result = offset(strips, -50.f, jtMiter, 3.); });
+    CHECK(result.size() == strips.size());
+    std::cout << "[MR13_BENCH] diagonal_insets_4000 median_ms=" << ms << '\n';
+}
 
 // #define TESTS_EXPORT_SVGS
 

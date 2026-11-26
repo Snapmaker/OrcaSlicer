@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <map>
 #include <numeric>
 
 using namespace Slic3r;
@@ -360,6 +361,57 @@ TEST_CASE("expand_expolygons propagates waves into touching boundaries", "[Regio
         ExPolygons src_copy = src;
         const auto expanded = Algorithm::expand_merge_expolygons(std::move(src_copy), boundary, params);
         CHECK(expanded.size() == n);
+    }
+}
+
+TEST_CASE("Wave seeds retain boundary ownership through nested holes and intersecting solids", "[RegionExpansion]")
+{
+    ExPolygons sources, boundaries;
+    for (coord_t i = 0; i < 20; ++i) {
+        const coord_t radius = 1000000 + i * 500000;
+        ExPolygon     ring   = rectangle(-radius, -radius, radius, radius);
+        ring.holes.emplace_back(rectangle(-radius + 200000, -radius + 200000, radius - 200000, radius - 200000).contour);
+        ring.holes.back().reverse();
+        boundaries.emplace_back(std::move(ring));
+        sources.emplace_back(rectangle(radius, -500000, radius + 150000, 500000));
+    }
+    // This solid overlaps the innermost ring and lies inside the holes of the remaining rings.
+    boundaries.emplace_back(rectangle(850000, -200000, 1100000, 200000));
+    for (int order = 0; order < 2; ++order) {
+        std::map<std::pair<size_t, size_t>, double> lengths;
+        for (const auto& seed : Algorithm::wave_seeds(sources, boundaries, 50000.f, true))
+            lengths[{seed.src, seed.boundary}] += path_length(seed.path);
+        for (size_t s = 0; s < sources.size(); ++s) {
+            for (size_t b = 0; b < boundaries.size(); ++b) {
+                const auto reference = Algorithm::wave_seeds({sources[s]}, {boundaries[b]}, 50000.f, true);
+                double     expected  = 0.;
+                for (const auto& seed : reference)
+                    expected += path_length(seed.path);
+                CHECK(lengths[std::make_pair(s, b)] == Catch::Approx(expected));
+            }
+        }
+        std::reverse(boundaries.begin(), boundaries.end());
+    }
+}
+
+TEST_CASE("Disjoint rows and columns keep the original wave seed IDs", "[RegionExpansion]")
+{
+    for (bool vertical : {false, true}) {
+        ExPolygons sources, boundaries;
+        for (int i = 0; i < 25; ++i) {
+            const coord_t x = vertical ? 0 : 2000000 * i;
+            const coord_t y = vertical ? 2000000 * i : 0;
+            sources.emplace_back(rectangle(x, y, x + 500000, y + 500000));
+            boundaries.emplace_back(rectangle(x + 500000, y, x + 1000000, y + 500000));
+        }
+        std::reverse(boundaries.begin(), boundaries.end());
+        const auto seeds = Algorithm::wave_seeds(sources, boundaries, 50000.f, true);
+        REQUIRE(seeds.size() == sources.size());
+        for (size_t i = 0; i < seeds.size(); ++i) {
+            CHECK(seeds[i].boundary == i);
+            CHECK(seeds[i].src == sources.size() - 1 - i);
+            CHECK(path_length(seeds[i].path) == Catch::Approx(500000.));
+        }
     }
 }
 

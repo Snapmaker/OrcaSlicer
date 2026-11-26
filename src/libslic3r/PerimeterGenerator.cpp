@@ -267,38 +267,18 @@ static ExtrusionEntityCollection traverse_loops(const PerimeterGenerator &perime
     return out;
 }
 
-static ClipperZUtils::ZPaths clip_extrusion(const ClipperZUtils::ZPath& subject, const ClipperZUtils::ZPaths& clip, ClipType clipType)
+Arachne::WallSupportPaths Arachne::split_wall_by_support(const ClipperZUtils::ZPath& subject, const Polygons& support)
 {
-    ClipperZUtils::ZPaths clipped_paths;
+    WallSupportPaths paths;
     if (subject.size() < 2)
-        return clipped_paths;
+        return paths;
 
-    Polygons clip_polys;
-    clip_polys.reserve(clip.size());
-    for (const ClipperZUtils::ZPath &cp : clip) {
-        if (cp.size() < 3)
-            continue;
-        Points pts;
-        pts.reserve(cp.size());
-        for (const ClipperZUtils::ZPoint &pt : cp)
-            pts.emplace_back(pt.x(), pt.y());
-        clip_polys.emplace_back(std::move(pts));
-    }
-
-    if (clip_polys.empty()) {
-        if (clipType == ctDifference)
-            clipped_paths.push_back(subject);
-        return clipped_paths;
-    }
-
-    ClipperUtils::ClipEdgesIndex index(clip_polys);
+    ClipperUtils::ClipEdgesIndex index(support);
     if (index.empty()) {
-        if (clipType == ctDifference)
-            clipped_paths.push_back(subject);
-        return clipped_paths;
+        paths.overhang.push_back(subject);
+        return paths;
     }
 
-    const bool keep_inside = (clipType == ctIntersection);
     auto interp_z = [](const ClipperZUtils::ZPoint &a, const ClipperZUtils::ZPoint &b, double t) -> coord_t {
         return coord_t(std::llround(double(a.z()) + std::clamp(t, 0., 1.) * (double(b.z()) - double(a.z()))));
     };
@@ -309,49 +289,26 @@ static ClipperZUtils::ZPaths clip_extrusion(const ClipperZUtils::ZPath& subject,
         subj_pts.emplace_back(zp.x(), zp.y());
     const bool is_closed = (subj_pts.size() >= 3 && subj_pts.front() == subj_pts.back());
 
-    ClipperZUtils::ZPath                            cur;
+    ClipperZUtils::ZPaths*                          previous = nullptr;
     std::vector<ClipperUtils::OpenClipPathInterval> intervals;
-    auto flush = [&]() {
-        if (cur.size() >= 2)
-            clipped_paths.emplace_back(std::move(cur));
-        cur.clear();
-    };
 
     index.clip_path(subj_pts, is_closed, ClipperUtils::OpenClipBoundaryRule::Clipper1ExcludeTop, intervals);
     for (const ClipperUtils::OpenClipPathInterval &iv : intervals) {
-        if (iv.inside != keep_inside) {
-            flush();
-            continue;
-        }
         if (iv.p0 == iv.p1)
             continue;
         const ClipperZUtils::ZPoint &za  = subject[iv.seg_idx];
         const ClipperZUtils::ZPoint &zb  = subject[iv.seg_idx + 1];
         const ClipperZUtils::ZPoint  zp0 = (iv.t0 == 0.) ? za : ClipperZUtils::ZPoint(iv.p0.x(), iv.p0.y(), interp_z(za, zb, iv.t0));
         const ClipperZUtils::ZPoint  zp1 = (iv.t1 == 1.) ? zb : ClipperZUtils::ZPoint(iv.p1.x(), iv.p1.y(), interp_z(za, zb, iv.t1));
-        if (cur.empty()) {
-            cur.push_back(zp0);
-            cur.push_back(zp1);
-        } else {
-            if (cur.back().x() != zp0.x() || cur.back().y() != zp0.y()) {
-                flush();
-                cur.push_back(zp0);
-            }
-            if (cur.back().x() != zp1.x() || cur.back().y() != zp1.y())
-                cur.push_back(zp1);
-        }
+        assert(zp0.z() > 0 && zp1.z() > 0);
+        auto& result = iv.inside ? paths.supported : paths.overhang;
+        if (previous != &result || result.back().back().head<2>() != zp0.head<2>())
+            result.push_back({zp0, zp1});
+        else
+            result.back().push_back(zp1);
+        previous = &result;
     }
-    flush();
-
-    assert([&clipped_paths = std::as_const(clipped_paths)]() -> bool {
-        for (const ClipperZUtils::ZPath& path : clipped_paths)
-            for (const ClipperZUtils::ZPoint& pt : path)
-                if (pt.z() <= 0)
-                    return false;
-        return true;
-    }());
-
-    return clipped_paths;
+    return paths;
 }
 
 struct PerimeterGeneratorArachneExtrusion
@@ -391,26 +348,13 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
                 extrusion_path_bbox.merge(Point(ej.p.x(), ej.p.y()));
             }
 
-            ClipperZUtils::ZPaths lower_slices_paths;
-            {
-                lower_slices_paths.reserve(perimeter_generator.lower_slices_polygons().size());
-                Points clipped;
-                extrusion_path_bbox.offset(SCALED_EPSILON);
-                for (const Polygon &poly : perimeter_generator.lower_slices_polygons()) {
-                    clipped.clear();
-                    ClipperUtils::clip_clipper_polygon_with_subject_bbox(poly.points, extrusion_path_bbox, clipped);
-                    if (!clipped.empty()) {
-                        lower_slices_paths.emplace_back();
-                        ClipperZUtils::ZPath &out = lower_slices_paths.back();
-                        out.reserve(clipped.size());
-                        for (const Point &pt : clipped)
-                          out.emplace_back(pt.x(), pt.y(), 0);
-                    }
-                }
-            }
+            extrusion_path_bbox.offset(SCALED_EPSILON);
+            const Arachne::WallSupportPaths wall_paths = Arachne::split_wall_by_support(
+                extrusion_path,
+                ClipperUtils::clip_clipper_polygons_with_subject_bbox(perimeter_generator.lower_slices_polygons(), extrusion_path_bbox));
 
             // get non-overhang paths by intersecting this loop with the grown lower slices
-            extrusion_paths_append(paths, clip_extrusion(extrusion_path, lower_slices_paths, ctIntersection), role,
+            extrusion_paths_append(paths, wall_paths.supported, role,
                                    is_external ? perimeter_generator.ext_perimeter_flow : perimeter_generator.perimeter_flow);
 
             // Always reverse extrusion if use fuzzy skin: https://github.com/SoftFever/OrcaSlicer/pull/2413#issuecomment-1769735357
@@ -451,8 +395,7 @@ static ExtrusionEntityCollection traverse_extrusions(const PerimeterGenerator& p
             // get overhang paths by checking what parts of this loop fall
             // outside the grown lower slices (thus where the distance between
             // the loop centerline and original lower slices is >= half nozzle diameter
-            extrusion_paths_append(paths, clip_extrusion(extrusion_path, lower_slices_paths, ctDifference), erOverhangPerimeter,
-                perimeter_generator.overhang_flow);
+            extrusion_paths_append(paths, wall_paths.overhang, erOverhangPerimeter, perimeter_generator.overhang_flow);
 
             // Reapply the nearest point search for starting point.
             // We allow polyline reversal because Clipper may have randomly reversed polylines during clipping.
@@ -2166,10 +2109,11 @@ void PerimeterGenerator::process_arachne()
         
         auto apply_precise_outer_wall = config->precise_outer_wall && config->wall_sequence == WallSequence::InnerOuter;
         // Orca: properly adjust offset for the outer wall if precise_outer_wall is enabled.
-        ExPolygons last = offset_ex(surface.expolygon.simplify_p(surface_simplify_resolution),
-                       apply_precise_outer_wall? -float(ext_perimeter_width - ext_perimeter_spacing )
-                                                 : -float(ext_perimeter_width / 2. - ext_perimeter_spacing / 2.));
-        
+        const float outline_delta = apply_precise_outer_wall ? -float(ext_perimeter_width - ext_perimeter_spacing) :
+                                                               -float(ext_perimeter_width / 2. - ext_perimeter_spacing / 2.);
+        Polygons    last_p        = to_polygons(
+            Arachne::offset_wall_outline_ex(surface.expolygon.simplify_p(surface_simplify_resolution), outline_delta));
+
         Arachne::WallToolPathsParams input_params = Arachne::make_paths_params(this->layer_id, *object_config, *print_config);
         // Set params is_top_or_bottom_layer for adjusting short-wall removal sensitivity.
         input_params.is_top_or_bottom_layer = (is_bottom_layer || is_topmost_layer) ? true : false;
@@ -2189,7 +2133,6 @@ void PerimeterGenerator::process_arachne()
 
         Arachne::WallToolPathsParams input_params_tmp = input_params;
         
-        Polygons   last_p = to_polygons(last);
         Arachne::WallToolPaths wallToolPaths(last_p, bead_width_0, perimeter_spacing, coord_t(loop_number + 1),
                                                wall_0_inset, layer_height, input_params_tmp);
         std::vector<Arachne::VariableWidthLines>   perimeters = wallToolPaths.getToolPaths();
@@ -2272,7 +2215,8 @@ void PerimeterGenerator::process_arachne()
         #ifdef ARACHNE_DEBUG
         {
             static int iRun = 0;
-            export_perimeters_to_svg(debug_out_path("arachne-perimeters-%d-%d.svg", layer_id, iRun++), to_polygons(last), perimeters, union_ex(wallToolPaths.getInnerContour()));
+            export_perimeters_to_svg(debug_out_path("arachne-perimeters-%d-%d.svg", layer_id, iRun++), last_p, perimeters,
+                                     union_ex(wallToolPaths.getInnerContour()));
         }
 #endif
 

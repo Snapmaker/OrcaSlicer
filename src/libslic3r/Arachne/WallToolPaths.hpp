@@ -35,6 +35,9 @@ public:
 
 WallToolPathsParams make_paths_params(const int layer_id, const PrintObjectConfig &print_object_config, const PrintConfig &print_config);
 
+// Offset the outline used to generate wall centerlines, preserving the integer-grid rounding of inset edges.
+ExPolygons offset_wall_outline_ex(const Polygons& outline, float delta);
+
 class WallToolPaths
 {
 public:

@@ -995,6 +995,152 @@ TEST_CASE("MR13 open polyline clipping Clipper1ExcludeTop semantics and partitio
     }
 }
 
+TEST_CASE("Open clipping preserves rounded scan columns and boundary insertion order", "[ClipperUtils]")
+{
+    using namespace ClipperUtils;
+    SECTION("A wall crosses the exact edge but both ends occupy its integer scan column")
+    {
+        const Points                      wall{{2520001, 8640001}, {280001, 959999}, {-4520001, 2359999}, {-2280001, 10040001}};
+        const ClipEdgesIndex              index(Polygons{Polygon{{2856001, 9792000}, {-55999, -192000}, {9736000, -3048000}}});
+        std::vector<OpenClipPathInterval> intervals;
+        index.clip_path(wall, true, OpenClipBoundaryRule::Clipper1ExcludeTop, intervals);
+        REQUIRE_FALSE(intervals.empty());
+        CHECK(intervals.front().seg_idx == 0);
+        CHECK(intervals.front().inside);
+        CHECK(intervals.front().p0 == wall[0]);
+        CHECK(intervals.front().p1 == wall[1]);
+    }
+
+    SECTION("Rotated walls sharing a rounded column at one end keep their supported lengths")
+    {
+        auto check = [](const Points& wall, const Polygon& support, double supported_mm) {
+            Polylines supported, overhang;
+            clip_closed_polygon_split(Polygon(wall), Polygons{support}, supported, overhang);
+            double supported_length = 0., overhang_length = 0.;
+            for (const auto& line : supported)
+                supported_length += line.length();
+            for (const auto& line : overhang)
+                overhang_length += line.length();
+            CHECK(std::abs(unscale<double>(supported_length) - supported_mm) < 0.00001);
+            CHECK(std::abs(unscale<double>(supported_length + overhang_length) - 26.) < 0.00002);
+        };
+        check({{10276802, -622401}, {7588799, -4838402}, {843198, -537599}, {3531201, 3678402}},
+              Polygon{{8600640, -5483520}, {-168640, 107520}, {-5652160, -8493120}}, 7.842263);
+        check({{8647059, 5588234}, {4882352, -1470588}, {470588, 882354}, {4235295, 7941177}},
+              Polygon{{4799999, 9000001}, {-4200000, 13800000}, {-94118, -176470}}, 0.);
+    }
+
+    SECTION("A near-coincident edge preserves separate crossings on the same scanbeam")
+    {
+        using XRange = std::pair<coord_t, coord_t>;
+        for (coord_t shift : {-1, 1}) {
+            Polygon near{{shift, 0}, {50000000 + shift, 1}, {50000000, -1500000}, {0, -1500000}};
+            near.make_counter_clockwise();
+            for (coord_t x : {10000000, 30000000, 60000000}) {
+                const coord_t       right = x + 10000000;
+                const Polygons      clip{near, Polygon{{x, -10000}, {right, -10000}, {right, 10000}, {x, 10000}}};
+                std::vector<XRange> expected;
+                if (shift < 0)
+                    expected.emplace_back(0, 49999999);
+                if (shift > 0 || x > 50000000)
+                    expected.emplace_back(x, right);
+
+                Polyline line{{0, 0}, {100000000, 2}};
+                for (bool reverse : {false, true}) {
+                    CAPTURE(shift, x, reverse);
+                    if (reverse)
+                        line.reverse();
+                    std::vector<XRange> actual;
+                    for (const Polyline& part : intersection_pl(line, clip))
+                        actual.push_back(std::minmax(part.first_point().x(), part.last_point().x()));
+                    std::sort(actual.begin(), actual.end());
+                    CHECK(actual == expected);
+                }
+            }
+        }
+    }
+
+    SECTION("A shallow crossing keeps its intersection when translated across the print bed")
+    {
+        for (const coord_t y : {0, 150000000, 250000000}) {
+            const Polygon region{{0, y}, {100000000, y + 2}, {100000000, y + 1000000}, {0, y + 1000000}};
+            for (const coord_t start_offset : {7, 16}) {
+                const coord_t end_offset = start_offset == 7 ? 2 : 4;
+                const Point   cut(start_offset == 7 ? 77777778 : 80000000, y + 2);
+                Polyline      line{{-start_offset, y}, {100000000 + end_offset, y + 2}};
+                for (bool reverse : {false, true}) {
+                    if (reverse)
+                        line.reverse();
+                    const Polylines inside = intersection_pl(line, Polygons{region});
+                    REQUIRE(inside.size() == 1);
+                    CHECK(inside.front().first_point() == (reverse ? cut : Point(0, y)));
+                    CHECK(inside.front().last_point() == (reverse ? Point(0, y) : cut));
+                }
+            }
+        }
+    }
+
+    SECTION("Clipping a single segment agrees with clipping a two-point path")
+    {
+        const ClipEdgesIndex index(Polygons{Polygon{{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}}});
+        for (const auto rule :
+             {OpenClipBoundaryRule::Inclusive, OpenClipBoundaryRule::Clipper1ExcludeTop, OpenClipBoundaryRule::Clipper1ClipFirst}) {
+            for (coord_t y : {0, 500, 1000}) {
+                const Points                      line{{200, y}, {800, y}};
+                std::vector<OpenClipInterval>     segment;
+                std::vector<OpenClipPathInterval> path;
+                index.clip_segment(line.front(), line.back(), rule, segment);
+                index.clip_path(line, false, rule, path);
+                REQUIRE(segment.size() == 1);
+                REQUIRE(path.size() == 1);
+                CHECK(segment[0].inside == path[0].inside);
+                CHECK(segment[0].p0 == path[0].p0);
+                CHECK(segment[0].p1 == path[0].p1);
+            }
+        }
+    }
+}
+
+TEST_CASE("Short open paths graze a densely tessellated contour", "[ClipperUtils]")
+{
+    constexpr int vertices = 8192;
+    Points        ring;
+    for (int i = 0; i < vertices; ++i) {
+        const double angle = 2. * PI * i / vertices;
+        ring.emplace_back(coord_t(std::llround(50000000. * std::cos(angle))), coord_t(std::llround(50000000. * std::sin(angle))));
+    }
+    Polylines lines;
+    for (int i = 0; i < vertices; i += 32)
+        lines.emplace_back(Polyline{ring[i], ring[i + 1]});
+    const Polylines clipped = intersection_pl(lines, Polygons{Polygon(ring)});
+    REQUIRE(clipped.size() == 128);
+    double length = 0.;
+    for (const Polyline& line : clipped) {
+        REQUIRE(line.size() == 2);
+        length += line.length();
+    }
+    CHECK(length * SCALING_FACTOR == Catch::Approx(4.90873552).margin(1.e-7));
+}
+
+TEST_CASE("Unrelated open paths do not change each other's shared-edge ownership", "[ClipperUtils]")
+{
+    Polygons  boxes;
+    Polylines edges;
+    for (int i = 0; i < 17; ++i) {
+        const coord_t x = i * 1200000, y = i * 379;
+        boxes.emplace_back(Polygon{{x, y}, {x + 500000, y}, {x + 500000, y + 500000}, {x, y + 500000}});
+        edges.emplace_back(Polyline{{x + 50000, y + 500000}, {x + 450000, y + 500000}});
+    }
+    for (int order = 0; order < 2; ++order) {
+        CHECK(intersection_pl(edges, boxes).empty());
+        const Polylines outside = diff_pl(edges, boxes);
+        REQUIRE(outside.size() == edges.size());
+        for (size_t i = 0; i < edges.size(); ++i)
+            CHECK(outside[i].points == edges[i].points);
+        std::reverse(edges.begin(), edges.end());
+    }
+}
+
 TEST_CASE("MR13 negative offset hole isolation and offset2 preservation", "[ClipperUtils]")
 {
     SECTION("Island inside hole of vanishing outer frame survives offset_ex and offset2_ex")

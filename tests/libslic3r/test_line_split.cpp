@@ -2,6 +2,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "libslic3r/Algorithm/LineSplit.hpp"
+#include "libslic3r/Arachne/WallToolPaths.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/ExtrusionEntityCollection.hpp"
 #include "libslic3r/Feature/FuzzySkin/FuzzySkin.hpp"
@@ -146,10 +147,104 @@ TEST_CASE("FuzzySkin::apply_fuzzy_skin multi-region split across top boundary", 
     REQUIRE(line.junctions.size() > 2);
     CHECK(line.junctions.front().p == Point(scale_(0.), scale_(10.)));
     CHECK(line.junctions.back().p == Point(scale_(10.), scale_(10.)));
+
+    SECTION("Only the upper edge of a partition fuzzifies a horizontal wall")
+    {
+        for (bool region_above : {false, true}) {
+            pg.regions_by_fuzzify[cfg1] = region_above ? make_box_ex(0., 0., 10., 10.) : make_box_ex(0., -10., 10., 0.);
+            for (bool reversed : {false, true}) {
+                Arachne::ExtrusionLine wall(0, false);
+                const Point            start(coord_t(scale_(reversed ? 9. : 1.)), 0);
+                const Point            end(coord_t(scale_(reversed ? 1. : 9.)), 0);
+                wall.junctions.emplace_back(start, scale_(0.42), 0);
+                wall.junctions.emplace_back(end, scale_(0.42), 0);
+                Feature::FuzzySkin::apply_fuzzy_skin(&wall, pg, true);
+                if (region_above) {
+                    REQUIRE(wall.junctions.size() == 2);
+                    CHECK(wall.junctions.front().w == scale_(0.42));
+                    CHECK(wall.junctions.back().w == scale_(0.42));
+                } else {
+                    REQUIRE(wall.junctions.size() > 2);
+                }
+                CHECK(wall.junctions.front().p == start);
+                CHECK(wall.junctions.back().p == end);
+            }
+        }
+    }
+}
+
+TEST_CASE("Arachne wall outline offsets keep holes and remove collapsed components", "[PerimeterGenerator]")
+{
+    const Polygon    rotated{{-100, -100}, {-20, -40}, {-80, 40}, {-160, -20}};
+    const ExPolygons rounded{ExPolygon(Polygon{{-99, -97}, {-23, -40}, {-80, 36}, {-156, -21}})};
+    CHECK(xor_ex(Arachne::offset_wall_outline_ex({rotated}, -2.5f), rounded).empty());
+
+    const Polygon    outer = make_box_ex(0., 0., 20., 20.).front().contour;
+    const Polygon    small = make_box_ex(22., 5., 24., 7.).front().contour;
+    Polygon          hole{Point::new_scale(5., 5.), Point::new_scale(5., 12.), Point::new_scale(9., 12.),
+                 Point::new_scale(9., 8.), Point::new_scale(13., 8.), Point::new_scale(13., 5.)};
+    const Polygons   rings{outer, hole, small};
+    const ExPolygons inset = Arachne::offset_wall_outline_ex(rings, -scale_(1.));
+    REQUIRE(inset.size() == 1);
+    CHECK(inset.front().holes.size() == 1);
+    CHECK(xor_ex(inset, offset_ex(rings, -scale_(1.))).empty());
+
+    hole = make_box_ex(1., 5., 10., 15.).front().contour;
+    hole.reverse();
+    const Polygons   edge_hole{hole, outer};
+    const ExPolygons opened = Arachne::offset_wall_outline_ex(edge_hole, -scale_(2.));
+    REQUIRE(opened.size() == 1);
+    CHECK(opened.front().holes.empty());
+    CHECK(opened.front().area() == Catch::Approx(116. * scale_(1.) * scale_(1.)));
+    CHECK(xor_ex(opened, offset_ex(edge_hole, -scale_(2.))).empty());
+
+    const ExPolygons expanded = Arachne::offset_wall_outline_ex(edge_hole, scale_(1.));
+    REQUIRE(expanded.size() == 1);
+    CHECK(expanded.front().holes.size() == 1);
+    CHECK(expanded.front().area() == Catch::Approx(428. * scale_(1.) * scale_(1.)));
+    CHECK(xor_ex(expanded, offset_ex(edge_hole, scale_(1.))).empty());
+
+    // This thin inset fully collapses, and a lone negative-winding ring cannot contribute material.
+    for (const Polygons& fallback : {Polygons{small}, Polygons{hole}})
+        CHECK(Arachne::offset_wall_outline_ex(fallback, -scale_(2.)) == offset_ex(fallback, -scale_(2.)));
 }
 
 TEST_CASE("PerimeterGenerator classic and arachne overhang partitioning with exact Z interpolation", "[PerimeterGenerator]")
 {
+    SECTION("Arachne interpolates junction widths at both support transitions")
+    {
+        using ClipperZUtils::ZPath;
+        using ClipperZUtils::ZPoint;
+        const Polygons support = to_polygons(make_box_ex(3., -1., 9., 1.));
+        const ZPoint   left(0, 0, 300000), enter(3000000, 0, 390000), leave(9000000, 0, 570000), right(12000000, 0, 660000);
+        for (bool reverse : {false, true}) {
+            const ZPath                     wall  = reverse ? ZPath{right, left} : ZPath{left, right};
+            const Arachne::WallSupportPaths parts = Arachne::split_wall_by_support(wall, support);
+            REQUIRE(parts.supported.size() == 1);
+            REQUIRE(parts.overhang.size() == 2);
+            CHECK(parts.supported[0] == (reverse ? ZPath{leave, enter} : ZPath{enter, leave}));
+            CHECK(parts.overhang[0] == (reverse ? ZPath{right, leave} : ZPath{left, enter}));
+            CHECK(parts.overhang[1] == (reverse ? ZPath{enter, left} : ZPath{leave, right}));
+        }
+    }
+
+    SECTION("A wall entering at an ordinary support corner keeps its first two junctions")
+    {
+        using ClipperZUtils::ZPath;
+        using ClipperZUtils::ZPoint;
+        const Polygons support = to_polygons(make_box_ex(0., 0., 10., 10.));
+        const ZPoint   corner(0, 0, 300000), inside(3000000, 4000000, 400000), cut(10000000, 4000000, 540000),
+            outside(13000000, 4000000, 600000);
+        for (bool reverse : {false, true}) {
+            const ZPath wall  = reverse ? ZPath{outside, inside, corner} : ZPath{corner, inside, outside};
+            const auto  parts = Arachne::split_wall_by_support(wall, support);
+            REQUIRE(parts.supported.size() == 1);
+            REQUIRE(parts.overhang.size() == 1);
+            CHECK(parts.supported.front() == (reverse ? ZPath{cut, inside, corner} : ZPath{corner, inside, cut}));
+            CHECK(parts.overhang.front() == (reverse ? ZPath{outside, cut} : ZPath{cut, outside}));
+        }
+    }
+
     auto run_pg_flow = [](PerimeterGeneratorType wall_gen, const ExPolygons &top_slice, const ExPolygons &lower_slice,
                           const Flow &flow, std::vector<const ExtrusionPath *> &paths_out,
                           ExtrusionEntityCollection &flattened_storage) {
@@ -352,14 +447,16 @@ TEST_CASE("PerimeterGenerator classic and arachne overhang partitioning with exa
 
         // Case 3: Attachment geometry rotated by +36.87 deg and -36.87 deg via exact (0.8x -/+ 0.6y, +/-0.6x + 0.8y).
         {
-            auto make_rot_box = [](double x0, double y0, double x1, double y1, double s) -> ExPolygons {
+            auto make_rot_box = [](double x0, double y0, double x1, double y1, double s, double cosine = 0.8,
+                                   bool mirror_y = false) -> ExPolygons {
                 const std::array<Vec2d, 4> corners{ Vec2d(x0, y0), Vec2d(x1, y0), Vec2d(x1, y1), Vec2d(x0, y1) };
                 Polygon poly;
                 for (const Vec2d &c : corners) {
-                    const double rx = 0.8 * c.x() - s * c.y();
-                    const double ry = s * c.x() + 0.8 * c.y();
-                    poly.points.emplace_back(coord_t(std::llround(scale_(rx))), coord_t(std::llround(scale_(ry))));
+                    const double rx = c.x() * cosine - s * c.y();
+                    const double ry = s * c.x() + cosine * c.y();
+                    poly.points.emplace_back(coord_t(std::llround(scale_(rx))), coord_t(std::llround(scale_(mirror_y ? -ry : ry))));
                 }
+                poly.make_counter_clockwise();
                 return { ExPolygon(std::move(poly)) };
             };
             const ExPolygons upper_rot    = make_rot_box(0.8, -5.2, 9.2, 0.2, 0.6);
@@ -374,14 +471,52 @@ TEST_CASE("PerimeterGenerator classic and arachne overhang partitioning with exa
             CHECK(sup_c == Catch::Approx(0.));
             CHECK(ovh_c == Catch::Approx(double(scale_(26.))));
 
-            // Under Clipper2's OffsetConcaveCrossing, Arachne's rotated +36.87 deg centerline lands exactly
-            // on the NonHorizRight boundary 3x - 4y = 0 (perimeter 26.000000mm), which Clipper1 open-path
-            // semantics classify as 0 / 26; shifting lower_rot 1nm inward (y = 0.199999) flips to 8 / 18.
+            // Rounding the translated outline edges before finding their crossing puts the Arachne wall
+            // just inside the lower layer. The Classic wall above lies exactly on the support boundary.
             run_pg_flow(PerimeterGeneratorType::Arachne, upper_rot, lower_rot, flow04, paths_a, st_a);
             double sup_a = 0., ovh_a = 0.;
             sum_roles(paths_a, sup_a, ovh_a);
-            CHECK(sup_a == Catch::Approx(0.));
-            CHECK(ovh_a == Catch::Approx(double(scale_(26.))));
+            CHECK(sup_a == Catch::Approx(double(scale_(8.000001))).margin(2.));
+            CHECK(ovh_a == Catch::Approx(double(scale_(18.000003))).margin(2.));
+
+            const ExPolygons                  upper_opposite = make_rot_box(0.8, -5.2, 9.2, 0.2, -0.6, -0.8);
+            const ExPolygons                  lower_opposite = make_rot_box(0., 0.2, 10., 10., -0.6, -0.8);
+            std::vector<const ExtrusionPath*> paths_opposite;
+            ExtrusionEntityCollection         st_opposite;
+            run_pg_flow(PerimeterGeneratorType::Arachne, upper_opposite, lower_opposite, flow04, paths_opposite, st_opposite);
+            double sup_opposite = 0., ovh_opposite = 0.;
+            sum_roles(paths_opposite, sup_opposite, ovh_opposite);
+            CHECK(sup_opposite == Catch::Approx(double(scale_(8.000001))).margin(2.));
+            CHECK(ovh_opposite == Catch::Approx(double(scale_(18.000003))).margin(2.));
+            auto supported_box = [](const std::vector<const ExtrusionPath*>& paths) {
+                BoundingBox box;
+                for (const ExtrusionPath* path : paths)
+                    if (path->role() != erOverhangPerimeter)
+                        for (const Point& p : path->polyline.points)
+                            box.merge(p);
+                return box;
+            };
+            const BoundingBox forward  = supported_box(paths_a);
+            const BoundingBox opposite = supported_box(paths_opposite);
+            CHECK(forward.min.distance_to(Point(799999, 600000)) <= 1.);
+            CHECK(forward.max.distance_to(Point(7200000, 5400001)) <= 1.);
+            CHECK(opposite.min.distance_to(Point(-7200000, -5400000)) <= 1.);
+            CHECK(opposite.max.distance_to(Point(-799999, -600000)) <= 1.);
+
+            // These pairs round to the same scan column at only one end of the overlapping edges.
+            auto check_grazing_rotation = [&](double cosine, double sine, bool mirror_y, double lower_y, double supported, double overhang) {
+                const auto                        top    = make_rot_box(0.8, -5.2, 9.2, 0.2, sine, cosine, mirror_y);
+                const auto                        bottom = make_rot_box(0., lower_y, 10., 10., sine, cosine, mirror_y);
+                std::vector<const ExtrusionPath*> paths;
+                ExtrusionEntityCollection         storage;
+                run_pg_flow(PerimeterGeneratorType::Arachne, top, bottom, flow04, paths, storage);
+                double normal = 0., bridge = 0.;
+                sum_roles(paths, normal, bridge);
+                CHECK(normal == Catch::Approx(double(scale_(supported))).margin(5.));
+                CHECK(bridge == Catch::Approx(double(scale_(overhang))).margin(5.));
+            };
+            check_grazing_rotation(527. / 625., 336. / 625., true, 0.2, 7.842260, 18.157747);
+            check_grazing_rotation(8. / 17., 15. / 17., false, 0.200001, 0., 25.999999);
 
             run_pg_flow(PerimeterGeneratorType::Arachne, upper_rot, lower_rot_in, flow04, paths_a_in, st_a_in);
             double sup_a_in = 0., ovh_a_in = 0.;

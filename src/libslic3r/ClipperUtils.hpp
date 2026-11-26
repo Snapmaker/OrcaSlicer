@@ -5,6 +5,7 @@
 #include "ExPolygon.hpp"
 #include "Polygon.hpp"
 #include "Surface.hpp"
+#include <cmath>
 
 namespace Slic3r {
 
@@ -334,9 +335,13 @@ namespace ClipperUtils {
     [[nodiscard]] Polygons clip_clipper_polygons_with_subject_bbox(const ExPolygon &src, const BoundingBox &bbox, const bool get_entire_polygons = false);
     [[nodiscard]] Polygons clip_clipper_polygons_with_subject_bbox(const ExPolygons &src, const BoundingBox &bbox, const bool get_entire_polygons = false);
 
+    // Clipper 6.4.2 rounds ties upwards, with an explicit exception for the last double below +0.5.
+    inline double round_to_clipper1_grid(double value) { return value == std::nextafter(0.5, 0.) ? 0. : std::floor(value + 0.5); }
+
     enum class OpenClipBoundaryRule {
         Inclusive,
-        Clipper1ExcludeTop
+        Clipper1ExcludeTop,
+        Clipper1ClipFirst // Attribute shared boundaries in the insertion order used by painted regions.
     };
 
     struct OpenClipInterval {

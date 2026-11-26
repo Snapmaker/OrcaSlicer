@@ -23,6 +23,106 @@
 namespace Slic3r::Arachne
 {
 
+// For a surviving convex inset, Clipper1 intersected the two integer offset edges at each corner.
+// Rounding their ideal miter instead can move the centerline across a support edge by one grid unit.
+static bool inset_rounded_edges(const Polygon& polygon, float delta, Polygon& inset)
+{
+    const Points& points = polygon.points;
+    const size_t  count  = points.size();
+    if (count < 3 || std::abs(delta) < 0.5f)
+        return false;
+
+    const int winding = delta < 0.f ? 1 : -1;
+    size_t    minima  = 0;
+    for (size_t i = 0; i < count; ++i) {
+        const Point& prev = points[(i + count - 1) % count];
+        const Point& curr = points[i];
+        const Point& next = points[(i + 1) % count];
+        if (int128::orient(prev, curr, next) != winding)
+            return false;
+        if (curr < prev && curr < next)
+            ++minima;
+    }
+    if (minima != 1)
+        return false;
+
+    Linesf edges;
+    edges.reserve(count);
+    const double shortest = std::abs(delta) * ClipperOffsetShortestEdgeFactor;
+    auto         on_grid  = [](const Vec2d& point) {
+        return Vec2d(ClipperUtils::round_to_clipper1_grid(point.x()), ClipperUtils::round_to_clipper1_grid(point.y()));
+    };
+    for (size_t i = 0; i < count; ++i) {
+        const Vec2d  a         = points[i].cast<double>();
+        const Vec2d  b         = points[(i + 1) % count].cast<double>();
+        const Vec2d  direction = b - a;
+        const double length    = direction.norm();
+        if (length <= shortest)
+            return false;
+        const Vec2d normal = Vec2d(direction.y(), -direction.x()) * (1. / length);
+        const Vec2d shift  = normal * double(delta);
+        edges.emplace_back(on_grid(a + shift), on_grid(b + shift));
+    }
+
+    inset.points.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        const Linef& prev     = edges[(i + count - 1) % count];
+        const Linef& curr     = edges[i];
+        const Vec2d  incoming = prev.b - prev.a;
+        const Vec2d  outgoing = curr.b - curr.a;
+        // A nearly straight join can lose an offset point on the integer grid.
+        if (incoming.dot(outgoing) > 0. && std::abs(cross2(incoming, outgoing) * delta) < incoming.norm() * outgoing.norm())
+            return false;
+        Vec2d crossing;
+        if (!Geometry::ray_ray_intersection(prev.a, incoming, curr.a, outgoing, crossing) ||
+            (crossing - prev.a).dot(crossing - prev.b) > 0. || (crossing - curr.a).dot(crossing - curr.b) > 0. ||
+            crossing.minCoeff() <= double(std::numeric_limits<coord_t>::min()) ||
+            crossing.maxCoeff() >= double(std::numeric_limits<coord_t>::max()))
+            return false;
+        inset.points.emplace_back(on_grid(crossing).cast<coord_t>());
+    }
+
+    // When an edge disappears, the offset engine must decide which other edges meet.
+    for (size_t i = 0; i < count; ++i) {
+        const size_t next      = (i + 1) % count;
+        const Vec2d  direction = points[next].cast<double>() - points[i].cast<double>();
+        if (direction.dot(inset.points[next].cast<double>() - inset.points[i].cast<double>()) <= 0. ||
+            int128::orient(inset.points[(i + count - 1) % count], inset.points[i], inset.points[next]) != winding)
+            return false;
+    }
+    return true;
+}
+
+static Polygons wall_outline_insets(const Polygons& outline, float delta)
+{
+    Polygons                    inset_paths;
+    std::vector<const Polygon*> other_paths;
+    for (const Polygon& polygon : outline) {
+        Polygon inset;
+        if (inset_rounded_edges(polygon, delta, inset))
+            inset_paths.emplace_back(std::move(inset));
+        else
+            other_paths.emplace_back(&polygon);
+    }
+    if (inset_paths.empty())
+        return {};
+    for (const Polygon* polygon : other_paths)
+        append(inset_paths, offset(*polygon, delta));
+    return inset_paths;
+}
+
+static Polygons offset_wall_outline(const Polygons& outline, float delta)
+{
+    Polygons insets = wall_outline_insets(outline, delta);
+    return insets.empty() ? offset(outline, delta) : union_(insets, delta < 0.f ? pftPositive : pftNonZero);
+}
+
+ExPolygons offset_wall_outline_ex(const Polygons& outline, float delta)
+{
+    Polygons insets = wall_outline_insets(outline, delta);
+    return insets.empty() ? offset_ex(outline, delta) : union_ex(insets, delta < 0.f ? pftPositive : pftNonZero);
+}
+
 WallToolPathsParams make_paths_params(const int layer_id, const PrintObjectConfig &print_object_config, const PrintConfig &print_config)
 {
     WallToolPathsParams input_params;
@@ -470,7 +570,9 @@ const std::vector<VariableWidthLines> &WallToolPaths::generate()
 
     // Simplify outline for boost::voronoi consumption. Absolutely no self intersections or near-self intersections allowed:
     // TODO: Open question: Does this indeed fix all (or all-but-one-in-a-million) cases for manifold but otherwise possibly complex polygons?
-    Polygons prepared_outline = offset(offset(offset(outline, -epsilon_offset), epsilon_offset * 2), -epsilon_offset);
+    Polygons prepared_outline = offset_wall_outline(outline, -epsilon_offset);
+    prepared_outline          = offset_wall_outline(prepared_outline, epsilon_offset * 2);
+    prepared_outline          = offset_wall_outline(prepared_outline, -epsilon_offset);
     simplify(prepared_outline, smallest_segment, allowed_distance);
     fixSelfIntersections(epsilon_offset, prepared_outline);
     removeDegenerateVerts(prepared_outline);

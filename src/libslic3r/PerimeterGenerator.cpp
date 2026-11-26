@@ -300,45 +300,45 @@ static ClipperZUtils::ZPaths clip_extrusion(const ClipperZUtils::ZPath& subject,
 
     const bool keep_inside = (clipType == ctIntersection);
     auto interp_z = [](const ClipperZUtils::ZPoint &a, const ClipperZUtils::ZPoint &b, double t) -> coord_t {
-        return coord_t(double(a.z()) + std::clamp(t, 0., 1.) * (double(b.z()) - double(a.z())));
+        return coord_t(std::llround(double(a.z()) + std::clamp(t, 0., 1.) * (double(b.z()) - double(a.z()))));
     };
 
-    ClipperZUtils::ZPath                       cur;
-    std::vector<ClipperUtils::OpenClipInterval> intervals;
+    Points subj_pts;
+    subj_pts.reserve(subject.size());
+    for (const ClipperZUtils::ZPoint &zp : subject)
+        subj_pts.emplace_back(zp.x(), zp.y());
+    const bool is_closed = (subj_pts.size() >= 3 && subj_pts.front() == subj_pts.back());
+
+    ClipperZUtils::ZPath                            cur;
+    std::vector<ClipperUtils::OpenClipPathInterval> intervals;
     auto flush = [&]() {
         if (cur.size() >= 2)
             clipped_paths.emplace_back(std::move(cur));
         cur.clear();
     };
 
-    for (size_t i = 0; i + 1 < subject.size(); ++i) {
-        const ClipperZUtils::ZPoint &za = subject[i];
-        const ClipperZUtils::ZPoint &zb = subject[i + 1];
-        const Point                  a(za.x(), za.y());
-        const Point                  b(zb.x(), zb.y());
-        if (a == b)
+    index.clip_path(subj_pts, is_closed, ClipperUtils::OpenClipBoundaryRule::Clipper1ExcludeTop, intervals);
+    for (const ClipperUtils::OpenClipPathInterval &iv : intervals) {
+        if (iv.inside != keep_inside) {
+            flush();
             continue;
-        index.clip_segment(a, b, ClipperUtils::OpenClipBoundaryRule::Clipper1ExcludeTop, intervals);
-        for (const ClipperUtils::OpenClipInterval &iv : intervals) {
-            if (iv.inside != keep_inside) {
+        }
+        if (iv.p0 == iv.p1)
+            continue;
+        const ClipperZUtils::ZPoint &za  = subject[iv.seg_idx];
+        const ClipperZUtils::ZPoint &zb  = subject[iv.seg_idx + 1];
+        const ClipperZUtils::ZPoint  zp0 = (iv.t0 == 0.) ? za : ClipperZUtils::ZPoint(iv.p0.x(), iv.p0.y(), interp_z(za, zb, iv.t0));
+        const ClipperZUtils::ZPoint  zp1 = (iv.t1 == 1.) ? zb : ClipperZUtils::ZPoint(iv.p1.x(), iv.p1.y(), interp_z(za, zb, iv.t1));
+        if (cur.empty()) {
+            cur.push_back(zp0);
+            cur.push_back(zp1);
+        } else {
+            if (cur.back().x() != zp0.x() || cur.back().y() != zp0.y()) {
                 flush();
-                continue;
-            }
-            if (iv.p0 == iv.p1)
-                continue;
-            const ClipperZUtils::ZPoint zp0 = (iv.t0 == 0.) ? za : ClipperZUtils::ZPoint(iv.p0.x(), iv.p0.y(), interp_z(za, zb, iv.t0));
-            const ClipperZUtils::ZPoint zp1 = (iv.t1 == 1.) ? zb : ClipperZUtils::ZPoint(iv.p1.x(), iv.p1.y(), interp_z(za, zb, iv.t1));
-            if (cur.empty()) {
                 cur.push_back(zp0);
-                cur.push_back(zp1);
-            } else {
-                if (cur.back().x() != zp0.x() || cur.back().y() != zp0.y()) {
-                    flush();
-                    cur.push_back(zp0);
-                }
-                if (cur.back().x() != zp1.x() || cur.back().y() != zp1.y())
-                    cur.push_back(zp1);
             }
+            if (cur.back().x() != zp1.x() || cur.back().y() != zp1.y())
+                cur.push_back(zp1);
         }
     }
     flush();

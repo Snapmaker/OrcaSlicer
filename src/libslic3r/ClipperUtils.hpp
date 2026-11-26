@@ -347,6 +347,15 @@ namespace ClipperUtils {
         bool   inside = false;
     };
 
+    struct OpenClipPathInterval {
+        size_t seg_idx = 0;
+        double t0      = 0.;
+        double t1      = 1.;
+        Point  p0;
+        Point  p1;
+        bool   inside  = false;
+    };
+
     // Spatial edge index for exact per-segment open-path clipping (preserving source vertices and paired roles).
     class ClipEdgesIndex {
     public:
@@ -362,6 +371,7 @@ namespace ClipperUtils {
         bool empty() const;
 
         void clip_segment(const Point &a, const Point &b, OpenClipBoundaryRule rule, std::vector<OpenClipInterval> &out) const;
+        void clip_path(const Points &path, bool is_closed, OpenClipBoundaryRule rule, std::vector<OpenClipPathInterval> &out) const;
 
     private:
         struct Impl;

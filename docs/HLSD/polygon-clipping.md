@@ -71,12 +71,13 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   clip do not leave slivers. For `ExPolygon`, `ExPolygons`, `Surfaces`, and
   `SurfacesPtr` clips this goes through `c2_offset_expolygons()` to normalize
   contour/hole orientations first.
-- Open polylines are clipped per source edge against an indexed clip edge set,
+- Open polylines are clipped per source path against an indexed clip edge set,
   preserving source direction and vertex order. `intersection_pl` / `diff_pl`
-  and `clip_extrusion` follow Clipper1's boundary rule (excluding shared top
-  horizontal boundaries from `intersection` so `intersection` and `diff` stay
-  complementary), while `Algorithm::split_line` uses boundary-inclusive
-  containment.
+  and `clip_extrusion` follow Clipper1's boundary rule across connected path
+  runs (excluding shared top horizontal and non-maxima right vertical boundaries
+  and outer-grazing horizontal bottom segments from `intersection` so
+  `intersection` and `diff` remain complementary), while `Algorithm::split_line`
+  uses boundary-inclusive containment.
 
 ### Offsets
 
@@ -93,19 +94,20 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   |delta| / 4 for round end caps.
 - A single `Polygon` keeps its orientation: a CCW polygon grows with a
   positive delta, a CW polygon is a hole and shrinks.
-- `Polygons` follow the same rule per path. When there are no zero-area paths
-  mixed with CW paths and every CW path is strictly enclosed with positive
-  winding inside non-touching CCW contours (verified via AABB tree,
-  edge-AABB-indexed segment intersection, and 128-bit point-in-polygon), all
-  paths are offset in one Clipper2 group. Otherwise each path is offset on its
-  own and the results are united, with the non-zero rule when growing and the
-  positive rule when shrinking.
+- `Polygons` follow the same rule per path. Non-CW batches run through
+  `c2_offset_ccw_paths_isolated()`, which batches mutually influence-disjoint
+  paths and isolates paths whose offset-influence bounding boxes overlap (so
+  concave self-intersections cannot cancel neighboring islands). Mixed CCW/CW
+  inputs run as one Clipper2 group only when every CW path is strictly enclosed
+  with positive winding inside non-touching CCW contours and no same-sign paths
+  overlap within offset influence range; otherwise each path is offset on its
+  own and the results are united.
 - `ExPolygons` and `Surfaces` normalize contour (CCW) and hole (CW)
-  orientations. Positive offsets run in one group; negative offsets isolate
-  each holed entity (shrinking its outer contour and subtracting its own
-  expanded holes, while batching holeless contours) so an expanding hole cannot
-  swallow another entity. Two-step `offset2()` / `offset2_ex()` calls whose
-  second delta is negative preserve the intermediate `PolyTree64` hierarchy.
+  orientations, batching mutually influence-disjoint holeless contours while
+  isolating each holed entity (and isolating its holes by influence bounding box
+  on both positive and negative offsets) before subtraction and union. Two-step
+  `offset2()` / `offset2_ex()` calls preserve the intermediate `PolyTree64`
+  hierarchy across both positive and negative second deltas.
 - Only truly collinear degenerate paths are dropped under a negative offset;
   self-intersecting zero-area paths (e.g. bowties) retain their
   positive-winding lobes.

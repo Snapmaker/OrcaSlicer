@@ -210,14 +210,79 @@ TEST_CASE("PerimeterGenerator classic and arachne overhang partitioning with exa
         CHECK(overhang_len > scale_(20.));
     }
 
-    SECTION("Arachne overhang on variable-width wedge crossing clip vertex keeps positive width on all segments")
+    SECTION("Classic single-wall grazing overhang bottom edge emits 0mm supported and 26mm overhang")
+    {
+        // Repro: single wall 0.4mm width, 0.2mm height, upper [0.8,9.2]x[-5.2,0.2], lower [0,10]x[0.2,10].
+        // Perimeter centerline runs at [1,9]x[-5,0] while grown_lower_slices reaches [0..10]x[0..10.2].
+        SurfaceCollection          slices;
+        slices.append(make_box_ex(0.8, -5.2, 9.2, 0.2), stInternal);
+        LayerRegionPtrs            compatible_regions;
+        PrintRegionConfig          region_cfg;
+        region_cfg.wall_loops.value           = 1;
+        region_cfg.detect_overhang_wall.value = true;
+        PrintObjectConfig          object_cfg;
+        object_cfg.wall_generator.value = PerimeterGeneratorType::Classic;
+        object_cfg.raft_layers.value    = 0;
+        PrintConfig                print_cfg;
+        ExtrusionEntityCollection  loops, gap_fill;
+        SurfaceCollection          fill_surfaces;
+        ExPolygons                 fill_no_overlap;
+
+        Flow flow(0.4f, 0.2f, 0.4f);
+        PerimeterGenerator pg(
+            &slices, &compatible_regions, 0.2, 0.3, flow,
+            &region_cfg, &object_cfg, &print_cfg, false,
+            &loops, &gap_fill, &fill_surfaces, &fill_no_overlap);
+        const ExPolygons lower_repro = make_box_ex(0., 0.2, 10., 10.);
+        pg.layer_id                  = 1;
+        pg.lower_slices              = &lower_repro;
+        pg.ext_perimeter_flow        = flow;
+        pg.overhang_flow             = Flow::bridging_flow(0.4f, 0.4f);
+        pg.solid_infill_flow         = flow;
+        pg.process_classic();
+
+        const ExtrusionEntityCollection flat = loops.flatten();
+        std::vector<const ExtrusionPath *> paths;
+        collect_paths(flat, paths);
+        REQUIRE(! paths.empty());
+        double supported_len = 0., overhang_len = 0.;
+        for (const ExtrusionPath *p : paths) {
+            if (p->role() == erOverhangPerimeter)
+                overhang_len += p->length();
+            else
+                supported_len += p->length();
+        }
+        CHECK(supported_len == Catch::Approx(0.));
+        CHECK(overhang_len == Catch::Approx(double(scale_(26.))));
+    }
+
+    SECTION("Arachne single-wall grazing overhang bottom edge emits 0mm supported and 26mm overhang")
+    {
+        std::vector<const ExtrusionPath *> paths;
+        ExtrusionEntityCollection          storage;
+        run_pg(PerimeterGeneratorType::Arachne, make_box_ex(0.8, -5.2, 9.2, 0.2), make_box_ex(0., 0.2, 10., 10.), paths, storage);
+        REQUIRE(! paths.empty());
+
+        double supported_len = 0., overhang_len = 0.;
+        for (const ExtrusionPath *p : paths) {
+            CHECK(p->width > 0.f);
+            if (p->role() == erOverhangPerimeter)
+                overhang_len += p->length();
+            else
+                supported_len += p->length();
+        }
+        CHECK(supported_len == Catch::Approx(0.));
+        CHECK(overhang_len == Catch::Approx(double(scale_(26.))).margin(double(scale_(0.2))));
+    }
+
+    SECTION("Arachne overhang on variable-width wedge crossing clip vertex keeps interpolated positive width")
     {
         // Tapered wedge polygon whose variable-width centerline crosses the clip corner at x=10.
         const ExPolygons wedge{ ExPolygon(Polygon{
-            { scale_(0.), scale_(0.) },
-            { scale_(30.), scale_(4.5) },
-            { scale_(30.), scale_(5.5) },
-            { scale_(0.), scale_(10.) } }) };
+            { coord_t(scale_(0.)), coord_t(scale_(0.)) },
+            { coord_t(scale_(30.)), coord_t(scale_(4.5)) },
+            { coord_t(scale_(30.)), coord_t(scale_(5.5)) },
+            { coord_t(scale_(0.)), coord_t(scale_(10.)) } }) };
         const ExPolygons corner_clip = make_box_ex(0., 0., 10., 5.);
 
         std::vector<const ExtrusionPath *> paths;
@@ -228,6 +293,7 @@ TEST_CASE("PerimeterGenerator classic and arachne overhang partitioning with exa
         double supported_len = 0., overhang_len = 0.;
         for (const ExtrusionPath *p : paths) {
             CHECK(p->width > 0.f);
+            CHECK(p->width <= 1.2f);
             if (p->role() == erOverhangPerimeter)
                 overhang_len += p->length();
             else

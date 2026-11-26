@@ -32,6 +32,9 @@ msgstr "\"%s\" 细分后面数将超过 100 万，可能增加切片时间。是
 msgid "\"%s\" part's mesh contains errors. Please repair it first."
 msgstr "\"%s\" 零件的网格存在错误，请先修复。"
 
+msgid "Subdivision discarded: the model changed while it was running"
+msgstr "细分结果已丢弃：运行期间模型发生了变化"
+
 msgid "Current AMS humidity"
 msgstr "当前AMS湿度"
 
@@ -15760,6 +15763,78 @@ msgstr "  • 接触面图案 → 交叠直线\n"
 #, c-format, boost-format
 msgid "  • Interface spacing: %.2f → 0 mm\n"
 msgstr "  • 接触面间距：%.2f → 0 mm\n"
+
+msgid "Local Subdivision"
+msgstr "局部细分"
+
+msgid "Global Subdivision"
+msgstr "全局细分"
+
+msgid "Subdivision level"
+msgstr "细分层数"
+
+msgid "Subdivide"
+msgstr "细分"
+
+msgid "Selected facets"
+msgstr "已选面数"
+
+msgid "Select facets"
+msgstr "选择面片"
+
+msgid "Unselect facets"
+msgstr "取消选择面片"
+
+msgid "Erase all selection"
+msgstr "清除所有选择"
+
+msgid "Detect geometry edge"
+msgstr "检测几何边缘"
+
+msgid "Entering Local subdivision"
+msgstr "进入局部细分"
+
+msgid "Leaving Local subdivision"
+msgstr "退出局部细分"
+
+msgid "Local subdivision facet selection"
+msgstr "局部细分面选择"
+
+msgid "Subdivision started"
+msgstr "细分开始"
+
+msgid "Subdivision finished"
+msgstr "细分完成"
+
+msgid "Subdivision failed"
+msgstr "细分失败"
+
+#, c-format
+msgid "Local subdivision stopped at level %d of %d: the selected region could not be subdivided (non-manifold edges or degenerate geometry)."
+msgstr "局部细分停留在第 %d 级（共 %d 级）：所选区域无法细分（存在非流形边或退化几何）。"
+
+#, c-format
+msgid "Subdivision failed: the selected region could not be subdivided (non-manifold edges or degenerate geometry; reached level %d of %d). No changes were applied."
+msgstr "细分失败：所选区域无法细分（存在非流形边或退化几何；到达第 %d 级，共 %d 级）。未应用任何更改。"
+
+#, c-format
+msgid "Local subdivision stopped at level %d of %d: the selected region contains non-manifold edges."
+msgstr "局部细分停留在第 %d 级（共 %d 级）：所选区域存在非流形边。"
+
+#, c-format
+msgid "Local subdivision stopped at level %d of %d: the selected region contains degenerate geometry."
+msgstr "局部细分停留在第 %d 级（共 %d 级）：所选区域存在退化几何。"
+
+#, c-format
+msgid "Subdivision failed: the selected region contains non-manifold edges (reached level %d of %d). No changes were applied."
+msgstr "细分失败：所选区域存在非流形边（到达第 %d 级，共 %d 级）。未应用任何更改。"
+
+#, c-format
+msgid "Subdivision failed: the selected region contains degenerate geometry (reached level %d of %d). No changes were applied."
+msgstr "细分失败：所选区域存在退化几何（到达第 %d 级，共 %d 级）。未应用任何更改。"
+
+msgid "The selected region has no faces that can be subdivided."
+msgstr "所选区域没有可细分的面。"
 
 msgid "Enable Snapmaker Space"
 msgstr "开启模型站"

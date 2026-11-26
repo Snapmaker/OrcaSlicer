@@ -5899,6 +5899,12 @@ void GUI::ObjectList::smooth_mesh()
         return;
     }
 
+    auto* start_notification_manager = plater->get_notification_manager();
+    if (start_notification_manager != nullptr)
+        start_notification_manager->push_notification(NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                      3, // fade out after 3 s instead of the regular 10 s
+                                                      into_u8(_L("Subdivision started")));
+
     // The worker thread must not touch the Model: the object may change or disappear while
     // the job is running, so hand the worker deep copies of the input meshes only.
     // Filled in by the worker thread, applied to the model on the UI thread; a nullopt
@@ -5927,6 +5933,7 @@ void GUI::ObjectList::smooth_mesh()
             std::vector<SmoothResult *> apply_list;
             std::vector<int>        changed_objs;
             std::string             failed_name;
+            int                     skipped = 0;
             for (SmoothResult &result : *results) {
                 // Locate the object by its stable id: deleting another object shifts
                 // list indexes while the job runs, so the dispatch-time index must
@@ -5939,11 +5946,13 @@ void GUI::ObjectList::smooth_mesh()
                     }
                 }
                 if (cur_obj_idx < 0) {
+                    ++skipped;
                     continue;
                 }
                 ModelObject *obj = model.objects[cur_obj_idx];
                 // Skip volumes that were removed from the object while the job was running.
                 if (std::find(obj->volumes.begin(), obj->volumes.end(), result.volume) == obj->volumes.end()) {
+                    ++skipped;
                     continue;
                 }
                 // The job smoothed a copy of one specific mesh object. Every mesh
@@ -5951,6 +5960,7 @@ void GUI::ObjectList::smooth_mesh()
                 // swapped while the job was running (e.g. a simplify finished first), this
                 // result is stale and would overwrite the newer mesh - skip it.
                 if (result.volume->mesh_ptr() != result.origin) {
+                    ++skipped;
                     continue;
                 }
                 if (result.smoothed) {
@@ -5964,6 +5974,22 @@ void GUI::ObjectList::smooth_mesh()
             }
             if (!failed_name.empty()) {
                 show_smooth_mesh_error_dlg(failed_name);
+                auto* failed_notification_manager = plater->get_notification_manager();
+                if (failed_notification_manager != nullptr)
+                    failed_notification_manager->push_notification(NotificationManager::NotificationLevel::ErrorNotificationLevel,
+                                                                   3, // fade out after 3 s, same as the start/finish notifications
+                                                                   into_u8(_L("Subdivision failed")));
+            }
+            // Terminal state for the "Subdivision started" notice: when every result was
+            // skipped as stale (object or volume removed, mesh replaced while the job
+            // ran), nothing failed and nothing was applied - say so explicitly instead
+            // of leaving the start notification without an outcome.
+            if (apply_list.empty() && failed_name.empty() && skipped > 0) {
+                auto* stale_notification_manager = plater->get_notification_manager();
+                if (stale_notification_manager != nullptr)
+                    stale_notification_manager->push_notification(NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                                  3, // fade out after 3 s, same as the other subdivision notifications
+                                                                  into_u8(_L("Subdivision discarded: the model changed while it was running")));
             }
             if (!apply_list.empty()) {
                 // take_snapshot() stores the CURRENT model state, so it must run before
@@ -5987,9 +6013,33 @@ void GUI::ObjectList::smooth_mesh()
                     model.objects[obj_idx]->ensure_on_bed();
                     plater->changed_mesh(obj_idx);
                 }
+                if (failed_name.empty()) {
+                    auto* finished_notification_manager = plater->get_notification_manager();
+                    if (finished_notification_manager != nullptr)
+                        finished_notification_manager->push_notification(NotificationManager::NotificationLevel::RegularNotificationLevel,
+                                                                         3, // fade out after 3 s instead of the regular 10 s
+                                                                         into_u8(_L("Subdivision finished")));
+                }
             }
         });
     });
+}
+
+void ObjectList::smooth_mesh_local()
+{
+    auto plater = wxGetApp().plater();
+    GLGizmosManager& gizmos_mgr = plater->get_view3D_canvas3D()->get_gizmos_manager();
+
+    if (! gizmos_mgr.check_gizmos_closed_except(GLGizmosManager::EType::LocalSubdivision))
+        return;
+
+    // open_gizmo() is a toggle: calling it for the already-active gizmo type closes it
+    // (GLGizmosManager.cpp: "re-open same type cause closing"). When the Local
+    // Subdivision gizmo is already open, the first call closes it so the second one
+    // reopens it from a fresh state.
+    if (gizmos_mgr.get_current_type() == GLGizmosManager::LocalSubdivision)
+        gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
+    gizmos_mgr.open_gizmo(GLGizmosManager::EType::LocalSubdivision);
 }
 
 void ObjectList::update_item_error_icon(const int obj_idx, const int vol_idx) const

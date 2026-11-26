@@ -1787,6 +1787,11 @@ void NotificationManager::push_notification(const std::string& text, int timesta
 	push_notification_data({ NotificationType::CustomNotification, NotificationLevel::RegularNotificationLevel, 10, text }, timestamp);
 }
 
+void NotificationManager::push_notification(NotificationLevel level, int duration, const std::string& text, int timestamp)
+{
+    push_notification_data({ NotificationType::CustomNotification, level, duration, text }, timestamp);
+}
+
 void NotificationManager::push_notification(NotificationType type,
                                             NotificationLevel level,
                                             const std::string& text,

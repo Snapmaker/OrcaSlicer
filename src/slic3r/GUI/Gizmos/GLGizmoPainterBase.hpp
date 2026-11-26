@@ -30,7 +30,8 @@ enum class PainterGizmoType {
     FDM_SUPPORTS,
     SEAM,
     MM_SEGMENTATION,
-    FUZZY_SKIN
+    FUZZY_SKIN,
+    LOCAL_SUBDIVISION
 };
 
 class TriangleSelectorGUI : public TriangleSelector {
@@ -388,6 +389,11 @@ public:
 
 protected:
     virtual void render_triangles(const Selection& selection) const;
+    // Whether the triangle selector of this model part is drawn by render_triangles.
+    // A derived gizmo that replaces some volumes' draw with its own preview mesh
+    // overrides this to skip exactly those volumes - the conditions must mirror
+    // the replacement draw's, or volumes vanish / get drawn twice.
+    virtual bool render_selector_for_volume(const ModelVolume* mv) const { return true; }
     void render_cursor();
     void render_cursor_circle();
     void render_cursor_sphere(const Transform3d& trafo) const;
@@ -505,13 +511,24 @@ private:
 
     bool m_internal_stack_active = false;
     bool m_schedule_update = false;
-    Vec2d m_last_mouse_click = Vec2d::Zero();
 
-    Button m_button_down = Button::None;
+protected:
+    // Stroke state, reset when the mouse button is released. Protected so that a
+    // derived gizmo intercepting the button-up event (to skip the base-class
+    // snapshot) can still end the stroke the same way: a stale m_last_mouse_click
+    // makes the next click interpolate paint from the previous click position.
+    Vec2d  m_last_mouse_click = Vec2d::Zero();
+    Button m_button_down      = Button::None;
+    // Whether the current stroke changed any selector state; the stroke ends in
+    // a snapshot only when it did. Protected for the same reason as above.
     bool m_strokeHasCommittedState = false;
     // Hit Z of the previous height-range event in the current stroke; empty when the sweep restarts.
     std::optional<float> _heightRangeLastBottomZ;
+    // Reentrancy guard, set while the stroke-finalizing cleanup runs (base
+    // FinalizePaintingStroke or a derived gizmo's equivalent). Protected for the same reason as above.
     bool m_finishingPaintingInteraction = false;
+
+private:
     EState m_old_state = Off; // to be able to see that the gizmo has just been closed (see on_set_state)
 
     // Following cache holds result of a raycast query. The queries are asked

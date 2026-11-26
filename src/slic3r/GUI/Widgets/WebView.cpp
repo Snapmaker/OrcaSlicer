@@ -382,7 +382,12 @@ public:
 
     void LoadURL(const wxString &url) override
     {
-        if (!m_scriptMessageHandlerInstalled && url != wxString("about:blank")) {
+        if (!m_scriptMessageHandlerInstalled) {
+            // wxWebViewWebKit::Create() calls LoadURL() with an empty URL while
+            // creating the view. Ignore it so it cannot overwrite the pending URL
+            // or create a blank back/forward entry.
+            if (IsBlankUrl(url))
+                return;
             m_pendingUrl = url;
             return;
         }
@@ -581,9 +586,7 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
         webView->SetUserAgent(wxString::Format("SM-Slicer/v%s (%s) Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                                                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36 Edg/107.0.1418.52",
                                                SLIC3R_VERSION, Slic3r::GUI::wxGetApp().dark_mode() ? "dark" : "light"));
-        // Keep the backend initial navigation separate from the real target.
-        webView->Create(parent, wxID_ANY, wxString("about:blank"), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
-        webView->LoadURL(url2);
+        webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         // We register the wxfs:// protocol for testing purposes
         webView->RegisterHandler(wxSharedPtr<wxWebViewHandler>(new wxWebViewArchiveHandler("bbl")));
         // And the memory: file system
@@ -603,8 +606,9 @@ wxWebView* WebView::CreateWebView(wxWindow * parent, wxString const & url)
 #endif
 #ifdef __WXMAC__
         // WKWebView starts loading during Create(), before the delayed handler callback runs.
-        // Keep its initial document blank; the subclass flushes the pending URL after installation.
-        webView->Create(parent, wxID_ANY, wxString("about:blank"), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
+        // Create without a navigation so about:blank does not enter the back/forward
+        // list; the pending URL is flushed after the script handler is installed.
+        webView->Create(parent, wxID_ANY, wxString(), wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);
         static_cast<WebViewWebKit *>(webView)->AttachNavigationGate();
 #else
         webView->Create(parent, wxID_ANY, url2, wxDefaultPosition, wxDefaultSize, wxBORDER_NONE);

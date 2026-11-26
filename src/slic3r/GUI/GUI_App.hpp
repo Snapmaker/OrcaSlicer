@@ -41,6 +41,7 @@
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 //#define BBL_HAS_FIRST_PAGE          1
 #define STUDIO_INACTIVE_TIMEOUT     15*60*1000
@@ -320,6 +321,8 @@ private:
     std::vector<wxString> m_pending_mac_open_urls;
 #endif // __APPLE__
     bool            m_app_conf_exists{ false };
+    bool            m_pending_app_launch{ false };
+    std::vector<std::pair<std::string, std::string>> m_pending_app_launch_ext;
     EAppMode        m_app_mode{ EAppMode::Editor };
     // Short rebuild flag consumed by other components during teardown.
     bool            m_is_recreating_gui{ false };

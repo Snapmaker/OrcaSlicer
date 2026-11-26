@@ -9,6 +9,7 @@
 #include "libslic3r/FilamentColorLibrary.hpp"
 #include "libslic3r/Model.hpp"
 #include "libslic3r/libslic3r.h"
+#include "slic3r/Utils/SnapLogClient.hpp"
 #include "Widgets/ComboBox.hpp"
 #include "Widgets/StaticBox.hpp"
 #include "Widgets/Button.hpp"
@@ -2395,6 +2396,11 @@ void MixedFilamentBatchDialog::start_batch_match()
         dlg.ShowModal();
         return;
     }
+    const SnapLog::v1::SnapLogExt ext{{
+        {"entry", "batch_match"},
+        {"plate_count", std::to_string(wxGetApp().plater()->get_partplate_list().get_plate_count())},
+    }};
+    SNAP_LOG_INFO(SnapLog::v1::SnapEvent::MIX_COLOR_USED, ext, "mix color used");
     // No selection-completeness gate: unselected slots / degenerate palettes degrade
     // gracefully in the worker (selections with <4 colors fall back to the canonical
     // FULL_SPECTRUM_FALLBACK_COLORS palette).

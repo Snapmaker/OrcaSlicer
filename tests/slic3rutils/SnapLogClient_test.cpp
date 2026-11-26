@@ -44,14 +44,16 @@ TEST_CASE("SnapEvent registry maps every enum to a unique stable name", "[snaplo
 {
     REQUIRE(snap_event_name(SnapEvent::SLICE_FAILED) == "slice_failed");
     REQUIRE(snap_event_name(SnapEvent::USER_LOGIN_RESULT) == "user_login_result");
+    REQUIRE(snap_event_name(SnapEvent::APP_LAUNCH) == "app_launch");
+    REQUIRE(snap_event_name(SnapEvent::SLICE_START) == "slice_start");
+    REQUIRE(snap_event_name(SnapEvent::MIX_COLOR_USED) == "mix_color_used");
     REQUIRE_FALSE(snap_event_from_name("not_a_snap_event").has_value());
 
-    const std::array<SnapEvent, 6> events = {SnapEvent::DEVICE_DISCOVERY_START,
-                                              SnapEvent::FILE_IMPORT_RESULT,
-                                              SnapEvent::GCODE_EXPORT_RESULT,
-                                              SnapEvent::PROJECT_SAVE_RESULT,
-                                              SnapEvent::SLICE_FAILED,
-                                              SnapEvent::USER_LOGIN_RESULT};
+    const std::array<SnapEvent, 9> events = {SnapEvent::DEVICE_DISCOVERY_START, SnapEvent::APP_LAUNCH,
+                                             SnapEvent::FILE_IMPORT_RESULT,     SnapEvent::GCODE_EXPORT_RESULT,
+                                             SnapEvent::PROJECT_SAVE_RESULT,    SnapEvent::SLICE_FAILED,
+                                             SnapEvent::USER_LOGIN_RESULT,      SnapEvent::SLICE_START,
+                                             SnapEvent::MIX_COLOR_USED};
 
     std::set<std::string_view> names;
     for (const auto event : events)
@@ -72,22 +74,21 @@ TEST_CASE("SnapEvent registry declares complete routes", "[snaplog][routing]")
     REQUIRE(snap_event_route(SnapEvent::DEVICE_DISCOVERY_START, SnapLogLevel::Info).snaplog);
     REQUIRE(snap_event_route(SnapEvent::USER_LOGIN_RESULT, SnapLogLevel::Info).snaplog);
 
-    const std::array<SnapEvent, 6> events = {SnapEvent::DEVICE_DISCOVERY_START,
-                                              SnapEvent::FILE_IMPORT_RESULT,
-                                              SnapEvent::GCODE_EXPORT_RESULT,
-                                              SnapEvent::PROJECT_SAVE_RESULT,
-                                              SnapEvent::SLICE_FAILED,
-                                              SnapEvent::USER_LOGIN_RESULT};
+    const std::array<SnapEvent, 9> events = {SnapEvent::DEVICE_DISCOVERY_START, SnapEvent::APP_LAUNCH,
+                                             SnapEvent::FILE_IMPORT_RESULT,     SnapEvent::GCODE_EXPORT_RESULT,
+                                             SnapEvent::PROJECT_SAVE_RESULT,    SnapEvent::SLICE_FAILED,
+                                             SnapEvent::USER_LOGIN_RESULT,      SnapEvent::SLICE_START,
+                                             SnapEvent::MIX_COLOR_USED};
     for (const auto event : events) {
         for (const auto level : {SnapLogLevel::Info, SnapLogLevel::Warning, SnapLogLevel::Error}) {
             const auto route = snap_event_route(event, level);
             CAPTURE(event, level);
-            const bool info_only = event == SnapEvent::DEVICE_DISCOVERY_START || event == SnapEvent::USER_LOGIN_RESULT;
+            const bool info_only = event == SnapEvent::DEVICE_DISCOVERY_START || event == SnapEvent::USER_LOGIN_RESULT ||
+                                   event == SnapEvent::APP_LAUNCH || event == SnapEvent::SLICE_START || event == SnapEvent::MIX_COLOR_USED;
             REQUIRE(route.snaplog == (info_only || level != SnapLogLevel::Info));
         }
     }
 }
-
 
 TEST_CASE("SnapLog production endpoints are centralized as constants", "[snaplog][config][endpoints]")
 {

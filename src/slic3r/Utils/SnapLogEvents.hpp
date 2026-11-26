@@ -16,11 +16,14 @@ enum class SnapLogLevel { Info, Warning, Error };
 // drops its INFO (success) variant and keeps SnapLog for failures.
 #define SNAP_LOG_EVENT_LIST(X) \
     X(DEVICE_DISCOVERY_START, "device_discovery_start", true, false) \
+    X(APP_LAUNCH, "app_launch", true, false) \
     X(FILE_IMPORT_RESULT, "file_import_result", true, true) \
     X(GCODE_EXPORT_RESULT, "gcode_export_result", true, true) \
     X(PROJECT_SAVE_RESULT, "project_save_result", true, true) \
     X(SLICE_FAILED, "slice_failed", true, true) \
     X(USER_LOGIN_RESULT, "user_login_result", true, false) \
+    X(SLICE_START, "slice_start", true, false) \
+    X(MIX_COLOR_USED, "mix_color_used", true, false)
 
 enum class SnapEvent {
 #define X(id, name, snaplog_enabled, level_sensitive) id,

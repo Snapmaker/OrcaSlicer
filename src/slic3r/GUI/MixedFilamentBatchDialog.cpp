@@ -2324,11 +2324,19 @@ void MixedFilamentBatchDialog::relayout_scrolled_content()
 bool MixedFilamentBatchDialog::predict_slot_overflow() const
 {
     // Predict whether confirming this match would push the project past
-    // MAXIMUM_FILAMENT_NUMBER (64). The AUTHORITATIVE gate is
-    // add_batch_custom_filaments (MixedFilament.cpp:1951-1957): it computes
+    // MAXIMUM_FILAMENT_NUMBER (64) AFTER the post-apply cleanup. The AUTHORITATIVE
+    // gate is add_batch_custom_filaments (MixedFilament.cpp): it computes
     //   current_total = total_filaments(n) = n + enabled_mixed
-    // then drops every batch entry once current_total reaches 64 (assigns id 0
-    // -> the model region keeps its original colour, i.e. colour is LOST).
+    // and drops a batch entry once current_total reaches kMax + reserved_headroom
+    // (assigns id 0 -> the model region keeps its original colour, i.e. colour is
+    // LOST). The batch-match apply path (Plater.cpp) passes reserved_headroom =
+    // the number of physical filaments cleanup_unused_filaments_after_batch_match
+    // is about to free, so the transient peak at add time may exceed 64 by exactly
+    // that count while the FINAL total after cleanup is still <= 64. This
+    // prediction mirrors that final total, so it must subtract the same
+    // cleanup-freed count — otherwise the 33-colour case (33 physical + 33 mixes
+    // = 66 at add time, 37 after cleanup) would wrongly warn that colour will be
+    // lost (GH #786).
     //
     // n = apply-time physical base:
     //   recommended -> max(4, current_physical)  (target_count, Plater.cpp:2419)
@@ -2339,6 +2347,10 @@ bool MixedFilamentBatchDialog::predict_slot_overflow() const
     //   rebuild it only if auto_generate were on).
     // new_mixed_rows = non-pure, non-in-place mappings (one slot each), mirroring the
     //   batch_entries build at Plater.cpp:2576-2579.
+    // cleanup_freed = physical filaments the cleanup will free (all physicals not in
+    //   m_result.selected_physical_ids, with the same survivor floor as
+    //   compute_redundant_filaments: at least one physical is kept) — the identical
+    //   computation to the batch_headroom block in Plater.cpp.
     const auto* pb = wxGetApp().preset_bundle;
     if (pb == nullptr) return false;
     const size_t current_physical = m_physical_colors.size();
@@ -2351,8 +2363,25 @@ bool MixedFilamentBatchDialog::predict_slot_overflow() const
     for (const auto& m : m_result.mappings)
         if (!m.is_pure_recipe && !m.in_place_edited) ++new_mixed_rows;
 
+    // GH #786: subtract the physical filaments the post-apply cleanup will free,
+    // mirroring the batch_headroom computation in Plater.cpp exactly (same inputs:
+    // n and m_result.selected_physical_ids; same survivor floor).
+    size_t cleanup_freed = 0;
+    {
+        std::vector<bool> phys_kept(n + 1, false);
+        for (unsigned int id : m_result.selected_physical_ids)
+            if (id >= 1 && id <= n)
+                phys_kept[id] = true;
+        size_t kept_count = 0;
+        for (size_t i = 1; i <= n; ++i)
+            if (phys_kept[i]) ++kept_count;
+        if (kept_count == 0 && n >= 1)
+            kept_count = 1; // survivor floor
+        cleanup_freed = n - kept_count;
+    }
+
     const size_t enabled_mixed = pb->mixed_filaments.enabled_count();
-    const size_t post_apply_total = n + enabled_mixed + new_mixed_rows;
+    const size_t post_apply_total = n + enabled_mixed + new_mixed_rows - cleanup_freed;
     return post_apply_total > MAXIMUM_FILAMENT_NUMBER;
 }
 

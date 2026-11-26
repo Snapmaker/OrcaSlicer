@@ -289,22 +289,15 @@ wxBoxSizer *PreferencesDialog::create_item_language_combobox(
 
             m_current_language_selected = combobox->GetSelection();
             if (m_current_language_selected >= 0 && m_current_language_selected < vlist.size()) {
-                app_config->set(param, vlist[m_current_language_selected]->CanonicalName.ToUTF8().data());
+                m_pending_language = vlist[m_current_language_selected]->CanonicalName.ToUTF8().data();
+                m_recreate_GUI = true;
 
-                wxGetApp().load_language(vlist[m_current_language_selected]->CanonicalName, false);
                 // The custom dropdown is still unwinding its selection event when this
                 // handler runs. Ending the modal dialog now can destroy the dialog and
-                // dropdown before their event handlers finish.
+                // dropdown before their event handlers finish. GUI_App::open_preferences()
+                // applies the language change after this stack dialog is destroyed.
                 CallAfter([this]() {
                     EndModal(wxID_OK);
-
-                    // recreate_GUI() destroys the old main frame and its child windows.
-                    // PreferencesDialog is a stack object in GUI_App::open_preferences(),
-                    // so detach it before that deferred destruction to avoid a double delete.
-                    if (GetParent())
-                        GetParent()->RemoveChild(this);
-
-                    wxGetApp().recreate_GUI(_L("Changing application language"));
                 });
             }
         }

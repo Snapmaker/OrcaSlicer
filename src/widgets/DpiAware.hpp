@@ -48,14 +48,15 @@ wxDECLARE_EVENT(EVT_DPI_CHANGED_SLICER, DpiChangedEvent);
 
 inline std::deque<wxDialog*> dialogStack;
 
-// End every modal dialog on the stack with wxID_ABORT (Windows session end).
-// Entries are raw pointers: validate against the live top-level window list
-// first, wx may already have deleted a dialog under a running modal loop.
+// End the currently running innermost abortable wxDialog with wxID_CANCEL.
+// No-op if the innermost modal is a native OS dialog (e.g. wxFileDialog / wxMessageDialog).
+// GUI thread only: walks modal tracking state and wxTopLevelWindows.
 void abort_all_modal_dialogs();
 
-// True while any modal wxDialog loop is running, in dialogStack or not.
-// GUI thread only: walks wxTopLevelWindows, which is not thread-safe
-// from other threads.
+// True while any modal dialog tracked by wxModalDialogHook (including native OS
+// dialogs such as wxMessageDialog / wxFileDialog and unwinding GTK/macOS frames
+// before ShowModal() returns), dialogStack, or wxTopLevelWindows is active.
+// GUI thread only.
 bool any_modal_dialog_showing();
 
 template<class P> class DPIAware : public P

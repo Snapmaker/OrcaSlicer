@@ -4,6 +4,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <numeric>
 #include <set>
 #include <iostream>
@@ -11,6 +12,7 @@
 
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/ClipperZUtils.hpp"
+#include "libslic3r/Emboss.hpp"
 #include "libslic3r/ExPolygon.hpp"
 #include "libslic3r/SVG.hpp"
 
@@ -652,11 +654,21 @@ TEST_CASE("offset(Polygons) preserves CW contour in concave notch and drops zero
         REQUIRE(areas[1] > u_shape.area());
     }
 
-    SECTION("Zero-area bow-tie mixed with valid square vanishes under negative offset") {
+    SECTION("Zero-area bow-tie mixed with valid square shrinks positive-winding lobe under negative offset (Clipper1 semantics)") {
         const Polygon bow_tie({ {0, 0}, {200, 200}, {200, 0}, {0, 200} });
         const Polygon square({ {500, 0}, {700, 0}, {700, 200}, {500, 200} });
         REQUIRE(bow_tie.area() == 0.);
         const Polygons res = offset(Polygons{ bow_tie, square }, -10.f);
+        REQUIRE(res.size() == 2);
+        const double total = std::accumulate(res.begin(), res.end(), 0., [](double acc, const Polygon &p) { return acc + p.area(); });
+        REQUIRE(total == Catch::Approx(38176.).margin(20.));
+    }
+
+    SECTION("Collinear zero-area polygon mixed with valid square vanishes under negative offset") {
+        const Polygon collinear({ {0, 0}, {200, 0}, {100, 0} });
+        const Polygon square({ {500, 0}, {700, 0}, {700, 200}, {500, 200} });
+        REQUIRE(collinear.area() == 0.);
+        const Polygons res = offset(Polygons{ collinear, square }, -10.f);
         REQUIRE(res.size() == 1);
         REQUIRE(res.front().area() == Catch::Approx(180. * 180.));
     }
@@ -752,4 +764,219 @@ TEST_CASE("ExPolygon opening and safety-offset clipping normalize input orientat
     REQUIRE(diff_safe.size() == 1);
     REQUIRE(diff_safe.front().holes.empty());
     REQUIRE(diff_safe.front().area() == Catch::Approx(380. * 380.));
+}
+
+TEST_CASE("MR13 open polyline clipping Clipper1ExcludeTop semantics and partition", "[ClipperUtils]")
+{
+    const Polygon clip_sq({ { 0, 0 }, { 1000, 0 }, { 1000, 1000 }, { 0, 1000 } });
+
+    SECTION("Horizontal top boundary edge excluded from inside and kept in outside, bottom edge kept in inside")
+    {
+        const Polylines top_edge{ Polyline{ { -200, 1000 }, { 1200, 1000 } } };
+        const Polylines top_in  = intersection_pl(top_edge, Polygons{ clip_sq });
+        const Polylines top_out = diff_pl(top_edge, Polygons{ clip_sq });
+        CHECK(top_in.empty());
+        REQUIRE(top_out.size() == 1);
+        CHECK(top_out.front().length() == Catch::Approx(1400.));
+
+        const Polylines bot_edge{ Polyline{ { -200, 0 }, { 1200, 0 } } };
+        const Polylines bot_in  = intersection_pl(bot_edge, Polygons{ clip_sq });
+        const Polylines bot_out = diff_pl(bot_edge, Polygons{ clip_sq });
+        REQUIRE(bot_in.size() == 1);
+        CHECK(bot_in.front().length() == Catch::Approx(1000.));
+        CHECK(bot_out.size() == 2);
+    }
+
+    SECTION("clip_closed_polygon_split exact partition with zero overlap and zero gap")
+    {
+        const Polygon subject({ { -500, 0 }, { 1500, 0 }, { 1500, 1000 }, { -500, 1000 } });
+        Polylines inside_out, outside_out;
+        ClipperUtils::clip_closed_polygon_split(subject, Polygons{ clip_sq }, inside_out, outside_out);
+        double in_len = 0., out_len = 0.;
+        for (const Polyline &pl : inside_out)
+            in_len += pl.length();
+        for (const Polyline &pl : outside_out)
+            out_len += pl.length();
+        CHECK(in_len + out_len == Catch::Approx(subject.length()));
+        // Bottom [0, 1000] is inside (1000); vertical cuts inside [0, 1000] at x=0 and x=1000 don't exist on subject;
+        // top edge [0, 1000] at y=1000 is excluded from inside -> in_len == 1000, out_len == 5000.
+        CHECK(in_len == Catch::Approx(1000.));
+        CHECK(out_len == Catch::Approx(5000.));
+    }
+}
+
+TEST_CASE("MR13 negative offset hole isolation and offset2 preservation", "[ClipperUtils]")
+{
+    SECTION("Island inside hole of vanishing outer frame survives offset_ex and offset2_ex")
+    {
+        ExPolygon frame(Polygon{ { 0, 0 }, { 1000, 0 }, { 1000, 1000 }, { 0, 1000 } });
+        frame.holes.push_back(Polygon{ { 100, 100 }, { 100, 900 }, { 900, 900 }, { 900, 100 } });
+        ExPolygon inner_island(Polygon{ { 300, 300 }, { 700, 300 }, { 700, 700 }, { 300, 700 } });
+
+        const ExPolygons shrunk = offset_ex(ExPolygons{ frame, inner_island }, -120.f);
+        REQUIRE(shrunk.size() == 1);
+        CHECK(shrunk.front().area() == Catch::Approx(160. * 160.));
+
+        const ExPolygons shrunk2 = offset2_ex(ExPolygons{ frame, inner_island }, 10.f, -130.f);
+        REQUIRE(shrunk2.size() == 1);
+        CHECK(shrunk2.front().area() == Catch::Approx(160. * 160.));
+    }
+
+    SECTION("Standalone bowtie negative offset keeps positive lobe while collinear vanishes")
+    {
+        const Polygon bow_tie({ {0, 0}, {200, 200}, {200, 0}, {0, 200} });
+        const Polygons bt_res = offset(bow_tie, -10.f);
+        REQUIRE(bt_res.size() == 1);
+        CHECK(bt_res.front().area() == Catch::Approx(5776.).margin(20.));
+
+        const Polygon collinear({ {0, 0}, {200, 0}, {100, 0} });
+        CHECK(offset(collinear, -10.f).empty());
+    }
+}
+
+TEST_CASE("MR13 simplify_polygons_ex self-touching vertex-on-edge and near-boundary holes", "[ClipperUtils]")
+{
+    SECTION("Fixture 1: Emboss heal_polygons and simplify_polygons_ex separate pinch")
+    {
+        const Polygon p({ { 0, 0 }, { 5, 0 }, { 1, 5 }, { 5, 5 }, { 5, 0 }, { 10, 0 }, { 10, 10 }, { 0, 10 } });
+        const ExPolygons simp = simplify_polygons_ex(Polygons{ p });
+        double total_a = 0.;
+        size_t total_holes = 0;
+        for (const ExPolygon &ex : simp) {
+            total_a += ex.area();
+            total_holes += ex.holes.size();
+        }
+        CHECK(total_a == Catch::Approx(90.));
+
+        const auto healed = Emboss::heal_polygons(Polygons{ p }, true, 10);
+        CHECK(healed.is_healed);
+        REQUIRE(healed.expolygons.size() == 1);
+        CHECK(healed.expolygons.front().holes.size() == 1);
+        double healed_a = 0.;
+        for (const ExPolygon &ex : healed.expolygons)
+            healed_a += ex.area();
+        CHECK(healed_a == Catch::Approx(92.));
+    }
+
+    SECTION("Fixture 2: Overlapping triangles touching at base vertex")
+    {
+        const Polygon t1({ { 3, 2 }, { 3, 0 }, { 1, 0 } });
+        const Polygon t2({ { 2, 0 }, { 4, 3 }, { 2, 3 } });
+        const ExPolygons simp = simplify_polygons_ex(Polygons{ t1, t2 });
+        REQUIRE(! simp.empty());
+        double total_a = 0.;
+        for (const ExPolygon &ex : simp)
+            total_a += ex.area();
+        const ExPolygons u_ex = union_ex(Polygons{ t1, t2 });
+        double expected_a = 0.;
+        for (const ExPolygon &ex : u_ex)
+            expected_a += ex.area();
+        CHECK(total_a == Catch::Approx(expected_a));
+    }
+
+    SECTION("Near-boundary hole within 1-3 scaled units is preserved during hole re-nesting")
+    {
+        const Polygon outer({ { 0, 0 }, { 1000, 0 }, { 1000, 1000 }, { 500, 1000 }, { 500, 1 }, { 500, 1000 }, { 0, 1000 } });
+        Polygon hole({ { 1, 1 }, { 1, 999 }, { 499, 999 }, { 499, 1 } });
+        const ExPolygons simp = simplify_polygons_ex(Polygons{ outer, hole });
+        double total_a = 0.;
+        size_t hole_cnt = 0;
+        for (const ExPolygon &ex : simp) {
+            total_a += ex.area();
+            hole_cnt += ex.holes.size();
+        }
+        CHECK(hole_cnt >= 1);
+        CHECK(total_a == Catch::Approx(1000. * 1000. - 498. * 998.).margin(10.));
+    }
+
+    SECTION("Concentric 256-vertex rings positive miter offset correctness")
+    {
+        const size_t n = 256;
+        Polygon outer, inner;
+        for (size_t i = 0; i < n; ++i) {
+            const double ang = 2. * M_PI * double(i) / double(n);
+            outer.points.emplace_back(coord_t(std::llround(scale_(10.0) * std::cos(ang))),
+                                      coord_t(std::llround(scale_(10.0) * std::sin(ang))));
+            inner.points.emplace_back(coord_t(std::llround(scale_(9.9) * std::cos(-ang))),
+                                      coord_t(std::llround(scale_(9.9) * std::sin(-ang))));
+        }
+        ExPolygon ring(outer);
+        ring.holes.push_back(inner);
+        const ExPolygons res = offset_ex(ExPolygons{ ring }, float(scale_(0.01)), jtMiter, 2.0);
+        REQUIRE(res.size() == 1);
+        CHECK(res.front().holes.size() == 1);
+    }
+}
+
+TEST_CASE("ClipperUtils MR13 benchmarks", "[ClipperUtils][.mr13_bench]")
+{
+    auto median_ms = [](auto &&fn) {
+        fn(); // warmup
+        std::array<double, 3> ts{};
+        for (double &t : ts) {
+            const auto t0 = std::chrono::steady_clock::now();
+            fn();
+            const auto t1 = std::chrono::steady_clock::now();
+            t = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        }
+        std::sort(ts.begin(), ts.end());
+        return ts[1];
+    };
+
+    for (size_t n : { size_t(2048), size_t(8192), size_t(16384) }) {
+        Polygon outer, inner;
+        outer.points.reserve(n);
+        inner.points.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            const double ang = 2. * M_PI * double(i) / double(n);
+            outer.points.emplace_back(coord_t(std::llround(scale_(10.0) * std::cos(ang))),
+                                      coord_t(std::llround(scale_(10.0) * std::sin(ang))));
+            inner.points.emplace_back(coord_t(std::llround(scale_(9.9) * std::cos(-ang))),
+                                      coord_t(std::llround(scale_(9.9) * std::sin(-ang))));
+        }
+        ExPolygon ring(std::move(outer));
+        ring.holes.push_back(std::move(inner));
+        ExPolygons input{ std::move(ring) };
+        size_t res_sz = 0;
+        const double ms = median_ms([&]() {
+            const ExPolygons out = offset_ex(input, float(scale_(0.01)), jtMiter, 2.0);
+            res_sz = out.size();
+        });
+        CHECK(res_sz == 1);
+        std::cout << "[MR13_BENCH] concentric_rings n=" << n << " median_ms=" << ms << "\n";
+    }
+
+    {
+        ExPolygons islands;
+        islands.reserve(14400);
+        for (int iy = 0; iy < 120; ++iy) {
+            for (int ix = 0; ix < 120; ++ix) {
+                const coord_t x0 = coord_t(ix * 1000);
+                const coord_t y0 = coord_t(iy * 1000);
+                islands.emplace_back(Polygon{ { x0, y0 }, { x0 + 500, y0 }, { x0 + 500, y0 + 500 }, { x0, y0 + 500 } });
+            }
+        }
+        size_t out_cnt = 0;
+        const double ms = median_ms([&]() {
+            const ExPolygons out = offset_ex(islands, -50.f);
+            out_cnt = out.size();
+        });
+        CHECK(out_cnt == 14400);
+        std::cout << "[MR13_BENCH] holeless_14400_shrink count=" << out_cnt << " median_ms=" << ms << "\n";
+    }
+
+    {
+        const Polygon p({ { 0, 0 }, { 5, 0 }, { 1, 5 }, { 5, 5 }, { 5, 0 }, { 10, 0 }, { 10, 10 }, { 0, 10 } });
+        const auto healed = Emboss::heal_polygons(Polygons{ p }, true, 10);
+        size_t total_holes = 0;
+        double total_area  = 0.;
+        for (const ExPolygon &ex : healed.expolygons) {
+            total_holes += ex.holes.size();
+            total_area  += ex.area();
+        }
+        std::cout << "[MR13_BENCH] emboss_heal entities=" << healed.expolygons.size()
+                  << " holes=" << total_holes
+                  << " area=" << total_area
+                  << " is_healed=" << (healed.is_healed ? 1 : 0) << "\n";
+    }
 }

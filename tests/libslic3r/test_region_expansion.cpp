@@ -6,6 +6,8 @@
 #include "libslic3r/ExPolygon.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <iostream>
 #include <numeric>
 
 using namespace Slic3r;
@@ -295,5 +297,152 @@ TEST_CASE("expand_expolygons propagates waves into touching boundaries", "[Regio
         REQUIRE(! expanded.front().empty());
         CHECK(total_area(expanded.front()) > 0.);
         CHECK(total_area(expanded.front()) <= boundary.front().area() + 1.);
+    }
+
+    SECTION("Touching boundaries share horizontal source edge without truncating open seed")
+    {
+        const ExPolygon left_bnd{ Polygon{ { scale_(0.), scale_(0.) }, { scale_(10.), scale_(0.) }, { scale_(10.), scale_(10.) }, { scale_(0.), scale_(10.) } } };
+        const ExPolygon right_bnd{ Polygon{ { scale_(10.), scale_(0.) }, { scale_(20.), scale_(0.) }, { scale_(20.), scale_(10.) }, { scale_(10.), scale_(10.) } } };
+        const ExPolygons boundary{ left_bnd, right_bnd };
+        const ExPolygons src{ ExPolygon{ Polygon{ { scale_(2.), scale_(4.) }, { scale_(18.), scale_(4.) }, { scale_(18.), scale_(6.) }, { scale_(2.), scale_(6.) } } } };
+
+        const auto params = Algorithm::RegionExpansionParameters::build(float(scale_(0.8)), float(scale_(0.4)), 2);
+        const auto seeds  = Algorithm::wave_seeds(src, boundary, params.tiny_expansion, true);
+        double left_len = 0., right_len = 0.;
+        for (const auto &s : seeds) {
+            if (s.boundary == 0)
+                left_len += Polyline(s.path).length();
+            else if (s.boundary == 1)
+                right_len += Polyline(s.path).length();
+        }
+        CHECK(left_len > scale_(7.));
+        CHECK(right_len > scale_(7.));
+    }
+
+    SECTION("Narrow collinear diagonal boundary attributes seeds via doubled midpoints")
+    {
+        const ExPolygon strip{ Polygon{ { 0, 0 }, { 25082843, 25082843 }, { 25082843, 25082846 }, { 0, 3 } } };
+        const ExPolygons boundary{ strip };
+        const ExPolygons src{ ExPolygon{ Polygon{ { 1000000, 0 }, { 2000000, 0 }, { 2000000, 3000000 }, { 1000000, 3000000 } } } };
+
+        const auto seeds = Algorithm::wave_seeds(src, boundary, float(SCALED_EPSILON), true);
+        REQUIRE(! seeds.empty());
+        for (const auto &s : seeds)
+            CHECK(s.boundary == 0);
+    }
+
+    SECTION("32 parallel diagonal strips attribute 1-to-1 and expand cleanly")
+    {
+        ExPolygons src, boundary;
+        const size_t n = 32;
+        src.reserve(n);
+        boundary.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            const coord_t off = coord_t(i * scale_(2.5));
+            boundary.emplace_back(Polygon{
+                { off, 0 },
+                { off + scale_(10.), scale_(10.) },
+                { off + scale_(10.) + scale_(0.8), scale_(10.) - scale_(0.8) },
+                { off + scale_(0.8), -scale_(0.8) }
+            });
+            src.emplace_back(Polygon{
+                { off + scale_(2.), scale_(2.) },
+                { off + scale_(4.), scale_(4.) },
+                { off + scale_(4.) + scale_(0.4), scale_(4.) - scale_(0.4) },
+                { off + scale_(2.) + scale_(0.4), scale_(2.) - scale_(0.4) }
+            });
+        }
+        const auto params = Algorithm::RegionExpansionParameters::build(float(scale_(0.6)), float(scale_(0.3)), 2);
+        const auto seeds  = Algorithm::wave_seeds(src, boundary, params.tiny_expansion, true);
+        REQUIRE(seeds.size() >= n);
+        for (const auto &s : seeds)
+            CHECK(s.src == s.boundary);
+        ExPolygons src_copy = src;
+        const auto expanded = Algorithm::expand_merge_expolygons(std::move(src_copy), boundary, params);
+        CHECK(expanded.size() == n);
+    }
+}
+
+TEST_CASE("RegionExpansion MR13 benchmarks", "[region_expansion][.mr13_bench]")
+{
+    auto median_ms = [](auto &&fn) {
+        fn(); // warmup
+        std::array<double, 3> ts{};
+        for (double &t : ts) {
+            const auto t0 = std::chrono::steady_clock::now();
+            fn();
+            const auto t1 = std::chrono::steady_clock::now();
+            t = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        }
+        std::sort(ts.begin(), ts.end());
+        return ts[1];
+    };
+
+    for (size_t n : { size_t(128), size_t(256) }) {
+        ExPolygons src, boundary;
+        src.reserve(n);
+        boundary.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            const coord_t off = coord_t(i * scale_(2.5));
+            boundary.emplace_back(Polygon{
+                { off, 0 },
+                { off + scale_(10.), scale_(10.) },
+                { off + scale_(10.) + scale_(0.8), scale_(10.) - scale_(0.8) },
+                { off + scale_(0.8), -scale_(0.8) }
+            });
+            src.emplace_back(Polygon{
+                { off + scale_(2.), scale_(2.) },
+                { off + scale_(4.), scale_(4.) },
+                { off + scale_(4.) + scale_(0.4), scale_(4.) - scale_(0.4) },
+                { off + scale_(2.) + scale_(0.4), scale_(2.) - scale_(0.4) }
+            });
+        }
+        const auto params = Algorithm::RegionExpansionParameters::build(float(scale_(0.6)), float(scale_(0.3)), 2);
+        size_t seed_cnt = 0;
+        const double ms = median_ms([&]() {
+            ExPolygons s_copy = src;
+            seed_cnt = Algorithm::wave_seeds(s_copy, boundary, params.tiny_expansion, true).size();
+            auto res = Algorithm::expand_merge_expolygons(std::move(s_copy), boundary, params);
+            REQUIRE(res.size() == n);
+        });
+        std::cout << "[MR13_BENCH] diagonal_strips n=" << n << " seeds=" << seed_cnt << " median_ms=" << ms << "\n";
+    }
+
+    {
+        // Comb source touching 1000 islands + narrow collinear boundary (25.082843 mm).
+        ExPolygons boundary;
+        boundary.reserve(1001);
+        Points comb_pts;
+        comb_pts.push_back(Point(0, -coord_t(scale_(2.))));
+        for (size_t i = 0; i < 1000; ++i) {
+            const coord_t x0 = coord_t(i * scale_(2.));
+            boundary.emplace_back(Polygon{
+                Point(x0, coord_t(scale_(0.5))),
+                Point(x0 + coord_t(scale_(1.)), coord_t(scale_(0.5))),
+                Point(x0 + coord_t(scale_(1.)), coord_t(scale_(2.5))),
+                Point(x0, coord_t(scale_(2.5)))
+            });
+            comb_pts.push_back(Point(x0, coord_t(scale_(1.))));
+            comb_pts.push_back(Point(x0 + coord_t(scale_(1.)), coord_t(scale_(1.))));
+            comb_pts.push_back(Point(x0 + coord_t(scale_(1.)), 0));
+        }
+        comb_pts.push_back(Point(coord_t(1000 * scale_(2.)), -coord_t(scale_(2.))));
+        boundary.emplace_back(Polygon{
+            Point(0, coord_t(scale_(5.))),
+            Point(25082843, coord_t(scale_(5.))),
+            Point(25082843, coord_t(scale_(5.)) + 2),
+            Point(0, coord_t(scale_(5.)) + 2)
+        });
+
+        ExPolygons src;
+        src.emplace_back(Polygon(std::move(comb_pts)));
+        src.emplace_back(Polygon{ { scale_(1.), scale_(4.5) }, { scale_(20.), scale_(4.5) }, { scale_(20.), scale_(5.5) }, { scale_(1.), scale_(5.5) } });
+
+        size_t seed_cnt = 0;
+        const double ms = median_ms([&]() {
+            seed_cnt = Algorithm::wave_seeds(src, boundary, float(scale_(0.05)), true).size();
+        });
+        CHECK(seed_cnt >= 1000);
+        std::cout << "[MR13_BENCH] comb_1000_islands_plus_narrow seeds=" << seed_cnt << " median_ms=" << ms << "\n";
     }
 }

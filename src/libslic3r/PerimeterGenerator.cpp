@@ -177,14 +177,12 @@ static ExtrusionEntityCollection traverse_loops(const PerimeterGenerator &perime
                                       steep_overhang_contour, steep_overhang_hole);
             }
 
+            Polylines inside_polines;
             Polylines remain_polines;
 
             Polygons lower_polygons_series_clipped = ClipperUtils::clip_clipper_polygons_with_subject_bbox(lower_polygons_series->back(), bbox);
 
-            Polylines inside_polines = intersection_pl({polygon}, lower_polygons_series_clipped);
-
-
-            remain_polines = diff_pl({polygon}, lower_polygons_series_clipped);
+            ClipperUtils::clip_closed_polygon_split(polygon, lower_polygons_series_clipped, inside_polines, remain_polines);
 
             if (!inside_polines.empty())
                 extrusion_paths_append(
@@ -271,68 +269,79 @@ static ExtrusionEntityCollection traverse_loops(const PerimeterGenerator &perime
 
 static ClipperZUtils::ZPaths clip_extrusion(const ClipperZUtils::ZPath& subject, const ClipperZUtils::ZPaths& clip, ClipType clipType)
 {
-    auto interpolate_z = [](const ClipperZUtils::ZPoint &a, const ClipperZUtils::ZPoint &b, const Point &p) -> coord_t {
-        const Vec2d  seg(double(b.x()) - double(a.x()), double(b.y()) - double(a.y()));
-        const double seg_len_sqr = seg.squaredNorm();
-        double       t           = 0.;
-        if (seg_len_sqr > 0.) {
-            const Vec2d rel(double(p.x()) - double(a.x()), double(p.y()) - double(a.y()));
-            t = std::clamp(rel.dot(seg) / seg_len_sqr, 0., 1.);
-        }
-        return coord_t(double(a.z()) + t * (double(b.z()) - double(a.z())));
+    ClipperZUtils::ZPaths clipped_paths;
+    if (subject.size() < 2)
+        return clipped_paths;
+
+    Polygons clip_polys;
+    clip_polys.reserve(clip.size());
+    for (const ClipperZUtils::ZPath &cp : clip) {
+        if (cp.size() < 3)
+            continue;
+        Points pts;
+        pts.reserve(cp.size());
+        for (const ClipperZUtils::ZPoint &pt : cp)
+            pts.emplace_back(pt.x(), pt.y());
+        clip_polys.emplace_back(std::move(pts));
+    }
+
+    if (clip_polys.empty()) {
+        if (clipType == ctDifference)
+            clipped_paths.push_back(subject);
+        return clipped_paths;
+    }
+
+    ClipperUtils::ClipEdgesIndex index(clip_polys);
+    if (index.empty()) {
+        if (clipType == ctDifference)
+            clipped_paths.push_back(subject);
+        return clipped_paths;
+    }
+
+    const bool keep_inside = (clipType == ctIntersection);
+    auto interp_z = [](const ClipperZUtils::ZPoint &a, const ClipperZUtils::ZPoint &b, double t) -> coord_t {
+        return coord_t(double(a.z()) + std::clamp(t, 0., 1.) * (double(b.z()) - double(a.z())));
     };
 
-    auto zfill = [&interpolate_z](const ClipperZUtils::ZPoint &e1bot, const ClipperZUtils::ZPoint &e1top,
-                                  const ClipperZUtils::ZPoint &e2bot, const ClipperZUtils::ZPoint &e2top,
-                                  ClipperZUtils::ZPoint &pt) {
-        ClipperZUtils::ZPoint start = e1bot;
-        ClipperZUtils::ZPoint end   = e1top;
-
-        if (start.z() <= 0 && end.z() <= 0) {
-            start = e2bot;
-            end   = e2top;
-        }
-
-        assert(start.z() >= 0 && end.z() >= 0);
-
-        // Interpolate extrusion line width along the XY segment.
-        pt.z() = interpolate_z(start, end, Point(pt.x(), pt.y()));
+    ClipperZUtils::ZPath                       cur;
+    std::vector<ClipperUtils::OpenClipInterval> intervals;
+    auto flush = [&]() {
+        if (cur.size() >= 2)
+            clipped_paths.emplace_back(std::move(cur));
+        cur.clear();
     };
 
-    ClipperZUtils::ZPaths clipped_paths = ClipperZUtils::clip_zpaths(clipType, ClipperZUtils::ZPaths{ subject }, true, clip, zfill);
-
-    // Clipped path could contain vertices from the clip with a Z coordinate equal to zero.
-    // For those vertices, we must assign value based on the subject.
-    // This happens when an intersection lands on a clip vertex (where Clipper2 copies clip Z = 0
-    // and skips the Z callback), including for two-point subject segments.
-    for (ClipperZUtils::ZPath& path : clipped_paths)
-        for (ClipperZUtils::ZPoint& c_pt : path)
-            if (c_pt.z() == 0) {
-                // Now we must find the corresponding line on which this point is located and compute line width (Z coordinate).
-                if (subject.size() < 2)
-                    continue;
-
-                const Point pt(c_pt.x(), c_pt.y());
-                Point       projected_pt_min;
-                auto        it_min = subject.begin();
-                auto        dist_sqr_min = std::numeric_limits<double>::max();
-                Point       prev(subject.front().x(), subject.front().y());
-                for (auto it = std::next(subject.begin()); it != subject.end(); ++it) {
-                    Point curr(it->x(), it->y());
-                    Point projected_pt = pt.projection_onto(Line(prev, curr));
-                    if (double dist_sqr = (projected_pt - pt).cast<double>().squaredNorm(); dist_sqr < dist_sqr_min) {
-                        dist_sqr_min = dist_sqr;
-                        projected_pt_min = projected_pt;
-                        it_min = std::prev(it);
-                    }
-                    prev = curr;
-                }
-
-                assert(dist_sqr_min <= SCALED_EPSILON);
-                assert(std::next(it_min) != subject.end());
-
-                c_pt.z() = interpolate_z(*it_min, *std::next(it_min), projected_pt_min);
+    for (size_t i = 0; i + 1 < subject.size(); ++i) {
+        const ClipperZUtils::ZPoint &za = subject[i];
+        const ClipperZUtils::ZPoint &zb = subject[i + 1];
+        const Point                  a(za.x(), za.y());
+        const Point                  b(zb.x(), zb.y());
+        if (a == b)
+            continue;
+        index.clip_segment(a, b, ClipperUtils::OpenClipBoundaryRule::Clipper1ExcludeTop, intervals);
+        for (const ClipperUtils::OpenClipInterval &iv : intervals) {
+            if (iv.inside != keep_inside) {
+                flush();
+                continue;
             }
+            if (iv.p0 == iv.p1)
+                continue;
+            const ClipperZUtils::ZPoint zp0 = (iv.t0 == 0.) ? za : ClipperZUtils::ZPoint(iv.p0.x(), iv.p0.y(), interp_z(za, zb, iv.t0));
+            const ClipperZUtils::ZPoint zp1 = (iv.t1 == 1.) ? zb : ClipperZUtils::ZPoint(iv.p1.x(), iv.p1.y(), interp_z(za, zb, iv.t1));
+            if (cur.empty()) {
+                cur.push_back(zp0);
+                cur.push_back(zp1);
+            } else {
+                if (cur.back().x() != zp0.x() || cur.back().y() != zp0.y()) {
+                    flush();
+                    cur.push_back(zp0);
+                }
+                if (cur.back().x() != zp1.x() || cur.back().y() != zp1.y())
+                    cur.push_back(zp1);
+            }
+        }
+    }
+    flush();
 
     assert([&clipped_paths = std::as_const(clipped_paths)]() -> bool {
         for (const ClipperZUtils::ZPath& path : clipped_paths)

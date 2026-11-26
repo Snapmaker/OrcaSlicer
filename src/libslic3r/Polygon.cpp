@@ -1,6 +1,7 @@
 #include "BoundingBox.hpp"
 #include "ClipperUtils.hpp"
 #include "Exception.hpp"
+#include "Int128.hpp"
 #include "Polygon.hpp"
 #include "Polyline.hpp"
 
@@ -46,18 +47,26 @@ Polyline Polygon::split_at_index(int index) const
     return polyline;
 }
 
+static Int128 twice_signed_area_128(const Points &points)
+{
+    Int128       acc(0);
+    const size_t n = points.size();
+    if (n < 3)
+        return acc;
+    const Point &p0 = points[0];
+    for (size_t i = 1; i + 1 < n; ++i) {
+        const int64_t dx1 = int64_t(points[i].x()) - int64_t(p0.x());
+        const int64_t dy1 = int64_t(points[i].y()) - int64_t(p0.y());
+        const int64_t dx2 = int64_t(points[i + 1].x()) - int64_t(p0.x());
+        const int64_t dy2 = int64_t(points[i + 1].y()) - int64_t(p0.y());
+        acc += Int128::multiply(dx1, dy2) - Int128::multiply(dy1, dx2);
+    }
+    return acc;
+}
+
 double Polygon::area(const Points &points)
 {
-    double a = 0.;
-    if (points.size() >= 3) {
-        Vec2d p1 = points.back().cast<double>();
-        for (const Point &p : points) {
-            Vec2d p2 = p.cast<double>();
-            a += cross2(p1, p2);
-            p1 = p2;
-        }
-    }
-    return 0.5 * a;
+    return 0.5 * double(twice_signed_area_128(points));
 }
 
 double Polygon::area() const
@@ -67,7 +76,7 @@ double Polygon::area() const
 
 bool Polygon::is_counter_clockwise() const
 {
-    return this->area() >= 0.;
+    return twice_signed_area_128(this->points).sign() >= 0;
 }
 
 bool Polygon::is_clockwise() const

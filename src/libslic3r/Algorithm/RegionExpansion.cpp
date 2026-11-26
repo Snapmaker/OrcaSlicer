@@ -3,6 +3,7 @@
 #include <libslic3r/AABBTreeIndirect.hpp>
 #include <libslic3r/ClipperZUtils.hpp>
 #include <libslic3r/ClipperUtils.hpp>
+#include <libslic3r/Int128.hpp>
 #include <libslic3r/Utils.hpp>
 
 #include <algorithm>
@@ -75,21 +76,24 @@ RegionExpansionParameters RegionExpansionParameters::build(
 
 // Similar to expolygons_to_zpaths(), but each contour of a single ExPolygon is expanded before
 // converting to open zpaths (the first point is repeated at the end) carrying the same Z value.
-static ClipperZUtils::ZPaths expolygon_to_zpaths_expanded_opened(
-    const ExPolygon &expoly, const float expansion, const coord_t z)
+static void expolygon_to_zpaths_expanded_opened(
+    const ExPolygon &expoly, const float expansion, const coord_t z, Polygons &expanded_polys_out, ClipperZUtils::ZPaths &zpaths_out)
 {
-    ClipperZUtils::ZPaths out;
-    out.reserve(expoly.num_contours());
+    expanded_polys_out.clear();
+    zpaths_out.clear();
+    expanded_polys_out.reserve(expoly.num_contours());
+    zpaths_out.reserve(expoly.num_contours());
     for (size_t icontour = 0; icontour < expoly.num_contours(); ++ icontour) {
         // Orient CCW, then grow the contour and shrink the holes. The output contours are CCW.
         Polygon contour = expoly.contour_or_hole(icontour);
         if (! contour.is_counter_clockwise())
             contour.reverse();
-        for (const Polygon &expanded : offset(contour, icontour == 0 ? expansion : -expansion, jtSquare))
-            if (expanded.points.size() >= 2)
-                out.emplace_back(ClipperZUtils::to_zpath<true>(expanded.points, z));
+        for (Polygon &expanded : offset(contour, icontour == 0 ? expansion : -expansion, jtSquare))
+            if (expanded.points.size() >= 2) {
+                zpaths_out.emplace_back(ClipperZUtils::to_zpath<true>(expanded.points, z));
+                expanded_polys_out.emplace_back(std::move(expanded));
+            }
     }
-    return out;
 }
 
 // Paths were created by splitting closed polygons into open paths and then by clipping them.
@@ -208,6 +212,260 @@ static int sample_in_expolygons(
 // Up to this many boundaries are scanned linearly via cached bounding boxes; above this threshold an AABB tree is built.
 static constexpr size_t boundaries_per_tree = 16;
 
+struct PolyOBB
+{
+    double ux = 1., uy = 0.;
+    double u_min = 0., u_max = 0.;
+    double v_min = 0., v_max = 0.;
+};
+
+template<class Range>
+static PolyOBB compute_poly_obb_from_polys(const Range &polys, double pad)
+{
+    PolyOBB obb;
+    double  best_len2 = -1.;
+    double  ux = 1., uy = 0.;
+    for (const Polygon &poly : polys) {
+        const Points &pts = poly.points;
+        const size_t  n   = pts.size();
+        for (size_t i = 0; i < n; ++ i) {
+            const Point &a  = pts[i];
+            const Point &b  = pts[(i + 1 == n) ? 0 : i + 1];
+            const double dx = double(b.x() - a.x());
+            const double dy = double(b.y() - a.y());
+            const double l2 = dx * dx + dy * dy;
+            if (l2 > best_len2) {
+                best_len2 = l2;
+                if (l2 > 0.) {
+                    const double inv = 1. / std::sqrt(l2);
+                    ux = dx * inv;
+                    uy = dy * inv;
+                }
+            }
+        }
+    }
+    obb.ux = ux;
+    obb.uy = uy;
+    double u_min = std::numeric_limits<double>::max();
+    double u_max = std::numeric_limits<double>::lowest();
+    double v_min = std::numeric_limits<double>::max();
+    double v_max = std::numeric_limits<double>::lowest();
+    bool   any   = false;
+    for (const Polygon &poly : polys) {
+        for (const Point &p : poly.points) {
+            any            = true;
+            const double x = double(p.x()), y = double(p.y());
+            const double u = ux * x + uy * y;
+            const double v = -uy * x + ux * y;
+            u_min = std::min(u_min, u);
+            u_max = std::max(u_max, u);
+            v_min = std::min(v_min, v);
+            v_max = std::max(v_max, v);
+        }
+    }
+    if (any) {
+        obb.u_min = u_min - pad;
+        obb.u_max = u_max + pad;
+        obb.v_min = v_min - pad;
+        obb.v_max = v_max + pad;
+    }
+    return obb;
+}
+
+static bool obb_separated(const PolyOBB &a, const PolyOBB &b)
+{
+    auto project_sep = [](const PolyOBB &ref, const PolyOBB &other) -> bool {
+        const double vx = -ref.uy, vy = ref.ux;
+        const double ox = other.ux, oy = other.uy;
+        const double ovx = -oy, ovy = ox;
+        const double us[2] = { other.u_min, other.u_max };
+        const double vs[2] = { other.v_min, other.v_max };
+        double       ru_min = std::numeric_limits<double>::max();
+        double       ru_max = std::numeric_limits<double>::lowest();
+        double       rv_min = std::numeric_limits<double>::max();
+        double       rv_max = std::numeric_limits<double>::lowest();
+        for (double u : us) {
+            for (double v : vs) {
+                const double px = u * ox + v * ovx;
+                const double py = u * oy + v * ovy;
+                const double ru = ref.ux * px + ref.uy * py;
+                const double rv = vx * px + vy * py;
+                ru_min = std::min(ru_min, ru);
+                ru_max = std::max(ru_max, ru);
+                rv_min = std::min(rv_min, rv);
+                rv_max = std::max(rv_max, rv);
+            }
+        }
+        return ru_max < ref.u_min || ru_min > ref.u_max || rv_max < ref.v_min || rv_min > ref.v_max;
+    };
+    return project_sep(a, b) || project_sep(b, a);
+}
+
+static double point_to_segment_dist2(const Point &p, const Point &a, const Point &b)
+{
+    const double dx   = double(b.x() - a.x());
+    const double dy   = double(b.y() - a.y());
+    const double px   = double(p.x() - a.x());
+    const double py   = double(p.y() - a.y());
+    const double len2 = dx * dx + dy * dy;
+    if (len2 == 0.)
+        return px * px + py * py;
+    const double t  = std::clamp((px * dx + py * dy) / len2, 0., 1.);
+    const double rx = px - t * dx;
+    const double ry = py - t * dy;
+    return rx * rx + ry * ry;
+}
+
+static bool segments_within_tol(const Point &a1, const Point &a2, const Point &b1, const Point &b2, coord_t tol, double tol2)
+{
+    if (std::max(a1.x(), a2.x()) + tol < std::min(b1.x(), b2.x()) ||
+        std::max(b1.x(), b2.x()) + tol < std::min(a1.x(), a2.x()) ||
+        std::max(a1.y(), a2.y()) + tol < std::min(b1.y(), b2.y()) ||
+        std::max(b1.y(), b2.y()) + tol < std::min(a1.y(), a2.y()))
+        return false;
+    const int o1 = int128::orient(a1, a2, b1);
+    const int o2 = int128::orient(a1, a2, b2);
+    const int o3 = int128::orient(b1, b2, a1);
+    const int o4 = int128::orient(b1, b2, a2);
+    if (o1 != o2 && o3 != o4)
+        return true;
+    auto on_seg = [](const Point &p, const Point &q, const Point &r) {
+        return q.x() >= std::min(p.x(), r.x()) && q.x() <= std::max(p.x(), r.x()) &&
+               q.y() >= std::min(p.y(), r.y()) && q.y() <= std::max(p.y(), r.y());
+    };
+    if ((o1 == 0 && on_seg(a1, b1, a2)) || (o2 == 0 && on_seg(a1, b2, a2)) ||
+        (o3 == 0 && on_seg(b1, a1, b2)) || (o4 == 0 && on_seg(b1, a2, b2)))
+        return true;
+    if (tol <= 0)
+        return false;
+    return point_to_segment_dist2(a1, b1, b2) <= tol2 || point_to_segment_dist2(a2, b1, b2) <= tol2 ||
+           point_to_segment_dist2(b1, a1, a2) <= tol2 || point_to_segment_dist2(b2, a1, a2) <= tol2;
+}
+
+static bool rings_conflict(const Polygon &pa, const Polygon &pb, coord_t tol)
+{
+    const Points &a = pa.points;
+    const Points &b = pb.points;
+    if (a.size() < 2 || b.size() < 2)
+        return false;
+    const double tol2 = double(tol) * double(tol);
+    const size_t na   = a.size();
+    const size_t nb   = b.size();
+
+    if (na * nb <= 256) {
+        for (size_t ia = 0; ia < na; ++ ia) {
+            const Point &a1 = a[ia];
+            const Point &a2 = a[(ia + 1 == na) ? 0 : ia + 1];
+            for (size_t ib = 0; ib < nb; ++ ib) {
+                const Point &b1 = b[ib];
+                const Point &b2 = b[(ib + 1 == nb) ? 0 : ib + 1];
+                if (segments_within_tol(a1, a2, b1, b2, tol, tol2))
+                    return true;
+            }
+        }
+    } else {
+        const bool    index_b = nb <= na;
+        const Points &idx_pts = index_b ? b : a;
+        const Points &qry_pts = index_b ? a : b;
+        const size_t  n_idx   = idx_pts.size();
+        const size_t  n_qry   = qry_pts.size();
+        std::vector<BBoxNode> nodes;
+        nodes.reserve(n_idx);
+        for (size_t i = 0; i < n_idx; ++ i) {
+            const Point &u = idx_pts[i];
+            const Point &v = idx_pts[(i + 1 == n_idx) ? 0 : i + 1];
+            BoundingBox  eb(Point(std::min(u.x(), v.x()) - tol, std::min(u.y(), v.y()) - tol),
+                            Point(std::max(u.x(), v.x()) + tol, std::max(u.y(), v.y()) + tol));
+            nodes.emplace_back(i, eb);
+        }
+        AABBTreeBBoxes edge_tree;
+        edge_tree.build_modify_input(nodes);
+        bool hit = false;
+        for (size_t iq = 0; iq < n_qry; ++ iq) {
+            const Point &q1 = qry_pts[iq];
+            const Point &q2 = qry_pts[(iq + 1 == n_qry) ? 0 : iq + 1];
+            const AABBTreeBBoxes::BoundingBox qbox(Point(std::min(q1.x(), q2.x()), std::min(q1.y(), q2.y())),
+                                                   Point(std::max(q1.x(), q2.x()), std::max(q1.y(), q2.y())));
+            AABBTreeIndirect::traverse(
+                edge_tree,
+                AABBTreeIndirect::intersecting(qbox),
+                [&](const AABBTreeBBoxes::Node &node) {
+                    const size_t ei = node.idx;
+                    const Point &p1 = idx_pts[ei];
+                    const Point &p2 = idx_pts[(ei + 1 == n_idx) ? 0 : ei + 1];
+                    if (segments_within_tol(q1, q2, p1, p2, tol, tol2)) {
+                        hit = true;
+                        return false;
+                    }
+                    return true;
+                });
+            if (hit)
+                return true;
+        }
+    }
+    return (na >= 3 && contains(pa, b.front(), true)) || (nb >= 3 && contains(pb, a.front(), true));
+}
+
+static bool expolygons_touch_or_overlap(const ExPolygon &a, const ExPolygon &b)
+{
+    for (size_t ia = 0; ia < a.num_contours(); ++ ia)
+        for (size_t ib = 0; ib < b.num_contours(); ++ ib)
+            if (rings_conflict(a.contour_or_hole(ia), b.contour_or_hole(ib), 1))
+                return true;
+    return false;
+}
+
+// Exact point-in-polygon for doubled 64-bit coordinates (pt2 = 2*P tested against 2*path): 1 inside, 0 outside, -1 on boundary.
+static int point_in_polygon_doubled(int64_t pt2x, int64_t pt2y, const Points &path)
+{
+    const size_t cnt = path.size();
+    if (cnt < 3)
+        return 0;
+    int     result = 0;
+    int64_t ipx    = int64_t(path[0].x()) * 2;
+    int64_t ipy    = int64_t(path[0].y()) * 2;
+    for (size_t i = 1; i <= cnt; ++ i) {
+        const Point  &raw_next  = (i == cnt) ? path[0] : path[i];
+        const int64_t ip_next_x = int64_t(raw_next.x()) * 2;
+        const int64_t ip_next_y = int64_t(raw_next.y()) * 2;
+        if (ip_next_y == pt2y &&
+            (ip_next_x == pt2x || (ipy == pt2y && ((ip_next_x > pt2x) == (ipx < pt2x)))))
+            return -1;
+        if ((ipy < pt2y) != (ip_next_y < pt2y)) {
+            if (ipx >= pt2x) {
+                if (ip_next_x > pt2x)
+                    result = 1 - result;
+                else {
+                    const int sign = Int128::sign_determinant_2x2(ipx - pt2x, ipy - pt2y, ip_next_x - pt2x, ip_next_y - pt2y);
+                    if (! sign)
+                        return -1;
+                    if ((sign > 0) == (ip_next_y > ipy))
+                        result = 1 - result;
+                }
+            } else if (ip_next_x > pt2x) {
+                const int sign = Int128::sign_determinant_2x2(ipx - pt2x, ipy - pt2y, ip_next_x - pt2x, ip_next_y - pt2y);
+                if (! sign)
+                    return -1;
+                if ((sign > 0) == (ip_next_y > ipy))
+                    result = 1 - result;
+            }
+        }
+        ipx = ip_next_x;
+        ipy = ip_next_y;
+    }
+    return result;
+}
+
+static bool point_strictly_in_expolygon_doubled(int64_t pt2x, int64_t pt2y, const ExPolygon &ex)
+{
+    if (point_in_polygon_doubled(pt2x, pt2y, ex.contour.points) != 1)
+        return false;
+    for (const Polygon &hole : ex.holes)
+        if (point_in_polygon_doubled(pt2x, pt2y, hole.points) != 0)
+            return false;
+    return true;
+}
+
 // Find which boundary expolygon contains the clipped seed path.
 // Prefers strict interior containment (border_result = false) on interior vertices and segment midpoints so endpoints
 // lying on shared boundary vertices or edges do not misattribute the seed to a touching neighbor boundary.
@@ -218,6 +476,8 @@ static int find_boundary_for_path(
     const std::vector<BoundingBox> &boundary_bboxes,
     const AABBTreeBBoxes           &boundary_aabb_tree,
     const std::vector<size_t>      &candidates,
+    const std::vector<size_t>      &subbatch_stamp,
+    size_t                          cur_subbatch_stamp,
     int                             hint_boundary_id)
 {
     assert(path.size() >= 2);
@@ -226,13 +486,19 @@ static int find_boundary_for_path(
         path_bbox.merge(Point(pt.x(), pt.y()));
     const AABBTreeBBoxes::BoundingBox path_aabb(path_bbox.min, path_bbox.max);
 
+    const bool use_hint = hint_boundary_id >= 0 &&
+                          subbatch_stamp[size_t(hint_boundary_id)] == cur_subbatch_stamp &&
+                          boundary_bboxes[size_t(hint_boundary_id)].defined;
+
     auto for_each_boundary_containing_pt = [&](const Point &pt, auto &&fn) {
         if (! boundary_aabb_tree.empty()) {
             AABBTreeIndirect::traverse(boundary_aabb_tree,
                 [&pt](const AABBTreeBBoxes::Node &node) { return node.bbox.contains(pt); },
-                [&fn](const AABBTreeBBoxes::Node &node) {
+                [&](const AABBTreeBBoxes::Node &node) {
                     assert(node.is_leaf());
                     assert(node.is_valid());
+                    if (subbatch_stamp[node.idx] != cur_subbatch_stamp)
+                        return true;
                     return fn(node.idx);
                 });
         } else {
@@ -244,9 +510,12 @@ static int find_boundary_for_path(
     };
 
     auto find_strict = [&](const Point &pt) -> int {
+        if (use_hint && boundary_bboxes[size_t(hint_boundary_id)].contains(pt) &&
+            boundary[size_t(hint_boundary_id)].contains(pt, false))
+            return hint_boundary_id;
         int found = -1;
         for_each_boundary_containing_pt(pt, [&](size_t idx) {
-            if (boundary[idx].contains(pt, false)) {
+            if (int(idx) != hint_boundary_id && boundary[idx].contains(pt, false)) {
                 found = int(idx);
                 return false;
             }
@@ -260,16 +529,28 @@ static int find_boundary_for_path(
         if (int id = find_strict(Point(path[i].x(), path[i].y())); id >= 0)
             return id;
 
-    // Pass 1b: Segment midpoints strictly inside a boundary.
+    // Pass 1b: Segment midpoints strictly inside a boundary (using exact 64-bit doubled coordinates).
     for (size_t i = 0; i + 1 < path.size(); ++ i) {
         const Point p0(path[i].x(), path[i].y());
         const Point p1(path[i + 1].x(), path[i + 1].y());
         if (p0 == p1)
             continue;
-        const Point mid(coord_t((int64_t(p0.x()) + int64_t(p1.x())) / 2),
-                        coord_t((int64_t(p0.y()) + int64_t(p1.y())) / 2));
-        if (int id = find_strict(mid); id >= 0)
-            return id;
+        const int64_t mid2x = int64_t(p0.x()) + int64_t(p1.x());
+        const int64_t mid2y = int64_t(p0.y()) + int64_t(p1.y());
+        const Point   mid_probe(coord_t(mid2x / 2), coord_t(mid2y / 2));
+        if (use_hint && boundary_bboxes[size_t(hint_boundary_id)].contains(mid_probe) &&
+            point_strictly_in_expolygon_doubled(mid2x, mid2y, boundary[size_t(hint_boundary_id)]))
+            return hint_boundary_id;
+        int found = -1;
+        for_each_boundary_containing_pt(mid_probe, [&](size_t idx) {
+            if (int(idx) != hint_boundary_id && point_strictly_in_expolygon_doubled(mid2x, mid2y, boundary[idx])) {
+                found = int(idx);
+                return false;
+            }
+            return true;
+        });
+        if (found >= 0)
+            return found;
     }
 
     // Pass 1c: Endpoint strictly inside a boundary (e.g. a closed path whose vertices lie strictly inside).
@@ -284,8 +565,7 @@ static int find_boundary_for_path(
                 return false;
         return true;
     };
-    if (hint_boundary_id >= 0 &&
-        boundary_bboxes[size_t(hint_boundary_id)].defined &&
+    if (use_hint &&
         boundary_bboxes[size_t(hint_boundary_id)].contains(path_bbox) &&
         contains_all_vertices(size_t(hint_boundary_id)))
         return hint_boundary_id;
@@ -298,7 +578,9 @@ static int find_boundary_for_path(
                 [&](const AABBTreeBBoxes::Node &node) {
                     assert(node.is_leaf());
                     assert(node.is_valid());
-                    if (int(node.idx) != hint_boundary_id && contains_all_vertices(node.idx)) {
+                    if (subbatch_stamp[node.idx] == cur_subbatch_stamp &&
+                        int(node.idx) != hint_boundary_id &&
+                        contains_all_vertices(node.idx)) {
                         found = int(node.idx);
                         return false;
                     }
@@ -368,13 +650,17 @@ std::vector<WaveSeed> wave_seeds(
     const coord_t idx_boundary_end   = idx_boundary_begin + coord_t(boundary.size());
     const coord_t idx_src_end        = idx_boundary_end + coord_t(src.size());
 
-    // Expand each source independently and compute its inflated bounding box so overlapping sources can be batched apart.
+    // Expand each source independently and compute its inflated bounding box & OBB so disjoint angled sources can share a batch.
+    std::vector<Polygons>              src_expanded_polys(src.size());
     std::vector<ClipperZUtils::ZPaths> zsrc(src.size());
     std::vector<BoundingBox>           src_bboxes(src.size());
+    std::vector<PolyOBB>               src_obbs(src.size());
     std::vector<size_t>                non_empty_srcs;
     non_empty_srcs.reserve(src.size());
     for (size_t src_id = 0; src_id < src.size(); ++ src_id) {
-        zsrc[src_id] = expolygon_to_zpaths_expanded_opened(src[src_id], tiny_expansion, idx_boundary_end + coord_t(src_id));
+        expolygon_to_zpaths_expanded_opened(
+            src[src_id], tiny_expansion, idx_boundary_end + coord_t(src_id),
+            src_expanded_polys[src_id], zsrc[src_id]);
         if (zsrc[src_id].empty())
             continue;
         BoundingBox bb;
@@ -384,15 +670,24 @@ std::vector<WaveSeed> wave_seeds(
         // Inflate so clipped vertices stay inside their source's box and adjacent sources within epsilon separate into batches.
         bb.offset(SCALED_EPSILON);
         src_bboxes[src_id] = bb;
+        src_obbs[src_id]   = compute_poly_obb_from_polys(src_expanded_polys[src_id], double(SCALED_EPSILON) + 4.0);
         non_empty_srcs.push_back(src_id);
     }
 
     if (non_empty_srcs.empty())
         return {};
 
-    // Partition sources into batches whose inflated bounding boxes are mutually disjoint using an AABB tree (O(N log N + E)).
-    // Within each batch, at most one source's box can contain any clipped segment, preserving exact source attribution even
-    // when all vertices of a clipped segment coincide with boundary vertices and carry no source Z coordinate.
+    auto sources_conflict = [&](size_t a, size_t b) -> bool {
+        if (obb_separated(src_obbs[a], src_obbs[b]))
+            return false;
+        for (const Polygon &pa : src_expanded_polys[a])
+            for (const Polygon &pb : src_expanded_polys[b])
+                if (rings_conflict(pa, pb, SCALED_EPSILON))
+                    return true;
+        return false;
+    };
+
+    // Partition sources into batches whose expanded regions are geometrically disjoint (using AABB tree + OBB + exact edge check).
     std::vector<std::vector<size_t>> batches;
     std::vector<size_t>              batch_of(src.size(), size_t(-1));
     AABBTreeBBoxes                   src_aabb_tree;
@@ -413,9 +708,9 @@ std::vector<WaveSeed> wave_seeds(
             const AABBTreeBBoxes::BoundingBox query(src_bboxes[src_id].min, src_bboxes[src_id].max);
             AABBTreeIndirect::traverse(src_aabb_tree,
                 [&query](const AABBTreeBBoxes::Node &node) { return node.bbox.intersects(query); },
-                [&batch_of, &forbidden_stamp, stamp](const AABBTreeBBoxes::Node &node) {
+                [&](const AABBTreeBBoxes::Node &node) {
                     const size_t b = batch_of[node.idx];
-                    if (b != size_t(-1))
+                    if (b != size_t(-1) && forbidden_stamp[b] != stamp && sources_conflict(src_id, node.idx))
                         forbidden_stamp[b] = stamp;
                     return true;
                 });
@@ -431,14 +726,17 @@ std::vector<WaveSeed> wave_seeds(
         }
     }
 
-    // Cache inflated bounding boxes of boundaries (and build an AABB tree when there are many boundaries).
+    // Cache inflated bounding boxes and OBBs of boundaries (and build an AABB tree when there are many boundaries).
     std::vector<BoundingBox> boundary_bboxes;
+    std::vector<PolyOBB>     boundary_obbs;
     boundary_bboxes.reserve(boundary.size());
+    boundary_obbs.reserve(boundary.size());
     for (const ExPolygon &ex : boundary) {
         BoundingBox bb = get_extents(ex.contour);
         if (bb.defined)
             bb.offset(SCALED_EPSILON);
         boundary_bboxes.emplace_back(bb);
+        boundary_obbs.emplace_back(compute_poly_obb_from_polys(std::array<Polygon, 1>{ ex.contour }, 2.0));
     }
 
     AABBTreeBBoxes boundary_aabb_tree;
@@ -451,22 +749,45 @@ std::vector<WaveSeed> wave_seeds(
         boundary_aabb_tree.build_modify_input(nodes);
     }
 
-    auto collect_boundary_candidates = [&](const BoundingBox &bbox, std::vector<size_t> &candidates) {
+    auto collect_boundary_candidates = [&](const BoundingBox &bbox, const std::vector<size_t> &batch, std::vector<size_t> &candidates) {
         candidates.clear();
+        auto overlaps_any_src_obb = [&](size_t bnd_idx) -> bool {
+            for (size_t src_id : batch)
+                if (boundary_bboxes[bnd_idx].overlap(src_bboxes[src_id]) && ! obb_separated(boundary_obbs[bnd_idx], src_obbs[src_id]))
+                    return true;
+            return false;
+        };
         if (! boundary_aabb_tree.empty()) {
             const AABBTreeBBoxes::BoundingBox query(bbox.min, bbox.max);
             AABBTreeIndirect::traverse(boundary_aabb_tree,
                 [&query](const AABBTreeBBoxes::Node &node) { return node.bbox.intersects(query); },
-                [&candidates](const AABBTreeBBoxes::Node &node) {
-                    candidates.push_back(node.idx);
+                [&](const AABBTreeBBoxes::Node &node) {
+                    if (overlaps_any_src_obb(node.idx))
+                        candidates.push_back(node.idx);
                     return true;
                 });
             std::sort(candidates.begin(), candidates.end());
         } else {
             for (size_t i = 0; i < boundary.size(); ++ i)
-                if (boundary_bboxes[i].defined && boundary_bboxes[i].overlap(bbox))
+                if (boundary_bboxes[i].defined && boundary_bboxes[i].overlap(bbox) && overlaps_any_src_obb(i))
                     candidates.push_back(i);
         }
+    };
+
+    auto point_near_or_inside_src = [&](size_t src_id, const Point &pt) -> bool {
+        const double tol2 = double(SCALED_EPSILON) * double(SCALED_EPSILON);
+        int          parity = 0;
+        for (const Polygon &poly : src_expanded_polys[src_id]) {
+            const Points &pts = poly.points;
+            const size_t  n   = pts.size();
+            for (size_t i = 0; i < n; ++ i) {
+                if (point_to_segment_dist2(pt, pts[i], pts[(i + 1 == n) ? 0 : i + 1]) <= tol2)
+                    return true;
+            }
+            if (poly.contains(pt))
+                parity ^= 1;
+        }
+        return parity != 0;
     };
 
     auto find_src_for_path = [&](const ClipperZUtils::ZPath &path, size_t batch_idx) -> int {
@@ -477,10 +798,10 @@ std::vector<WaveSeed> wave_seeds(
             int found = -1;
             AABBTreeIndirect::traverse(src_aabb_tree,
                 [&pt](const AABBTreeBBoxes::Node &node) { return node.bbox.contains(pt); },
-                [&batch_of, batch_idx, &found](const AABBTreeBBoxes::Node &node) {
+                [&](const AABBTreeBBoxes::Node &node) {
                     assert(node.is_leaf());
                     assert(node.is_valid());
-                    if (batch_of[node.idx] == batch_idx) {
+                    if (batch_of[node.idx] == batch_idx && point_near_or_inside_src(node.idx, pt)) {
                         found = int(node.idx);
                         return false;
                     }
@@ -503,6 +824,7 @@ std::vector<WaveSeed> wave_seeds(
     Intersections                              intersections;
     ClipperZUtils::ClipperZIntersectionVisitor visitor(intersections);
     std::vector<size_t>                        candidates;
+    std::vector<size_t>                        cand_subbatch(boundary.size(), size_t(-1));
 
     // Sort paths into their respective islands.
     // Each src x boundary will be processed (wave expanded) independently.
@@ -516,52 +838,71 @@ std::vector<WaveSeed> wave_seeds(
             bbox_batch.merge(src_bboxes[src_id]);
             num_src_paths += zsrc[src_id].size();
         }
-        collect_boundary_candidates(bbox_batch, candidates);
+        collect_boundary_candidates(bbox_batch, batch, candidates);
         if (candidates.empty())
             continue;
 
         // Open source contours and their split seam points for this batch.
         ClipperZUtils::ZPaths                              zsrc_batch;
-        std::vector<std::pair<ClipperZUtils::ZPoint, int>> zsrc_splits;
+        std::vector<std::pair<ClipperZUtils::ZPoint, int>> zsrc_splits_base;
         zsrc_batch.reserve(num_src_paths);
-        zsrc_splits.reserve(num_src_paths);
+        zsrc_splits_base.reserve(num_src_paths);
         for (size_t src_id : batch) {
             for (const ClipperZUtils::ZPath &path : zsrc[src_id]) {
                 assert(path.size() >= 2);
                 assert(path.front() == path.back());
-                zsrc_splits.emplace_back(path.front(), -1);
+                zsrc_splits_base.emplace_back(path.front(), -1);
             }
             append(zsrc_batch, std::move(zsrc[src_id]));
         }
-        std::sort(zsrc_splits.begin(), zsrc_splits.end(),
+        std::sort(zsrc_splits_base.begin(), zsrc_splits_base.end(),
             [](const auto &l, const auto &r) { return ClipperZUtils::zpoint_lower(l.first, r.first); });
 
-        // Closed boundary contours for the candidate boundaries reached by this batch.
-        const ClipperZUtils::ZPaths *pzclip = nullptr;
-        ClipperZUtils::ZPaths        zclip;
-        if (candidates.size() == boundary.size()) {
-            if (zboundary_all.empty()) {
-                coord_t tmp_idx = idx_boundary_begin;
-                zboundary_all   = ClipperZUtils::expolygons_to_zpaths(boundary, tmp_idx);
-            }
-            pzclip = &zboundary_all;
+        // Partition candidates that touch or overlap at vertices/edges into separate sub-batches
+        // so Clipper2 horizontal scans never truncate an open seed at a shared boundary vertex.
+        std::vector<std::vector<size_t>> bnd_subbatches;
+        if (candidates.size() <= 1) {
+            bnd_subbatches.push_back(candidates);
         } else {
-            size_t num_clip_paths = 0;
-            for (size_t idx : candidates)
-                num_clip_paths += boundary[idx].num_contours();
-            zclip.reserve(num_clip_paths);
-            for (size_t idx : candidates) {
-                const coord_t z = coord_t(idx) + idx_boundary_begin;
-                zclip.emplace_back(ClipperZUtils::to_zpath(boundary[idx].contour.points, z));
-                for (const Polygon &hole : boundary[idx].holes)
-                    zclip.emplace_back(ClipperZUtils::to_zpath(hole.points, z));
+            std::vector<size_t> forbidden_bnd;
+            size_t              bnd_stamp = 0;
+            for (size_t ci = 0; ci < candidates.size(); ++ ci) {
+                const size_t c = candidates[ci];
+                ++ bnd_stamp;
+                auto check_neighbor = [&](size_t j) {
+                    const size_t sb = cand_subbatch[j];
+                    if (sb == size_t(-1) || forbidden_bnd[sb] == bnd_stamp)
+                        return;
+                    if (! obb_separated(boundary_obbs[c], boundary_obbs[j]) &&
+                        expolygons_touch_or_overlap(boundary[c], boundary[j]))
+                        forbidden_bnd[sb] = bnd_stamp;
+                };
+                if (! boundary_aabb_tree.empty()) {
+                    const AABBTreeBBoxes::BoundingBox qbox(boundary_bboxes[c].min, boundary_bboxes[c].max);
+                    AABBTreeIndirect::traverse(boundary_aabb_tree,
+                        [&qbox](const AABBTreeBBoxes::Node &node) { return node.bbox.intersects(qbox); },
+                        [&](const AABBTreeBBoxes::Node &node) {
+                            check_neighbor(node.idx);
+                            return true;
+                        });
+                } else {
+                    for (size_t cj = 0; cj < ci; ++ cj)
+                        if (boundary_bboxes[c].overlap(boundary_bboxes[candidates[cj]]))
+                            check_neighbor(candidates[cj]);
+                }
+                size_t chosen = 0;
+                while (chosen < forbidden_bnd.size() && forbidden_bnd[chosen] == bnd_stamp)
+                    ++ chosen;
+                if (chosen == bnd_subbatches.size()) {
+                    bnd_subbatches.emplace_back();
+                    forbidden_bnd.push_back(0);
+                }
+                cand_subbatch[c] = chosen;
+                bnd_subbatches[chosen].push_back(c);
             }
-            pzclip = &zclip;
+            for (size_t c : candidates)
+                cand_subbatch[c] = size_t(-1);
         }
-
-        visitor.reset();
-        ClipperZUtils::ZPaths segments = ClipperZUtils::clip_zpaths(ctIntersection, zsrc_batch, true, *pzclip, visitor.clipper_callback());
-        merge_splits(segments, zsrc_splits);
 
         auto valid_intersection = [&intersections, idx_boundary_begin, idx_boundary_end, idx_src_end](coord_t z) -> const Intersection* {
             if (z >= 0)
@@ -576,14 +917,19 @@ std::vector<WaveSeed> wave_seeds(
             return nullptr;
         };
 
-        auto count_boundary_bboxes_containing = [&](const Point &pt) -> size_t {
+        auto count_boundary_bboxes_containing = [&](const Point &pt, const std::vector<size_t> &subbatch,
+                                                    const std::vector<size_t> &subbatch_stamp, size_t cur_stamp) -> size_t {
             size_t count = 0;
-            if (! boundary_aabb_tree.empty()) {
+            if (subbatch.size() >= boundaries_per_tree && ! boundary_aabb_tree.empty()) {
                 AABBTreeIndirect::traverse(boundary_aabb_tree,
                     [&pt](const AABBTreeBBoxes::Node &node) { return node.bbox.contains(pt); },
-                    [&count](const AABBTreeBBoxes::Node &) { return ++ count < 2; });
+                    [&](const AABBTreeBBoxes::Node &node) {
+                        if (subbatch_stamp[node.idx] == cur_stamp)
+                            ++ count;
+                        return count < 2;
+                    });
             } else {
-                for (size_t idx : candidates)
+                for (size_t idx : subbatch)
                     if (boundary_bboxes[idx].defined && boundary_bboxes[idx].contains(pt))
                         if (++ count >= 2)
                             break;
@@ -591,81 +937,122 @@ std::vector<WaveSeed> wave_seeds(
             return count;
         };
 
-        out.reserve(out.size() + segments.size());
-        for (const ClipperZUtils::ZPath &path : segments) {
-            assert(path.size() >= 2);
-            const ClipperZUtils::ZPoint &front = path.front();
-            const ClipperZUtils::ZPoint &back  = path.back();
+        std::vector<size_t>                              subbatch_stamp(boundary.size(), 0);
+        size_t                                           cur_subbatch_stamp = 0;
+        std::vector<std::pair<ClipperZUtils::ZPoint, int>> zsrc_splits;
+        for (const std::vector<size_t> &subbatch : bnd_subbatches) {
+            ++ cur_subbatch_stamp;
+            for (size_t idx : subbatch)
+                subbatch_stamp[idx] = cur_subbatch_stamp;
 
-            const Intersection *front_is = valid_intersection(front.z());
-            const Intersection *back_is  = valid_intersection(back.z());
-
-            // 1. Determine src_id (from valid intersection, any source vertex Z, or the unique source in this batch).
-            int src_id = -1;
-            if (front_is)
-                src_id = int(front_is->second - idx_boundary_end);
-            else if (back_is)
-                src_id = int(back_is->second - idx_boundary_end);
-            else {
-                for (const ClipperZUtils::ZPoint &point : path)
-                    if (point.z() >= idx_boundary_end && point.z() < idx_src_end) {
-                        src_id = int(point.z() - idx_boundary_end);
-                        break;
-                    }
-                if (src_id < 0)
-                    src_id = find_src_for_path(path, batch_idx);
-            }
-            assert(src_id >= 0 && src_id < int(src.size()));
-            if (src_id < 0)
-                continue;
-
-            // 2. Determine boundary_id (directly when unambiguous, else via strict-interior-first geometric lookup).
-            int boundary_id = -1;
-            if (candidates.size() == 1) {
-                boundary_id = int(candidates.front());
+            const ClipperZUtils::ZPaths *pzclip = nullptr;
+            ClipperZUtils::ZPaths        zclip;
+            if (subbatch.size() == boundary.size()) {
+                if (zboundary_all.empty()) {
+                    coord_t tmp_idx = idx_boundary_begin;
+                    zboundary_all   = ClipperZUtils::expolygons_to_zpaths(boundary, tmp_idx);
+                }
+                pzclip = &zboundary_all;
             } else {
-                int hint_boundary_id = -1;
-                if (front_is && back_is && front_is->first == back_is->first) {
-                    const int candidate_b = int(front_is->first - idx_boundary_begin);
-                    if (count_boundary_bboxes_containing(Point(front.x(), front.y())) <= 1 ||
-                        count_boundary_bboxes_containing(Point(back.x(), back.y())) <= 1)
-                        boundary_id = candidate_b;
-                    else
-                        hint_boundary_id = candidate_b;
-                } else if (front_is && ! back_is) {
-                    const int candidate_b = int(front_is->first - idx_boundary_begin);
-                    if (count_boundary_bboxes_containing(Point(front.x(), front.y())) <= 1)
-                        boundary_id = candidate_b;
-                    else
-                        hint_boundary_id = candidate_b;
-                } else if (back_is && ! front_is) {
-                    const int candidate_b = int(back_is->first - idx_boundary_begin);
-                    if (count_boundary_bboxes_containing(Point(back.x(), back.y())) <= 1)
-                        boundary_id = candidate_b;
-                    else
-                        hint_boundary_id = candidate_b;
+                size_t num_clip_paths = 0;
+                for (size_t idx : subbatch)
+                    num_clip_paths += boundary[idx].num_contours();
+                zclip.reserve(num_clip_paths);
+                for (size_t idx : subbatch) {
+                    const coord_t z = coord_t(idx) + idx_boundary_begin;
+                    zclip.emplace_back(ClipperZUtils::to_zpath(boundary[idx].contour.points, z));
+                    for (const Polygon &hole : boundary[idx].holes)
+                        zclip.emplace_back(ClipperZUtils::to_zpath(hole.points, z));
+                }
+                pzclip = &zclip;
+            }
+
+            visitor.reset();
+            ClipperZUtils::ZPaths segments = ClipperZUtils::clip_zpaths(ctIntersection, zsrc_batch, true, *pzclip, visitor.clipper_callback());
+            if (bnd_subbatches.size() == 1) {
+                merge_splits(segments, zsrc_splits_base);
+            } else {
+                zsrc_splits = zsrc_splits_base;
+                merge_splits(segments, zsrc_splits);
+            }
+
+            out.reserve(out.size() + segments.size());
+            for (const ClipperZUtils::ZPath &path : segments) {
+                assert(path.size() >= 2);
+                const ClipperZUtils::ZPoint &front = path.front();
+                const ClipperZUtils::ZPoint &back  = path.back();
+
+                const Intersection *front_is = valid_intersection(front.z());
+                const Intersection *back_is  = valid_intersection(back.z());
+
+                // 1. Determine src_id (from valid intersection, any source vertex Z, or the unique source in this batch).
+                int src_id = -1;
+                if (front_is)
+                    src_id = int(front_is->second - idx_boundary_end);
+                else if (back_is)
+                    src_id = int(back_is->second - idx_boundary_end);
+                else {
+                    for (const ClipperZUtils::ZPoint &point : path)
+                        if (point.z() >= idx_boundary_end && point.z() < idx_src_end) {
+                            src_id = int(point.z() - idx_boundary_end);
+                            break;
+                        }
+                    if (src_id < 0)
+                        src_id = find_src_for_path(path, batch_idx);
+                }
+                assert(src_id >= 0 && src_id < int(src.size()));
+                if (src_id < 0)
+                    continue;
+
+                // 2. Determine boundary_id (directly when unambiguous, else via strict-interior-first geometric lookup).
+                int boundary_id = -1;
+                if (subbatch.size() == 1) {
+                    boundary_id = int(subbatch.front());
                 } else {
-                    if (front_is)
-                        hint_boundary_id = int(front_is->first - idx_boundary_begin);
-                    else if (back_is)
-                        hint_boundary_id = int(back_is->first - idx_boundary_begin);
-                    else {
-                        for (const ClipperZUtils::ZPoint &point : path)
-                            if (point.z() >= idx_boundary_begin && point.z() < idx_boundary_end) {
-                                hint_boundary_id = int(point.z() - idx_boundary_begin);
-                                break;
-                            }
+                    int hint_boundary_id = -1;
+                    if (front_is && back_is && front_is->first == back_is->first) {
+                        const int candidate_b = int(front_is->first - idx_boundary_begin);
+                        if (count_boundary_bboxes_containing(Point(front.x(), front.y()), subbatch, subbatch_stamp, cur_subbatch_stamp) <= 1 ||
+                            count_boundary_bboxes_containing(Point(back.x(), back.y()), subbatch, subbatch_stamp, cur_subbatch_stamp) <= 1)
+                            boundary_id = candidate_b;
+                        else
+                            hint_boundary_id = candidate_b;
+                    } else if (front_is && ! back_is) {
+                        const int candidate_b = int(front_is->first - idx_boundary_begin);
+                        if (count_boundary_bboxes_containing(Point(front.x(), front.y()), subbatch, subbatch_stamp, cur_subbatch_stamp) <= 1)
+                            boundary_id = candidate_b;
+                        else
+                            hint_boundary_id = candidate_b;
+                    } else if (back_is && ! front_is) {
+                        const int candidate_b = int(back_is->first - idx_boundary_begin);
+                        if (count_boundary_bboxes_containing(Point(back.x(), back.y()), subbatch, subbatch_stamp, cur_subbatch_stamp) <= 1)
+                            boundary_id = candidate_b;
+                        else
+                            hint_boundary_id = candidate_b;
+                    } else {
+                        if (front_is)
+                            hint_boundary_id = int(front_is->first - idx_boundary_begin);
+                        else if (back_is)
+                            hint_boundary_id = int(back_is->first - idx_boundary_begin);
+                        else {
+                            for (const ClipperZUtils::ZPoint &point : path)
+                                if (point.z() >= idx_boundary_begin && point.z() < idx_boundary_end) {
+                                    hint_boundary_id = int(point.z() - idx_boundary_begin);
+                                    break;
+                                }
+                        }
                     }
+
+                    if (boundary_id < 0)
+                        boundary_id = find_boundary_for_path(
+                            path, boundary, boundary_bboxes, boundary_aabb_tree,
+                            subbatch, subbatch_stamp, cur_subbatch_stamp, hint_boundary_id);
                 }
 
-                if (boundary_id < 0)
-                    boundary_id = find_boundary_for_path(
-                        path, boundary, boundary_bboxes, boundary_aabb_tree, candidates, hint_boundary_id);
+                assert(boundary_id >= 0 && boundary_id < int(boundary.size()));
+                if (boundary_id >= 0)
+                    out.push_back({ uint32_t(src_id), uint32_t(boundary_id), ClipperZUtils::from_zpath(path) });
             }
-
-            assert(boundary_id >= 0 && boundary_id < int(boundary.size()));
-            if (boundary_id >= 0)
-                out.push_back({ uint32_t(src_id), uint32_t(boundary_id), ClipperZUtils::from_zpath(path) });
         }
     }
 

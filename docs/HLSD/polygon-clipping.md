@@ -40,6 +40,7 @@ the other patches are marked with `Orca:` comments.
 | Engine nodes from tbbmalloc | `clipper.engine.h`, `clipper.engine.cpp` | Vertices, active edges, output points and records, local minima and `PolyTree` nodes are allocated one by one. `CLIPPER2_NODE_ALLOCATOR` routes them through `scalable_malloc`, because the default heap does not scale when all slicing threads clip at once. |
 | Cyclic split-owner recursion guard | `clipper.engine.cpp` | `CheckSplitOwner()` marks `split->recursive_split = outrec` before recursing into emptied split `OutRec` lists so cyclic references cannot overflow the stack. |
 | Restore `end_type_` after 2-point `Joined` fallback | `clipper.offset.cpp` | `DoGroupOffset()` restores `end_type_ = group.end_type` after each path so a degenerate 2-point `Joined` path does not turn subsequent closed paths in the same group into open paths. |
+| Exact area sign & non-collinear zero-area shrink | `clipper.offset.cpp` | `GetLowestClosedPathInfo()` uses a local-origin 128-bit signed area check so distant paths do not cancel, and `DoGroupOffset()` flips negative offsets only for collinear degenerate paths rather than self-intersecting zero-area paths (bowties). |
 | Concave joins at the edge crossing | `clipper.offset.cpp` | For closed paths, a concave corner is joined at the crossing of the two offset edges when that point lies within half of both adjacent edges. The upstream 3-point loop makes inward offsets of dense curves very slow to union. |
 | Rounded arc steps | `clipper.offset.cpp` | Round joins use the rounded number of steps, not the ceiling, which keeps the vertex count of round offsets that the rest of the code is tuned for. |
 
@@ -55,9 +56,11 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
 - Collinear vertices are removed from the result. Clipper2 keeps them by
   default, so every boolean sets `PreserveCollinear(false)`.
 - Outer contours are CCW and holes are CW. Standard Clipper2 booleans may emit
-  vertex-self-touching contours; `simplify_polygons()`, `simplify_polygons_ex()`,
-  and `polygons_simplify(..., strictly_simple = true)` split contours at
-  repeated vertices into strictly simple loops and locally re-nest holes.
+  vertex-self-touching or vertex-on-edge touching contours; `simplify_polygons()`,
+  `simplify_polygons_ex()`, and `polygons_simplify(..., strictly_simple = true)`
+  split contours at repeated vertices and vertex-on-edge touches into strictly
+  simple loops and locally re-nest holes (with padded bounding boxes and interior
+  point verification).
 - `ExPolygons`, `top_level_expolygons()`, `top_level_islands()`, and
   `union_pt_chained_outside_in()` consume `PolyTree64` directly on the fast
   path when node orientations match depth parity, and rebuild exact containment
@@ -68,7 +71,12 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   clip do not leave slivers. For `ExPolygon`, `ExPolygons`, `Surfaces`, and
   `SurfacesPtr` clips this goes through `c2_offset_expolygons()` to normalize
   contour/hole orientations first.
-- Open polylines are clipped with the non-zero rule and keep their direction.
+- Open polylines are clipped per source edge against an indexed clip edge set,
+  preserving source direction and vertex order. `intersection_pl` / `diff_pl`
+  and `clip_extrusion` follow Clipper1's boundary rule (excluding shared top
+  horizontal boundaries from `intersection` so `intersection` and `diff` stay
+  complementary), while `Algorithm::split_line` uses boundary-inclusive
+  containment.
 
 ### Offsets
 
@@ -76,9 +84,9 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
   `ClipperOffsetShortestEdgeFactor` × |delta| to the previously kept vertex
   are dropped. This bounds the work on dense contours, and the error it
   introduces is far below the offset distance. Polyline `offset()` overloads
-  accept an optional `shortest_edge_factor` parameter (set to `0.` by
-  `Format/svg.cpp` for both open and closed strokes so short strokes are not
-  collapsed).
+  accept an optional `shortest_edge_factor` parameter (set to `0.` in
+  `Format/svg.cpp` stroke offsetting so short terminal segments that survive
+  SVG path parsing keep their cap orientation).
 - The miter limit is at least 2. For `jtRound`, a positive `miterLimit`
   argument is the arc tolerance, and `0.25` is used otherwise; in both cases
   it is capped at |delta| / 4. Other joins use the smaller of `0.25` and
@@ -88,15 +96,19 @@ Clipper2 behaves differently by default, the wrapper adjusts it.
 - `Polygons` follow the same rule per path. When there are no zero-area paths
   mixed with CW paths and every CW path is strictly enclosed with positive
   winding inside non-touching CCW contours (verified via AABB tree,
-  bbox-filtered edge intersection, and 128-bit point-in-polygon), all paths are
-  offset in one Clipper2 group. Otherwise each path is offset on its own and
-  the results are united, with the non-zero rule when growing and the positive
-  rule when shrinking.
-- `ExPolygons` and `Surfaces` (including `opening()`, `offset()`, `offset2()`,
-  and safety-offset clips) are offset as one group after the contours are
-  oriented CCW and the holes CW, whatever their input orientation.
-- Zero-area paths are filtered out one by one under a negative offset instead
-  of growing.
+  edge-AABB-indexed segment intersection, and 128-bit point-in-polygon), all
+  paths are offset in one Clipper2 group. Otherwise each path is offset on its
+  own and the results are united, with the non-zero rule when growing and the
+  positive rule when shrinking.
+- `ExPolygons` and `Surfaces` normalize contour (CCW) and hole (CW)
+  orientations. Positive offsets run in one group; negative offsets isolate
+  each holed entity (shrinking its outer contour and subtracting its own
+  expanded holes, while batching holeless contours) so an expanding hole cannot
+  swallow another entity. Two-step `offset2()` / `offset2_ex()` calls whose
+  second delta is negative preserve the intermediate `PolyTree64` hierarchy.
+- Only truly collinear degenerate paths are dropped under a negative offset;
+  self-intersecting zero-area paths (e.g. bowties) retain their
+  positive-winding lobes.
 - Polyline offsets use the requested end type. Clipper2 already unites the
   result, so no further union is done.
 

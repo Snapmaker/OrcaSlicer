@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <numeric>
 #include <unordered_map>
@@ -8,6 +9,7 @@
 #include "AABBTreeIndirect.hpp"
 #include "ClipperUtils.hpp"
 #include "Geometry.hpp"
+#include "Int128.hpp"
 #include "ShortestPath.hpp"
 
 #include <clipper2/clipper.h>
@@ -318,27 +320,31 @@ int c2_point_in_path(const C2::Point64 &pt, const C2::Path64 &path)
     return result;
 }
 
-bool c2_point_near_boundary(const C2::Point64 &pt, const C2::Path64 &outer, int64_t tol, double tol2)
+template<class PtT, class PathT>
+bool point_near_boundary_templ(const PtT &pt, const PathT &outer, int64_t tol, double tol2)
 {
     const size_t n = outer.size();
+    const int64_t ptx = px(pt), pty = py(pt);
     for (size_t i = 0, j = n - 1; i < n; j = i++) {
-        const C2::Point64 &a = outer[j];
-        const C2::Point64 &b = outer[i];
-        if (pt.x < std::min(a.x, b.x) - tol || pt.x > std::max(a.x, b.x) + tol ||
-            pt.y < std::min(a.y, b.y) - tol || pt.y > std::max(a.y, b.y) + tol)
+        const auto   &a  = outer[j];
+        const auto   &b  = outer[i];
+        const int64_t ax = px(a), ay = py(a);
+        const int64_t bx = px(b), by = py(b);
+        if (ptx < std::min(ax, bx) - tol || ptx > std::max(ax, bx) + tol ||
+            pty < std::min(ay, by) - tol || pty > std::max(ay, by) + tol)
             continue;
-        const double dx  = double(b.x - a.x);
-        const double dy  = double(b.y - a.y);
-        const double px  = double(pt.x - a.x);
-        const double py  = double(pt.y - a.y);
+        const double dx   = double(bx - ax);
+        const double dy   = double(by - ay);
+        const double qx   = double(ptx - ax);
+        const double qy   = double(pty - ay);
         const double len2 = dx * dx + dy * dy;
         double       d2;
         if (len2 == 0.) {
-            d2 = px * px + py * py;
+            d2 = qx * qx + qy * qy;
         } else {
-            const double t = std::clamp((px * dx + py * dy) / len2, 0., 1.);
-            const double rx = px - t * dx;
-            const double ry = py - t * dy;
+            const double t  = std::clamp((qx * dx + qy * dy) / len2, 0., 1.);
+            const double rx = qx - t * dx;
+            const double ry = qy - t * dy;
             d2 = rx * rx + ry * ry;
         }
         if (d2 <= tol2)
@@ -347,32 +353,34 @@ bool c2_point_near_boundary(const C2::Point64 &pt, const C2::Path64 &outer, int6
     return false;
 }
 
-bool c2_point_in_path_double(double px, double py, const C2::Path64 &path)
+template<class PathT>
+bool point_in_path_double_templ(double px_val, double py_val, const PathT &path)
 {
     bool         inside = false;
     const size_t n      = path.size();
     for (size_t i = 0, j = n - 1; i < n; j = i++) {
-        const double yi = double(path[i].y);
-        const double yj = double(path[j].y);
-        if ((yi > py) != (yj > py)) {
-            const double xi = double(path[i].x);
-            const double xj = double(path[j].x);
-            if ((px - xi) < (py - yi) * (xj - xi) / (yj - yi))
+        const double yi = double(py(path[i]));
+        const double yj = double(py(path[j]));
+        if ((yi > py_val) != (yj > py_val)) {
+            const double xi = double(px(path[i]));
+            const double xj = double(px(path[j]));
+            if ((px_val - xi) < (py_val - yi) * (xj - xi) / (yj - yi))
                 inside = ! inside;
         }
     }
     return inside;
 }
 
-bool c2_find_interior_point(const C2::Path64 &path, double &mx, double &my)
+template<class PathT>
+bool find_interior_point_templ(const PathT &path, double &mx, double &my)
 {
     const size_t n = path.size();
     if (n < 3)
         return false;
     std::vector<int64_t> ys;
     ys.reserve(n);
-    for (const C2::Point64 &p : path)
-        ys.push_back(p.y);
+    for (const auto &p : path)
+        ys.push_back(py(p));
     std::sort(ys.begin(), ys.end());
     ys.erase(std::unique(ys.begin(), ys.end()), ys.end());
     if (ys.size() < 2)
@@ -391,11 +399,11 @@ bool c2_find_interior_point(const C2::Path64 &path, double &mx, double &my)
         const double y_mid = double(ys[s]) + 0.5 * double(ys[s + 1] - ys[s]);
         xs.clear();
         for (size_t i = 0, j = n - 1; i < n; j = i++) {
-            const double yi = double(path[i].y);
-            const double yj = double(path[j].y);
+            const double yi = double(py(path[i]));
+            const double yj = double(py(path[j]));
             if ((yi < y_mid && yj > y_mid) || (yj < y_mid && yi > y_mid)) {
-                const double xi = double(path[i].x);
-                const double xj = double(path[j].x);
+                const double xi = double(px(path[i]));
+                const double xj = double(px(path[j]));
                 xs.push_back(xi + (y_mid - yi) * (xj - xi) / (yj - yi));
             }
         }
@@ -423,12 +431,12 @@ bool c2_path_encloses(const C2::Path64 &outer, const C2::Path64 &inner)
         const int pip = c2_point_in_path(pt, outer);
         if (pip == -1)
             continue;
-        if (! c2_point_near_boundary(pt, outer, kTol, kTol2))
+        if (! point_near_boundary_templ(pt, outer, kTol, kTol2))
             return pip == 1;
     }
     double mx = 0., my = 0.;
-    if (c2_find_interior_point(inner, mx, my))
-        return c2_point_in_path_double(mx, my, outer);
+    if (find_interior_point_templ(inner, mx, my))
+        return point_in_path_double_templ(mx, my, outer);
     size_t inside_cnt = 0;
     for (const C2::Point64 &pt : inner)
         if (c2_point_in_path(pt, outer) == 1)
@@ -436,10 +444,54 @@ bool c2_path_encloses(const C2::Path64 &outer, const C2::Path64 &inner)
     return inside_cnt * 2 > inner.size();
 }
 
+Int128 c2_twice_signed_area_128(const C2::Path64 &path)
+{
+    Int128       acc(0);
+    const size_t n = path.size();
+    if (n < 3)
+        return acc;
+    const C2::Point64 &p0 = path[0];
+    for (size_t i = 1; i + 1 < n; ++i) {
+        const int64_t dx1 = path[i].x - p0.x;
+        const int64_t dy1 = path[i].y - p0.y;
+        const int64_t dx2 = path[i + 1].x - p0.x;
+        const int64_t dy2 = path[i + 1].y - p0.y;
+        acc += Int128::multiply(dx1, dy2) - Int128::multiply(dy1, dx2);
+    }
+    return acc;
+}
+
+double c2_exact_area(const C2::Path64 &path)
+{
+    return 0.5 * double(c2_twice_signed_area_128(path));
+}
+
+int c2_exact_area_sign(const C2::Path64 &path)
+{
+    return c2_twice_signed_area_128(path).sign();
+}
+
+bool c2_is_collinear_path(const C2::Path64 &path)
+{
+    if (path.size() < 3)
+        return true;
+    const Vec2crd p0(path[0].x, path[0].y);
+    size_t        i = 1;
+    while (i < path.size() && path[i].x == path[0].x && path[i].y == path[0].y)
+        ++i;
+    if (i >= path.size())
+        return true;
+    const Vec2crd p1(path[i].x, path[i].y);
+    for (++i; i < path.size(); ++i)
+        if (int128::orient(p0, p1, Vec2crd(path[i].x, path[i].y)) != 0)
+            return false;
+    return true;
+}
+
 bool c2_polytree_is_well_nested(const C2::PolyPath64 &node, unsigned depth)
 {
-    const double a = C2::Area(node.Polygon());
-    if ((depth % 2 == 0) ? (a <= 0.) : (a >= 0.))
+    const int s = c2_exact_area_sign(node.Polygon());
+    if ((depth % 2 == 0) ? (s <= 0) : (s >= 0))
         return false;
     for (const auto &child : node)
         if (! c2_polytree_is_well_nested(*child, depth + 1))
@@ -474,7 +526,7 @@ void c2_collect_polytree_paths(const C2::PolyPath64 &node, std::vector<C2Rebuilt
 {
     const C2::Path64 &poly = node.Polygon();
     if (poly.size() >= 3) {
-        const double a = C2::Area(poly);
+        const double a = c2_exact_area(poly);
         if (a != 0.) {
             C2RebuiltNode item;
             item.path   = &poly;
@@ -615,16 +667,447 @@ void c2_clip(C2::ClipType type, const C2::Paths64 &subject, const C2::Paths64 &c
     clipper.Execute(type, fill, out);
 }
 
+struct UInt128Raw {
+    uint64_t lo = 0;
+    uint64_t hi = 0;
+};
+
+inline UInt128Raw to_uint128_raw(const Int128 &v)
+{
+    assert(v.sign() >= 0);
+    return { v.lo(), static_cast<uint64_t>(v.hi()) };
+}
+
+inline void mul_u64_pair(uint64_t a, uint64_t b, uint64_t &hi, uint64_t &lo)
+{
+#if defined(_MSC_VER) && defined(_WIN64)
+    lo = _umul128(a, b, &hi);
+#elif (defined(__clang__) || defined(__GNUC__)) && UINTPTR_MAX >= UINT64_MAX
+    const unsigned __int128 p = static_cast<unsigned __int128>(a) * static_cast<unsigned __int128>(b);
+    lo = static_cast<uint64_t>(p);
+    hi = static_cast<uint64_t>(p >> 64);
+#else
+    const uint64_t a_lo = a & 0xFFFFFFFFULL, a_hi = a >> 32;
+    const uint64_t b_lo = b & 0xFFFFFFFFULL, b_hi = b >> 32;
+    const uint64_t p00 = a_lo * b_lo;
+    const uint64_t p01 = a_lo * b_hi;
+    const uint64_t p10 = a_hi * b_lo;
+    const uint64_t p11 = a_hi * b_hi;
+    const uint64_t mid = (p00 >> 32) + (p01 & 0xFFFFFFFFULL) + (p10 & 0xFFFFFFFFULL);
+    lo = (p00 & 0xFFFFFFFFULL) | (mid << 32);
+    hi = p11 + (p01 >> 32) + (p10 >> 32) + (mid >> 32);
+#endif
+}
+
+// Exact comparison of non-negative 128-bit rationals (n1/d1) vs (n2/d2) with d1, d2 > 0.
+int cmp_rational_128(const UInt128Raw &n1, const UInt128Raw &d1, const UInt128Raw &n2, const UInt128Raw &d2)
+{
+    if (n1.hi == 0 && d1.hi == 0 && n2.hi == 0 && d2.hi == 0) {
+        uint64_t h1 = 0, l1 = 0, h2 = 0, l2 = 0;
+        mul_u64_pair(n1.lo, d2.lo, h1, l1);
+        mul_u64_pair(n2.lo, d1.lo, h2, l2);
+        if (h1 != h2)
+            return h1 < h2 ? -1 : 1;
+        if (l1 != l2)
+            return l1 < l2 ? -1 : 1;
+        return 0;
+    }
+    auto mul_128x128 = [](const UInt128Raw &a, const UInt128Raw &b, std::array<uint64_t, 4> &out) {
+        out = { 0, 0, 0, 0 };
+        auto add_at = [&out](size_t pos, uint64_t val) {
+            uint64_t carry = val;
+            for (size_t i = pos; i < 4 && carry != 0; ++i) {
+                const uint64_t s = out[i] + carry;
+                carry = (s < out[i]) ? 1 : 0;
+                out[i] = s;
+            }
+        };
+        const uint64_t as[2] = { a.lo, a.hi };
+        const uint64_t bs[2] = { b.lo, b.hi };
+        for (size_t i = 0; i < 2; ++i)
+            for (size_t j = 0; j < 2; ++j) {
+                uint64_t hi = 0, lo = 0;
+                mul_u64_pair(as[i], bs[j], hi, lo);
+                add_at(i + j, lo);
+                add_at(i + j + 1, hi);
+            }
+    };
+    std::array<uint64_t, 4> p1, p2;
+    mul_128x128(n1, d2, p1);
+    mul_128x128(n2, d1, p2);
+    for (int i = 3; i >= 0; --i)
+        if (p1[size_t(i)] != p2[size_t(i)])
+            return p1[size_t(i)] < p2[size_t(i)] ? -1 : 1;
+    return 0;
+}
+
+struct OpenClipEdge {
+    Point   a, b;
+    coord_t min_x, min_y, max_x, max_y;
+};
+
+struct OpenClipEdgeData {
+    std::vector<OpenClipEdge>          edges;
+    AABBTreeIndirect::Tree<2, coord_t> tree;
+    BoundingBox                        total_bbox;
+
+    bool empty() const { return edges.empty(); }
+
+    template<class PathsRange>
+    void build_from_paths(const PathsRange &paths)
+    {
+        edges.clear();
+        tree.clear();
+        total_bbox = BoundingBox();
+        size_t total_pts = 0;
+        for (const auto &poly : paths)
+            total_pts += poly.size();
+        edges.reserve(total_pts);
+        for (const auto &poly : paths) {
+            const size_t n = poly.size();
+            if (n < 3)
+                continue;
+            for (size_t i = 0; i < n; ++i) {
+                const Point &a = poly[i];
+                const Point &b = poly[(i + 1 == n) ? 0 : i + 1];
+                if (a == b)
+                    continue;
+                const coord_t min_x = std::min(a.x(), b.x());
+                const coord_t min_y = std::min(a.y(), b.y());
+                const coord_t max_x = std::max(a.x(), b.x());
+                const coord_t max_y = std::max(a.y(), b.y());
+                edges.push_back({ a, b, min_x, min_y, max_x, max_y });
+                total_bbox.merge(a);
+                total_bbox.merge(b);
+            }
+        }
+        if (edges.size() >= 32) {
+            std::vector<C2BBoxNode> nodes;
+            nodes.reserve(edges.size());
+            for (size_t i = 0; i < edges.size(); ++i) {
+                const OpenClipEdge &e = edges[i];
+                nodes.emplace_back(i, C2::Rect64(e.min_x, e.min_y, e.max_x, e.max_y));
+            }
+            tree.build(std::move(nodes));
+        }
+    }
+
+    template<class Fn>
+    void query_box(const BoundingBox &box, Fn &&fn) const
+    {
+        if (edges.empty() || ! total_bbox.overlap(box))
+            return;
+        if (! tree.empty()) {
+            const AABBTreeIndirect::Tree<2, coord_t>::BoundingBox q(box.min, box.max);
+            AABBTreeIndirect::traverse(
+                tree,
+                AABBTreeIndirect::intersecting(q),
+                [&](const AABBTreeIndirect::Tree<2, coord_t>::Node &node) {
+                    return fn(node.idx);
+                });
+        } else {
+            for (size_t i = 0; i < edges.size(); ++i) {
+                const OpenClipEdge &e = edges[i];
+                if (e.max_x >= box.min.x() && e.min_x <= box.max.x() &&
+                    e.max_y >= box.min.y() && e.min_y <= box.max.y())
+                    if (! fn(i))
+                        break;
+            }
+        }
+    }
+
+    void clip_segment(const Point &a, const Point &b, ClipperUtils::OpenClipBoundaryRule rule,
+                      std::vector<ClipperUtils::OpenClipInterval> &out) const
+    {
+        out.clear();
+        if (a == b)
+            return;
+        if (edges.empty()) {
+            out.push_back({ 0., 1., a, b, false });
+            return;
+        }
+
+        const int64_t dsx  = int64_t(b.x()) - int64_t(a.x());
+        const int64_t dsy  = int64_t(b.y()) - int64_t(a.y());
+        const bool    horiz = (a.y() == b.y());
+        const bool    use_x = std::abs(dsx) >= std::abs(dsy);
+        const int64_t axis_len  = use_x ? std::abs(dsx) : std::abs(dsy);
+        const int64_t axis_sign = (use_x ? dsx : dsy) > 0 ? 1 : -1;
+
+        struct Breakpoint {
+            UInt128Raw num;
+            UInt128Raw den;
+            double     t_dbl    = 0.;
+            Point      pt;
+            bool       exact_pt = false;
+        };
+        struct CollinearSpan {
+            int64_t n0   = 0;
+            int64_t n1   = 0;
+            int     wind = 0;
+        };
+
+        std::vector<Breakpoint>    bps;
+        std::vector<CollinearSpan> collinear_spans;
+        std::vector<size_t>        cand_edges;
+
+        const UInt128Raw u_axis_len{ static_cast<uint64_t>(axis_len), 0 };
+        bps.push_back({ { 0, 0 }, { 1, 0 }, 0., a, true });
+        bps.push_back({ { 1, 0 }, { 1, 0 }, 1., b, true });
+
+        auto proj_along = [a, use_x, axis_sign](const Point &p) -> int64_t {
+            return (use_x ? (int64_t(p.x()) - int64_t(a.x())) : (int64_t(p.y()) - int64_t(a.y()))) * axis_sign;
+        };
+        auto add_axis_bp = [&](int64_t proj, const Point &p, bool is_exact) {
+            if (proj <= 0 || proj >= axis_len)
+                return;
+            const UInt128Raw num{ static_cast<uint64_t>(proj), 0 };
+            bps.push_back({ num, u_axis_len, double(proj) / double(axis_len), p, is_exact });
+        };
+
+        const BoundingBox seg_box(Point(std::min(a.x(), b.x()), std::min(a.y(), b.y())),
+                                  Point(std::max(a.x(), b.x()), std::max(a.y(), b.y())));
+        query_box(seg_box, [&](size_t idx) {
+            cand_edges.push_back(idx);
+            return true;
+        });
+
+        for (size_t idx : cand_edges) {
+            const OpenClipEdge &ce = edges[idx];
+            const int           o1 = int128::orient(a, b, ce.a);
+            const int           o2 = int128::orient(a, b, ce.b);
+            if (o1 == 0 && o2 == 0) {
+                const int64_t pa = proj_along(ce.a);
+                const int64_t pb = proj_along(ce.b);
+                const int64_t lo = std::max<int64_t>(0, std::min(pa, pb));
+                const int64_t hi = std::min<int64_t>(axis_len, std::max(pa, pb));
+                if (lo < hi) {
+                    const int wind = horiz ? (ce.a.x() > ce.b.x() ? 1 : -1) : (ce.b.y() > ce.a.y() ? 1 : -1);
+                    collinear_spans.push_back({ lo, hi, wind });
+                    add_axis_bp(lo, (lo == pa) ? ce.a : ((lo == pb) ? ce.b : a), lo == pa || lo == pb);
+                    add_axis_bp(hi, (hi == pa) ? ce.a : ((hi == pb) ? ce.b : b), hi == pa || hi == pb);
+                }
+                continue;
+            }
+            const int o3 = int128::orient(ce.a, ce.b, a);
+            const int o4 = int128::orient(ce.a, ce.b, b);
+            if (o1 != o2 && o3 != o4) {
+                if (o1 == 0)
+                    add_axis_bp(proj_along(ce.a), ce.a, true);
+                else if (o2 == 0)
+                    add_axis_bp(proj_along(ce.b), ce.b, true);
+                else if (o3 != 0 && o4 != 0) {
+                    const int64_t dcx = int64_t(ce.b.x()) - int64_t(ce.a.x());
+                    const int64_t dcy = int64_t(ce.b.y()) - int64_t(ce.a.y());
+                    const int64_t wx  = int64_t(ce.a.x()) - int64_t(a.x());
+                    const int64_t wy  = int64_t(ce.a.y()) - int64_t(a.y());
+                    Int128        den = Int128::multiply(dsx, dcy) - Int128::multiply(dsy, dcx);
+                    Int128        num = Int128::multiply(wx, dcy) - Int128::multiply(wy, dcx);
+                    if (den.sign() < 0) {
+                        den = -den;
+                        num = -num;
+                    }
+                    if (den.sign() > 0 && num.sign() > 0 && num < den) {
+                        const double t_dbl = std::clamp(double(num) / double(den), 0., 1.);
+                        const Point  ip(a.x() + coord_t(std::llround(t_dbl * double(dsx))),
+                                        a.y() + coord_t(std::llround(t_dbl * double(dsy))));
+                        bps.push_back({ to_uint128_raw(num), to_uint128_raw(den), t_dbl, ip, false });
+                    }
+                }
+            } else if (o1 == 0 && ce.a.x() >= seg_box.min.x() && ce.a.x() <= seg_box.max.x() &&
+                       ce.a.y() >= seg_box.min.y() && ce.a.y() <= seg_box.max.y()) {
+                add_axis_bp(proj_along(ce.a), ce.a, true);
+            } else if (o2 == 0 && ce.b.x() >= seg_box.min.x() && ce.b.x() <= seg_box.max.x() &&
+                       ce.b.y() >= seg_box.min.y() && ce.b.y() <= seg_box.max.y()) {
+                add_axis_bp(proj_along(ce.b), ce.b, true);
+            }
+        }
+
+        std::sort(bps.begin(), bps.end(), [](const Breakpoint &l, const Breakpoint &r) {
+            if (std::abs(l.t_dbl - r.t_dbl) > 1e-12)
+                return l.t_dbl < r.t_dbl;
+            const int c = cmp_rational_128(l.num, l.den, r.num, r.den);
+            if (c != 0)
+                return c < 0;
+            return l.exact_pt && ! r.exact_pt;
+        });
+
+        // Deduplicate identical rational parameters while keeping the exact-vertex point when present.
+        size_t write = 0;
+        for (size_t i = 0; i < bps.size(); ++i) {
+            if (write > 0 &&
+                std::abs(bps[write - 1].t_dbl - bps[i].t_dbl) <= 1e-12 &&
+                cmp_rational_128(bps[write - 1].num, bps[write - 1].den, bps[i].num, bps[i].den) == 0) {
+                if (! bps[write - 1].exact_pt && bps[i].exact_pt)
+                    bps[write - 1] = bps[i];
+                continue;
+            }
+            if (write != i)
+                bps[write] = bps[i];
+            ++write;
+        }
+        bps.resize(write);
+
+        auto classify_mid = [&](double t_mid) -> bool {
+            const double mx = double(a.x()) + t_mid * double(dsx);
+            const double my = double(a.y()) + t_mid * double(dsy);
+
+            if (horiz) {
+                int w_above = 0;
+                if (a.y() <= total_bbox.max.y() &&
+                    mx >= double(total_bbox.min.x()) - 1. && mx <= double(total_bbox.max.x()) + 1.) {
+                    const int64_t     x_lo = std::clamp<int64_t>(int64_t(std::floor(mx)) - 1, total_bbox.min.x(), total_bbox.max.x());
+                    const int64_t     x_hi = std::clamp<int64_t>(int64_t(std::ceil(mx)) + 1, total_bbox.min.x(), total_bbox.max.x());
+                    const int64_t     y_lo = std::max<int64_t>(a.y(), total_bbox.min.y());
+                    const BoundingBox ray_box(Point(coord_t(x_lo), coord_t(y_lo)), Point(coord_t(x_hi), total_bbox.max.y()));
+                    query_box(ray_box, [&](size_t idx) {
+                        const OpenClipEdge &ce = edges[idx];
+                        if (ce.a.x() == ce.b.x())
+                            return true;
+                        const double ax = double(ce.a.x()), bx = double(ce.b.x());
+                        if ((ax <= mx && bx > mx) || (bx <= mx && ax > mx)) {
+                            if (ce.a.y() == a.y() && ce.b.y() == a.y())
+                                return true;
+                            const double y_cross = (ce.a.y() == ce.b.y()) ? double(ce.a.y())
+                                : (double(ce.a.y()) + (mx - ax) * double(ce.b.y() - ce.a.y()) / (bx - ax));
+                            if (y_cross > my)
+                                w_above += (ce.a.x() > ce.b.x() ? 1 : -1);
+                        }
+                        return true;
+                    });
+                }
+                if (rule == ClipperUtils::OpenClipBoundaryRule::Clipper1ExcludeTop)
+                    return w_above != 0;
+                int w_below = w_above;
+                for (const CollinearSpan &sp : collinear_spans) {
+                    const double t0 = double(sp.n0) / double(axis_len);
+                    const double t1 = double(sp.n1) / double(axis_len);
+                    if (t_mid > t0 && t_mid < t1)
+                        w_below += sp.wind;
+                }
+                return w_above != 0 || w_below != 0;
+            }
+
+            int w_right = 0;
+            if (mx <= double(total_bbox.max.x()) + 1. &&
+                my >= double(total_bbox.min.y()) - 1. && my <= double(total_bbox.max.y()) + 1.) {
+                const int64_t     x_lo = std::clamp<int64_t>(int64_t(std::floor(mx)) - 1, total_bbox.min.x(), total_bbox.max.x());
+                const int64_t     y_lo = std::clamp<int64_t>(int64_t(std::floor(my)) - 1, total_bbox.min.y(), total_bbox.max.y());
+                const int64_t     y_hi = std::clamp<int64_t>(int64_t(std::ceil(my)) + 1, total_bbox.min.y(), total_bbox.max.y());
+                const BoundingBox ray_box(Point(coord_t(x_lo), coord_t(y_lo)), Point(total_bbox.max.x(), coord_t(y_hi)));
+                query_box(ray_box, [&](size_t idx) {
+                    const OpenClipEdge &ce = edges[idx];
+                    if (ce.a.y() == ce.b.y())
+                        return true;
+                    const double ay = double(ce.a.y()), by = double(ce.b.y());
+                    if ((ay <= my && by > my) || (by <= my && ay > my)) {
+                        if (int128::orient(a, b, ce.a) == 0 && int128::orient(a, b, ce.b) == 0)
+                            return true;
+                        const double x_cross = (ce.a.x() == ce.b.x()) ? double(ce.a.x())
+                            : (double(ce.a.x()) + (my - ay) * double(ce.b.x() - ce.a.x()) / (by - ay));
+                        if (x_cross > mx)
+                            w_right += (ce.b.y() > ce.a.y() ? 1 : -1);
+                    }
+                    return true;
+                });
+            }
+            int w_left = w_right;
+            for (const CollinearSpan &sp : collinear_spans) {
+                const double t0 = double(sp.n0) / double(axis_len);
+                const double t1 = double(sp.n1) / double(axis_len);
+                if (t_mid > t0 && t_mid < t1)
+                    w_left += sp.wind;
+            }
+            return w_right != 0 || w_left != 0;
+        };
+
+        out.reserve(bps.size() - 1);
+        for (size_t k = 0; k + 1 < bps.size(); ++k) {
+            const double t_mid  = 0.5 * (bps[k].t_dbl + bps[k + 1].t_dbl);
+            const bool   inside = classify_mid(t_mid);
+            if (! out.empty() && out.back().inside == inside) {
+                out.back().t1 = bps[k + 1].t_dbl;
+                out.back().p1 = bps[k + 1].pt;
+            } else {
+                out.push_back({ bps[k].t_dbl, bps[k + 1].t_dbl, bps[k].pt, bps[k + 1].pt, inside });
+            }
+        }
+    }
+};
+
+Polylines clip_open_paths_with_index(const OpenClipEdgeData &index, const C2::Paths64 &subject,
+                                     C2::ClipType type, ClipperUtils::OpenClipBoundaryRule rule)
+{
+    Polylines out;
+    if (subject.empty())
+        return out;
+    const bool keep_inside = (type == C2::ClipType::Intersection);
+    std::vector<ClipperUtils::OpenClipInterval> intervals;
+    for (const C2::Path64 &path : subject) {
+        if (path.size() < 2)
+            continue;
+        Polyline cur;
+        auto flush = [&]() {
+            if (cur.points.size() >= 2)
+                out.emplace_back(std::move(cur));
+            cur.points.clear();
+        };
+        for (size_t i = 0; i + 1 < path.size(); ++i) {
+            const Point a(path[i].x, path[i].y);
+            const Point b(path[i + 1].x, path[i + 1].y);
+            if (a == b)
+                continue;
+            index.clip_segment(a, b, rule, intervals);
+            for (const ClipperUtils::OpenClipInterval &iv : intervals) {
+                if (iv.inside != keep_inside) {
+                    flush();
+                    continue;
+                }
+                if (iv.p0 == iv.p1)
+                    continue;
+                if (cur.points.empty()) {
+                    cur.points.push_back(iv.p0);
+                    cur.points.push_back(iv.p1);
+                } else {
+                    if (cur.points.back() != iv.p0) {
+                        flush();
+                        cur.points.push_back(iv.p0);
+                    }
+                    if (cur.points.back() != iv.p1)
+                        cur.points.push_back(iv.p1);
+                }
+            }
+        }
+        flush();
+    }
+    return out;
+}
+
 Polylines c2_clip_open(C2::ClipType type, const C2::Paths64 &subject, const C2::Paths64 &clip)
 {
-    C2::Clipper64 clipper;
-    clipper.PreserveCollinear(false);
-    clipper.AddOpenSubject(subject);
-    if (! clip.empty())
-        clipper.AddClip(clip);
-    C2::Paths64 closed, open;
-    clipper.Execute(type, C2::FillRule::NonZero, closed, open);
-    return c2_to_polylines(open);
+    if (type != C2::ClipType::Intersection && type != C2::ClipType::Difference) {
+        C2::Clipper64 clipper;
+        clipper.PreserveCollinear(false);
+        clipper.AddOpenSubject(subject);
+        if (! clip.empty())
+            clipper.AddClip(clip);
+        C2::Paths64 closed, open;
+        clipper.Execute(type, C2::FillRule::NonZero, closed, open);
+        return c2_to_polylines(open);
+    }
+    if (subject.empty())
+        return {};
+    if (clip.empty())
+        return (type == C2::ClipType::Difference) ? c2_to_polylines(subject) : Polylines{};
+    OpenClipEdgeData index;
+    Polygons         clip_polys;
+    clip_polys.reserve(clip.size());
+    for (const C2::Path64 &p : clip)
+        clip_polys.emplace_back().points = c2_to_points(p);
+    index.build_from_paths(clip_polys);
+    if (index.empty())
+        return (type == C2::ClipType::Difference) ? c2_to_polylines(subject) : Polylines{};
+    return clip_open_paths_with_index(index, subject, type, ClipperUtils::OpenClipBoundaryRule::Clipper1ExcludeTop);
 }
 
 // Clipper1 semantics: miter limit at least 2, arc tolerance (also for round caps) at most a quarter of the offset.
@@ -683,15 +1166,61 @@ bool c2_paths_touch(const C2::Path64 &a, const C2::Path64 &b, const C2::Rect64 &
         return false;
     const size_t na = a.size();
     const size_t nb = b.size();
-    for (size_t ia : edges_a) {
-        const C2::Point64 &a1 = a[ia];
-        const C2::Point64 &a2 = a[(ia + 1 == na) ? 0 : ia + 1];
-        for (size_t ib : edges_b) {
-            const C2::Point64 &b1 = b[ib];
-            const C2::Point64 &b2 = b[(ib + 1 == nb) ? 0 : ib + 1];
-            if (c2_segments_intersect(a1, a2, b1, b2))
-                return true;
+    if (edges_a.size() * edges_b.size() <= 256) {
+        for (size_t ia : edges_a) {
+            const C2::Point64 &a1 = a[ia];
+            const C2::Point64 &a2 = a[(ia + 1 == na) ? 0 : ia + 1];
+            for (size_t ib : edges_b) {
+                const C2::Point64 &b1 = b[ib];
+                const C2::Point64 &b2 = b[(ib + 1 == nb) ? 0 : ib + 1];
+                if (c2_segments_intersect(a1, a2, b1, b2))
+                    return true;
+            }
         }
+        return false;
+    }
+
+    const bool                 index_b     = edges_b.size() <= edges_a.size();
+    const C2::Path64          &indexed     = index_b ? b : a;
+    const C2::Path64          &queried     = index_b ? a : b;
+    const std::vector<size_t> &idx_edges   = index_b ? edges_b : edges_a;
+    const std::vector<size_t> &qry_edges   = index_b ? edges_a : edges_b;
+    const size_t               n_idx       = indexed.size();
+    const size_t               n_qry       = queried.size();
+
+    std::vector<C2BBoxNode> edge_nodes;
+    edge_nodes.reserve(idx_edges.size());
+    for (size_t i = 0; i < idx_edges.size(); ++i) {
+        const size_t       ei = idx_edges[i];
+        const C2::Point64 &u  = indexed[ei];
+        const C2::Point64 &v  = indexed[(ei + 1 == n_idx) ? 0 : ei + 1];
+        edge_nodes.emplace_back(ei, C2::Rect64(std::min(u.x, v.x), std::min(u.y, v.y), std::max(u.x, v.x), std::max(u.y, v.y)));
+    }
+    AABBTreeIndirect::Tree<2, coord_t> edge_tree;
+    edge_tree.build(std::move(edge_nodes));
+
+    bool hit = false;
+    for (size_t iq : qry_edges) {
+        const C2::Point64 &q1 = queried[iq];
+        const C2::Point64 &q2 = queried[(iq + 1 == n_qry) ? 0 : iq + 1];
+        const AABBTreeIndirect::Tree<2, coord_t>::BoundingBox query_box(
+            Vec2crd(std::min(q1.x, q2.x), std::min(q1.y, q2.y)),
+            Vec2crd(std::max(q1.x, q2.x), std::max(q1.y, q2.y)));
+        AABBTreeIndirect::traverse(
+            edge_tree,
+            AABBTreeIndirect::intersecting(query_box),
+            [&](const AABBTreeIndirect::Tree<2, coord_t>::Node &node) {
+                const size_t       ei = node.idx;
+                const C2::Point64 &p1 = indexed[ei];
+                const C2::Point64 &p2 = indexed[(ei + 1 == n_idx) ? 0 : ei + 1];
+                if (c2_segments_intersect(q1, q2, p1, p2)) {
+                    hit = true;
+                    return false;
+                }
+                return true;
+            });
+        if (hit)
+            return true;
     }
     return false;
 }
@@ -699,20 +1228,20 @@ bool c2_paths_touch(const C2::Path64 &a, const C2::Path64 &b, const C2::Rect64 &
 // A single group offsets like Clipper1's path by path offset only if every CW path is strictly
 // enclosed inside a CCW path (positive winding, no touching boundaries) and no zero-area path
 // can confuse Clipper2's group orientation detection.
-bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &areas)
+bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<int> &area_signs)
 {
     bool has_cw   = false;
     bool has_zero = false;
-    for (double a : areas) {
-        if (a < 0.)
+    for (int s : area_signs) {
+        if (s < 0)
             has_cw = true;
-        else if (a == 0.)
+        else if (s == 0)
             has_zero = true;
     }
-    if (! has_cw)
-        return true;
     if (has_zero)
         return false;
+    if (! has_cw)
+        return true;
 
     std::vector<C2::Rect64> bounds;
     bounds.reserve(paths.size());
@@ -727,7 +1256,7 @@ bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &are
 
     std::vector<size_t> candidates;
     for (size_t i = 0; i < paths.size(); ++i) {
-        if (areas[i] >= 0.)
+        if (area_signs[i] >= 0)
             continue;
         const C2::Rect64 &hole_box = bounds[i];
         const AABBTreeIndirect::Tree<2, coord_t>::BoundingBox query_box(
@@ -753,7 +1282,7 @@ bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &are
                 if (pip == -1)
                     return false;
                 if (pip == 1)
-                    winding += (areas[j] > 0. ? 1 : -1);
+                    winding += (area_signs[j] > 0 ? 1 : -1);
             }
         }
         if (winding <= 0)
@@ -765,18 +1294,19 @@ bool c2_offset_as_group(const C2::Paths64 &paths, const std::vector<double> &are
 template<class TOut>
 void c2_offset_closed_paths(C2::Paths64 &&paths, float delta, JoinType joinType, double miterLimit, TOut &out)
 {
-    std::vector<double> areas;
-    areas.reserve(paths.size());
+    std::vector<int> area_signs;
+    area_signs.reserve(paths.size());
     if (delta < 0.) {
-        // Clipper2 would grow zero-area paths even for a negative offset; drop them one by one.
+        // Drop only truly collinear/degenerate zero-area paths; self-intersecting zero-area paths (e.g. bowties)
+        // still keep their positive-winding lobes under negative offset, matching Clipper1.
         size_t write = 0;
         for (size_t i = 0; i < paths.size(); ++i) {
-            const double a = C2::Area(paths[i]);
-            if (a == 0.)
+            const int s = c2_exact_area_sign(paths[i]);
+            if (s == 0 && c2_is_collinear_path(paths[i]))
                 continue;
             if (write != i)
                 paths[write] = std::move(paths[i]);
-            areas.emplace_back(a);
+            area_signs.emplace_back(s);
             ++write;
         }
         paths.resize(write);
@@ -784,23 +1314,21 @@ void c2_offset_closed_paths(C2::Paths64 &&paths, float delta, JoinType joinType,
             return;
     } else {
         for (const C2::Path64 &path : paths)
-            areas.emplace_back(C2::Area(path));
+            area_signs.emplace_back(c2_exact_area_sign(path));
     }
     C2::ClipperOffset co;
     c2_offset_setup(co, delta, joinType, miterLimit);
-    if (c2_offset_as_group(paths, areas)) {
+    if (c2_offset_as_group(paths, area_signs)) {
         co.AddPaths(paths, to_c2(joinType), C2::EndType::Polygon);
         co.Execute(delta, out);
         return;
     }
     C2::Paths64 offsetted, single;
     for (size_t i = 0; i < paths.size(); ++i) {
-        if (areas[i] == 0. && delta < 0.)
-            continue;
         co.Clear();
         co.AddPath(paths[i], to_c2(joinType), C2::EndType::Polygon);
         // Clipper2 reverses a lone CW path, so the flipped sign shrinks it as a hole.
-        co.Execute(areas[i] < 0. ? - delta : delta, single);
+        co.Execute(area_signs[i] < 0 ? - delta : delta, single);
         append(offsetted, std::move(single));
     }
     c2_clip(C2::ClipType::Union, offsetted, {}, delta > 0. ? C2::FillRule::NonZero : C2::FillRule::Positive, out);
@@ -832,34 +1360,136 @@ inline const ExPolygon& expolygon_of(const Surface &surface) { return surface.ex
 inline const ExPolygon& expolygon_of(const Surface *surface) { return surface->expolygon; }
 
 // Clipper1 ignored the orientation of expolygons, a single group needs CCW contours and CW holes.
+// On negative offsets, holes belong strictly to their own outer contour so an expanding hole cannot swallow another entity.
 template<class ExPolygonRange, class TOut>
 void c2_offset_expolygons(const ExPolygonRange &src, float delta, JoinType joinType, double miterLimit, TOut &out)
 {
     const double shortest = std::abs(delta * ClipperOffsetShortestEdgeFactor);
-    C2::Paths64  paths;
+    if (delta >= 0.) {
+        C2::Paths64 paths;
+        for (const auto &item : src) {
+            const ExPolygon &expoly = expolygon_of(item);
+            if (! append_offset_path(paths, expoly.contour.points, shortest, C2::EndType::Polygon))
+                continue;
+            if (const int c_sign = c2_exact_area_sign(paths.back()); c_sign == 0)
+                continue;
+            else if (c_sign < 0)
+                std::reverse(paths.back().begin(), paths.back().end());
+            for (const Polygon &hole : expoly.holes)
+                if (append_offset_path(paths, hole.points, shortest, C2::EndType::Polygon)) {
+                    if (const int h_sign = c2_exact_area_sign(paths.back()); h_sign == 0)
+                        paths.pop_back();
+                    else if (h_sign > 0)
+                        std::reverse(paths.back().begin(), paths.back().end());
+                }
+        }
+        C2::ClipperOffset co;
+        c2_offset_setup(co, delta, joinType, miterLimit);
+        co.AddPaths(paths, to_c2(joinType), C2::EndType::Polygon);
+        co.Execute(delta, out);
+        return;
+    }
+
+    C2::Paths64        combined;
+    C2::Paths64        holeless_normal;
+    C2::ClipperOffset  co;
+    c2_offset_setup(co, delta, joinType, miterLimit);
+    size_t             independent_batches = 0;
+
     for (const auto &item : src) {
         const ExPolygon &expoly = expolygon_of(item);
-        if (! append_offset_path(paths, expoly.contour.points, shortest, C2::EndType::Polygon))
+        C2::Paths64      contour_paths;
+        if (! append_offset_path(contour_paths, expoly.contour.points, shortest, C2::EndType::Polygon))
             continue;
-        if (const double area = C2::Area(paths.back()); area == 0.) {
-            // A degenerate contour vanishes when shrunk and encloses no hole when grown.
-            if (delta < 0.)
-                paths.pop_back();
+        C2::Path64 &contour = contour_paths.front();
+        const int   c_sign  = c2_exact_area_sign(contour);
+        if (c_sign == 0 && c2_is_collinear_path(contour))
             continue;
-        } else if (area < 0.)
-            std::reverse(paths.back().begin(), paths.back().end());
-        for (const Polygon &hole : expoly.holes)
-            if (append_offset_path(paths, hole.points, shortest, C2::EndType::Polygon)) {
-                if (const double area = C2::Area(paths.back()); area == 0.)
-                    paths.pop_back();
-                else if (area > 0.)
-                    std::reverse(paths.back().begin(), paths.back().end());
+        if (c_sign < 0)
+            std::reverse(contour.begin(), contour.end());
+
+        if (expoly.holes.empty()) {
+            if (c_sign == 0) {
+                co.Clear();
+                co.AddPath(contour, to_c2(joinType), C2::EndType::Polygon);
+                C2::Paths64 single;
+                co.Execute(delta, single);
+                if (! single.empty()) {
+                    append(combined, std::move(single));
+                    ++independent_batches;
+                }
+            } else {
+                holeless_normal.emplace_back(std::move(contour));
             }
+            continue;
+        }
+
+        co.Clear();
+        co.AddPath(contour, to_c2(joinType), C2::EndType::Polygon);
+        C2::Paths64 shrunk_contour;
+        co.Execute(delta, shrunk_contour);
+        if (shrunk_contour.empty())
+            continue;
+
+        C2::Paths64 hole_inputs;
+        hole_inputs.reserve(expoly.holes.size());
+        for (const Polygon &hole : expoly.holes) {
+            if (! append_offset_path(hole_inputs, hole.points, shortest, C2::EndType::Polygon))
+                continue;
+            const int h_sign = c2_exact_area_sign(hole_inputs.back());
+            if (h_sign == 0 && c2_is_collinear_path(hole_inputs.back())) {
+                hole_inputs.pop_back();
+                continue;
+            }
+            if (h_sign < 0)
+                std::reverse(hole_inputs.back().begin(), hole_inputs.back().end());
+        }
+
+        if (hole_inputs.empty()) {
+            append(combined, std::move(shrunk_contour));
+            ++independent_batches;
+            continue;
+        }
+
+        co.Clear();
+        co.AddPaths(hole_inputs, to_c2(joinType), C2::EndType::Polygon);
+        C2::Paths64 expanded_holes;
+        co.Execute(-delta, expanded_holes);
+        if (expanded_holes.empty()) {
+            append(combined, std::move(shrunk_contour));
+            ++independent_batches;
+            continue;
+        }
+
+        C2::Paths64 diff_out;
+        c2_clip(C2::ClipType::Difference, shrunk_contour, expanded_holes, C2::FillRule::NonZero, diff_out);
+        if (! diff_out.empty()) {
+            append(combined, std::move(diff_out));
+            ++independent_batches;
+        }
     }
-    C2::ClipperOffset co;
-    c2_offset_setup(co, delta, joinType, miterLimit);
-    co.AddPaths(paths, to_c2(joinType), C2::EndType::Polygon);
-    co.Execute(delta, out);
+
+    if (! holeless_normal.empty()) {
+        co.Clear();
+        co.AddPaths(holeless_normal, to_c2(joinType), C2::EndType::Polygon);
+        C2::Paths64 batch_out;
+        co.Execute(delta, batch_out);
+        if (! batch_out.empty()) {
+            append(combined, std::move(batch_out));
+            ++independent_batches;
+        }
+    }
+
+    if (combined.empty())
+        return;
+    if constexpr (std::is_same_v<TOut, C2::PolyTree64>) {
+        c2_clip(C2::ClipType::Union, combined, {}, C2::FillRule::NonZero, out);
+    } else {
+        if (independent_batches <= 1)
+            out = std::move(combined);
+        else
+            c2_clip(C2::ClipType::Union, combined, {}, C2::FillRule::NonZero, out);
+    }
 }
 
 template<class ExPolygonRange>
@@ -953,15 +1583,15 @@ Slic3r::Polygons offset(const Slic3r::Polygon &polygon, const float delta, JoinT
     C2::Paths64 paths;
     if (! append_offset_path(paths, polygon.points, std::abs(delta * ClipperOffsetShortestEdgeFactor), C2::EndType::Polygon))
         return {};
-    const double area = C2::Area(paths.front());
-    if (area == 0. && delta < 0.)
+    const int area_sign = c2_exact_area_sign(paths.front());
+    if (area_sign == 0 && delta < 0. && c2_is_collinear_path(paths.front()))
         return {};
     C2::ClipperOffset co;
     c2_offset_setup(co, delta, joinType, miterLimit);
     co.AddPaths(paths, to_c2(joinType), C2::EndType::Polygon);
     C2::Paths64 out;
     // A CW polygon shrinks as a hole and stays CW.
-    co.Execute(area < 0. ? - delta : delta, out);
+    co.Execute(area_sign < 0 ? - delta : delta, out);
     return c2_to_polygons(out);
 }
 
@@ -1008,25 +1638,50 @@ Slic3r::ExPolygons offset_ex(const Slic3r::SurfacesPtr &surfaces, const float de
 
 Polygons offset2(const ExPolygons &expolygons, const float delta1, const float delta2, JoinType joinType, double miterLimit)
 {
-    C2::Paths64 first, out;
-    c2_offset_expolygons(expolygons, delta1, joinType, miterLimit, first);
-    c2_offset_closed(first, delta2, joinType, miterLimit, out);
+    C2::Paths64 out;
+    if (delta2 < 0.) {
+        C2::PolyTree64 first_tree;
+        c2_offset_expolygons(expolygons, delta1, joinType, miterLimit, first_tree);
+        const ExPolygons first_ex = c2_to_expolygons(first_tree);
+        if (! first_ex.empty())
+            c2_offset_expolygons(first_ex, delta2, joinType, miterLimit, out);
+    } else {
+        C2::Paths64 first;
+        c2_offset_expolygons(expolygons, delta1, joinType, miterLimit, first);
+        c2_offset_closed(first, delta2, joinType, miterLimit, out);
+    }
     return c2_to_polygons(out);
 }
 ExPolygons offset2_ex(const ExPolygons &expolygons, const float delta1, const float delta2, JoinType joinType, double miterLimit)
 {
-    C2::Paths64    first;
     C2::PolyTree64 out;
-    c2_offset_expolygons(expolygons, delta1, joinType, miterLimit, first);
-    c2_offset_closed(first, delta2, joinType, miterLimit, out);
+    if (delta2 < 0.) {
+        C2::PolyTree64 first_tree;
+        c2_offset_expolygons(expolygons, delta1, joinType, miterLimit, first_tree);
+        const ExPolygons first_ex = c2_to_expolygons(first_tree);
+        if (! first_ex.empty())
+            c2_offset_expolygons(first_ex, delta2, joinType, miterLimit, out);
+    } else {
+        C2::Paths64 first;
+        c2_offset_expolygons(expolygons, delta1, joinType, miterLimit, first);
+        c2_offset_closed(first, delta2, joinType, miterLimit, out);
+    }
     return c2_to_expolygons(out);
 }
 ExPolygons offset2_ex(const Surfaces &surfaces, const float delta1, const float delta2, JoinType joinType, double miterLimit)
 {
-    C2::Paths64    first;
     C2::PolyTree64 out;
-    c2_offset_expolygons(surfaces, delta1, joinType, miterLimit, first);
-    c2_offset_closed(first, delta2, joinType, miterLimit, out);
+    if (delta2 < 0.) {
+        C2::PolyTree64 first_tree;
+        c2_offset_expolygons(surfaces, delta1, joinType, miterLimit, first_tree);
+        const ExPolygons first_ex = c2_to_expolygons(first_tree);
+        if (! first_ex.empty())
+            c2_offset_expolygons(first_ex, delta2, joinType, miterLimit, out);
+    } else {
+        C2::Paths64 first;
+        c2_offset_expolygons(surfaces, delta1, joinType, miterLimit, first);
+        c2_offset_closed(first, delta2, joinType, miterLimit, out);
+    }
     return c2_to_expolygons(out);
 }
 
@@ -1265,6 +1920,116 @@ Slic3r::ExPolygons xor_ex(const Slic3r::ExPolygons &subject, const Slic3r::ExPol
     return _clipper_ex(ctXor, ClipperUtils::ExPolygonsProvider(subject), ClipperUtils::ExPolygonsProvider(clip), do_safety_offset);
 }
 
+static void _clipper_pl_recombine(Polylines &polylines);
+
+namespace ClipperUtils {
+
+struct ClipEdgesIndex::Impl : OpenClipEdgeData {};
+
+ClipEdgesIndex::ClipEdgesIndex() : m_impl(std::make_unique<Impl>()) {}
+ClipEdgesIndex::~ClipEdgesIndex() = default;
+ClipEdgesIndex::ClipEdgesIndex(ClipEdgesIndex &&) noexcept = default;
+ClipEdgesIndex& ClipEdgesIndex::operator=(ClipEdgesIndex &&) noexcept = default;
+ClipEdgesIndex::ClipEdgesIndex(const Polygons &clip) : ClipEdgesIndex() { build(clip); }
+ClipEdgesIndex::ClipEdgesIndex(const ExPolygons &clip) : ClipEdgesIndex() { build(clip); }
+
+void ClipEdgesIndex::build(const Polygons &clip)
+{
+    std::vector<Points> paths;
+    paths.reserve(clip.size());
+    for (const Polygon &p : clip)
+        paths.push_back(p.points);
+    m_impl->build_from_paths(paths);
+}
+
+void ClipEdgesIndex::build(const ExPolygons &clip)
+{
+    std::vector<Points> paths;
+    paths.reserve(number_polygons(clip));
+    for (const ExPolygon &ex : clip) {
+        paths.push_back(ex.contour.points);
+        for (const Polygon &h : ex.holes)
+            paths.push_back(h.points);
+    }
+    m_impl->build_from_paths(paths);
+}
+
+bool ClipEdgesIndex::empty() const { return m_impl->empty(); }
+
+void ClipEdgesIndex::clip_segment(const Point &a, const Point &b, OpenClipBoundaryRule rule, std::vector<OpenClipInterval> &out) const
+{
+    m_impl->clip_segment(a, b, rule, out);
+}
+
+void clip_closed_polygon_split(const Polygon &subject, const Polygons &clip, Polylines &inside_out, Polylines &outside_out)
+{
+    inside_out.clear();
+    outside_out.clear();
+    const size_t n = subject.points.size();
+    if (n < 2)
+        return;
+    if (clip.empty()) {
+        outside_out.emplace_back(subject.split_at_first_point());
+        return;
+    }
+
+    ClipEdgesIndex index(clip);
+    if (index.empty()) {
+        outside_out.emplace_back(subject.split_at_first_point());
+        return;
+    }
+
+    Polyline cur_in, cur_out;
+    auto append_iv = [](Polyline &cur, Polylines &dst, const Point &p0, const Point &p1) {
+        if (p0 == p1)
+            return;
+        if (cur.points.empty()) {
+            cur.points.push_back(p0);
+            cur.points.push_back(p1);
+        } else {
+            if (cur.points.back() != p0) {
+                if (cur.points.size() >= 2)
+                    dst.emplace_back(std::move(cur));
+                cur.points.clear();
+                cur.points.push_back(p0);
+            }
+            if (cur.points.back() != p1)
+                cur.points.push_back(p1);
+        }
+    };
+    auto flush_cur = [](Polyline &cur, Polylines &dst) {
+        if (cur.points.size() >= 2)
+            dst.emplace_back(std::move(cur));
+        cur.points.clear();
+    };
+
+    std::vector<OpenClipInterval> intervals;
+    for (size_t i = 0; i < n; ++i) {
+        const Point &a = subject.points[i];
+        const Point &b = subject.points[(i + 1 == n) ? 0 : i + 1];
+        if (a == b)
+            continue;
+        index.clip_segment(a, b, OpenClipBoundaryRule::Clipper1ExcludeTop, intervals);
+        for (const OpenClipInterval &iv : intervals) {
+            if (iv.p0 == iv.p1)
+                continue;
+            if (iv.inside) {
+                flush_cur(cur_out, outside_out);
+                append_iv(cur_in, inside_out, iv.p0, iv.p1);
+            } else {
+                flush_cur(cur_in, inside_out);
+                append_iv(cur_out, outside_out, iv.p0, iv.p1);
+            }
+        }
+    }
+    flush_cur(cur_in, inside_out);
+    flush_cur(cur_out, outside_out);
+    _clipper_pl_recombine(inside_out);
+    _clipper_pl_recombine(outside_out);
+}
+
+} // namespace ClipperUtils
+
 template<typename PathsProvider1, typename PathsProvider2>
 Polylines _clipper_pl_open(ClipType clipType, PathsProvider1 &&subject, PathsProvider2 &&clip)
     { return c2_clip_open(to_c2(clipType), to_paths64(std::forward<PathsProvider1>(subject)), to_paths64(std::forward<PathsProvider2>(clip))); }
@@ -1464,14 +2229,92 @@ static void remove_exact_collinear(Points &pts)
     }
 }
 
-// Split a contour at every repeated vertex into strictly simple loops (Clipper1 StrictlySimple semantics).
-static void split_self_touching_polygon(const Points &pts, Polygons &out)
+// Insert vertices that lie strictly inside a non-adjacent edge of the same contour so
+// stack-based loop splitting can separate vertex-on-edge self-touching contours.
+static bool insert_touching_vertices(Points &pts)
+{
+    const size_t n = pts.size();
+    if (n < 4)
+        return false;
+
+    std::vector<std::vector<Point>> insertions(n);
+    bool                            any_inserted = false;
+
+    auto test_vertex_against_edge = [&](size_t edge_idx, const Point &v) {
+        const Point &a = pts[edge_idx];
+        const Point &b = pts[(edge_idx + 1 == n) ? 0 : edge_idx + 1];
+        if (a == b || v == a || v == b)
+            return;
+        if (v.x() < std::min(a.x(), b.x()) || v.x() > std::max(a.x(), b.x()) ||
+            v.y() < std::min(a.y(), b.y()) || v.y() > std::max(a.y(), b.y()))
+            return;
+        if (int128::orient(a, b, v) == 0) {
+            insertions[edge_idx].push_back(v);
+            any_inserted = true;
+        }
+    };
+
+    if (n <= 32) {
+        for (size_t k = 0; k < n; ++k)
+            for (size_t i = 0; i < n; ++i)
+                test_vertex_against_edge(i, pts[k]);
+    } else {
+        std::vector<C2BBoxNode> edge_nodes;
+        edge_nodes.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            const Point &a = pts[i];
+            const Point &b = pts[(i + 1 == n) ? 0 : i + 1];
+            edge_nodes.emplace_back(i, C2::Rect64(std::min(a.x(), b.x()), std::min(a.y(), b.y()), std::max(a.x(), b.x()), std::max(a.y(), b.y())));
+        }
+        AABBTreeIndirect::Tree<2, coord_t> edge_tree;
+        edge_tree.build(std::move(edge_nodes));
+        for (size_t k = 0; k < n; ++k) {
+            const Point &v = pts[k];
+            AABBTreeIndirect::traverse(
+                edge_tree,
+                [&v](const AABBTreeIndirect::Tree<2, coord_t>::Node &node) { return node.bbox.contains(v); },
+                [&](const AABBTreeIndirect::Tree<2, coord_t>::Node &node) {
+                    test_vertex_against_edge(node.idx, v);
+                    return true;
+                });
+        }
+    }
+
+    if (! any_inserted)
+        return false;
+
+    Points out;
+    out.reserve(n + 8);
+    for (size_t i = 0; i < n; ++i) {
+        const Point &a = pts[i];
+        out.push_back(a);
+        if (! insertions[i].empty()) {
+            auto &ins = insertions[i];
+            auto  dist_along = [&a](const Point &p) -> uint64_t {
+                const uint64_t dx = uint64_t(p.x() >= a.x() ? p.x() - a.x() : a.x() - p.x());
+                const uint64_t dy = uint64_t(p.y() >= a.y() ? p.y() - a.y() : a.y() - p.y());
+                return dx + dy;
+            };
+            std::sort(ins.begin(), ins.end(), [&dist_along](const Point &u, const Point &v) {
+                return dist_along(u) < dist_along(v);
+            });
+            ins.erase(std::unique(ins.begin(), ins.end()), ins.end());
+            out.insert(out.end(), ins.begin(), ins.end());
+        }
+    }
+    pts = std::move(out);
+    return true;
+}
+
+// Split a contour at every repeated vertex or vertex-on-edge touch into strictly simple loops (Clipper1 StrictlySimple semantics).
+static void split_self_touching_polygon(Points pts, Polygons &out)
 {
     if (pts.size() < 3)
         return;
+    insert_touching_vertices(pts);
     if (! has_repeated_vertex(pts)) {
         if (Polygon::area(pts) != 0.)
-            out.emplace_back(pts);
+            out.emplace_back(std::move(pts));
         return;
     }
 
@@ -1502,75 +2345,76 @@ static void split_self_touching_polygon(const Points &pts, Polygons &out)
     emit_loop(std::move(stack));
 }
 
-// Exact point-in-polygon for doubled coordinates (pt2 = 2*P tested against 2*path): 1 inside, 0 outside, -1 boundary.
-static int point_in_polygon_doubled(const Vec2crd &pt2, const Points &path)
+// Exact point-in-polygon for doubled 64-bit coordinates (pt2 = 2*P tested against 2*path): 1 inside, 0 outside, -1 on boundary.
+static int point_in_polygon_doubled(int64_t pt2x, int64_t pt2y, const Points &path)
 {
     const size_t cnt = path.size();
     if (cnt < 3)
         return 0;
     int     result = 0;
-    Vec2crd ip(path[0].x() * 2, path[0].y() * 2);
+    int64_t ipx    = int64_t(path[0].x()) * 2;
+    int64_t ipy    = int64_t(path[0].y()) * 2;
     for (size_t i = 1; i <= cnt; ++i) {
-        const Point  &raw_next = (i == cnt) ? path[0] : path[i];
-        const Vec2crd ip_next(raw_next.x() * 2, raw_next.y() * 2);
-        if (ip_next.y() == pt2.y() &&
-            (ip_next.x() == pt2.x() || (ip.y() == pt2.y() && ((ip_next.x() > pt2.x()) == (ip.x() < pt2.x())))))
+        const Point  &raw_next  = (i == cnt) ? path[0] : path[i];
+        const int64_t ip_next_x = int64_t(raw_next.x()) * 2;
+        const int64_t ip_next_y = int64_t(raw_next.y()) * 2;
+        if (ip_next_y == pt2y &&
+            (ip_next_x == pt2x || (ipy == pt2y && ((ip_next_x > pt2x) == (ipx < pt2x)))))
             return -1;
-        if ((ip.y() < pt2.y()) != (ip_next.y() < pt2.y())) {
-            if (ip.x() >= pt2.x()) {
-                if (ip_next.x() > pt2.x())
+        if ((ipy < pt2y) != (ip_next_y < pt2y)) {
+            if (ipx >= pt2x) {
+                if (ip_next_x > pt2x)
                     result = 1 - result;
                 else {
-                    const int sign = int128::orient(pt2, ip, ip_next);
+                    const int sign = Int128::sign_determinant_2x2(ipx - pt2x, ipy - pt2y, ip_next_x - pt2x, ip_next_y - pt2y);
                     if (! sign)
                         return -1;
-                    if ((sign > 0) == (ip_next.y() > ip.y()))
+                    if ((sign > 0) == (ip_next_y > ipy))
                         result = 1 - result;
                 }
-            } else if (ip_next.x() > pt2.x()) {
-                const int sign = int128::orient(pt2, ip, ip_next);
+            } else if (ip_next_x > pt2x) {
+                const int sign = Int128::sign_determinant_2x2(ipx - pt2x, ipy - pt2y, ip_next_x - pt2x, ip_next_y - pt2y);
                 if (! sign)
                     return -1;
-                if ((sign > 0) == (ip_next.y() > ip.y()))
+                if ((sign > 0) == (ip_next_y > ipy))
                     result = 1 - result;
             }
         }
-        ip = ip_next;
+        ipx = ip_next_x;
+        ipy = ip_next_y;
     }
     return result;
 }
 
 static bool simple_ring_encloses(const Polygon &outer, const Polygon &inner)
 {
-    // 1. Try any vertex of `inner` not lying on `outer`'s boundary.
+    constexpr int64_t kTol  = 3;
+    constexpr double  kTol2 = double(kTol * kTol);
+    // 1. Try any vertex of `inner` cleanly away from `outer`'s boundary.
     for (const Point &pt : inner.points) {
-        const Vec2crd pt2(pt.x() * 2, pt.y() * 2);
-        const int     pip = point_in_polygon_doubled(pt2, outer.points);
-        if (pip != -1)
+        const int pip = point_in_polygon_doubled(int64_t(pt.x()) * 2, int64_t(pt.y()) * 2, outer.points);
+        if (pip != -1 && ! point_near_boundary_templ(pt, outer.points, kTol, kTol2))
             return pip == 1;
     }
-    // 2. All vertices of `inner` lie on `outer`'s boundary: test exact doubled-coordinate edge midpoints.
+    // 2. Try a scanline strict interior point of `inner` (avoids near-boundary vertex rounding ambiguity).
+    double mx = 0., my = 0.;
+    if (find_interior_point_templ(inner.points, mx, my))
+        return point_in_path_double_templ(mx, my, outer.points);
+    // 3. Fallback: exact doubled-coordinate edge midpoints.
     const size_t n = inner.points.size();
     for (size_t i = 0; i < n; ++i) {
-        const Point  &a    = inner.points[i];
-        const Point  &b    = inner.points[(i + 1 == n) ? 0 : i + 1];
-        const Vec2crd mid2 = Vec2crd(a.x() + b.x(), a.y() + b.y());
-        const int     pip  = point_in_polygon_doubled(mid2, outer.points);
+        const Point &a   = inner.points[i];
+        const Point &b   = inner.points[(i + 1 == n) ? 0 : i + 1];
+        const int    pip = point_in_polygon_doubled(int64_t(a.x()) + int64_t(b.x()), int64_t(a.y()) + int64_t(b.y()), outer.points);
         if (pip != -1)
             return pip == 1;
     }
-    // 3. Fallback: scanline strict interior point.
-    C2::Path64 c2_outer, c2_inner;
-    c2_outer.reserve(outer.points.size());
-    for (const Point &pt : outer.points)
-        c2_outer.emplace_back(pt.x(), pt.y());
-    c2_inner.reserve(inner.points.size());
+    // 4. Last resort: majority of inner vertices inside outer.
+    size_t inside_cnt = 0;
     for (const Point &pt : inner.points)
-        c2_inner.emplace_back(pt.x(), pt.y());
-    double mx = 0., my = 0.;
-    if (c2_find_interior_point(c2_inner, mx, my))
-        return c2_point_in_path_double(mx, my, c2_outer);
-    return false;
+        if (point_in_polygon_doubled(int64_t(pt.x()) * 2, int64_t(pt.y()) * 2, outer.points) == 1)
+            ++inside_cnt;
+    return inside_cnt * 2 > inner.points.size();
 }
 
 Polygons simplify_polygons(const Polygons &subject)
@@ -1593,10 +2437,10 @@ ExPolygons simplify_polygons_ex(const Polygons &subject)
     out.reserve(raw.size());
 
     for (ExPolygon &ex : raw) {
-        bool needs_split = has_repeated_vertex(ex.contour.points);
+        bool needs_split = has_repeated_vertex(ex.contour.points) || insert_touching_vertices(ex.contour.points);
         if (! needs_split) {
-            for (const Polygon &h : ex.holes)
-                if (has_repeated_vertex(h.points)) {
+            for (Polygon &h : ex.holes)
+                if (has_repeated_vertex(h.points) || insert_touching_vertices(h.points)) {
                     needs_split = true;
                     break;
                 }
@@ -1608,9 +2452,9 @@ ExPolygons simplify_polygons_ex(const Polygons &subject)
 
         // Split only this ExPolygon's contours and re-nest its holes locally.
         Polygons split_rings;
-        split_self_touching_polygon(ex.contour.points, split_rings);
-        for (const Polygon &h : ex.holes)
-            split_self_touching_polygon(h.points, split_rings);
+        split_self_touching_polygon(std::move(ex.contour.points), split_rings);
+        for (Polygon &h : ex.holes)
+            split_self_touching_polygon(std::move(h.points), split_rings);
 
         struct SimpleRing
         {
@@ -1641,18 +2485,24 @@ ExPolygons simplify_polygons_ex(const Polygons &subject)
         out.resize(base_out + ccw_indices.size());
         // Cache contour copies/references before moving; keep rings[idx].poly alive until hole assignment finishes.
         if (! cw_indices.empty() && ! ccw_indices.empty()) {
+            constexpr coord_t kPad = 3;
+            std::vector<size_t> unmatched_holes;
             if (ccw_indices.size() == 1) {
-                const size_t c_ring = ccw_indices.front();
-                for (size_t h_ring : cw_indices)
-                    if (rings[c_ring].bbox.contains(rings[h_ring].bbox) &&
+                const size_t      c_ring     = ccw_indices.front();
+                const BoundingBox padded_box = rings[c_ring].bbox.inflated(kPad);
+                for (size_t h_ring : cw_indices) {
+                    if (padded_box.contains(rings[h_ring].bbox) &&
                         simple_ring_encloses(rings[c_ring].poly, rings[h_ring].poly))
                         out[base_out].holes.emplace_back(std::move(rings[h_ring].poly));
+                    else
+                        unmatched_holes.push_back(h_ring);
+                }
             } else {
                 std::vector<C2BBoxNode> bbox_nodes;
                 bbox_nodes.reserve(ccw_indices.size());
                 for (size_t k = 0; k < ccw_indices.size(); ++k) {
                     const BoundingBox &bb = rings[ccw_indices[k]].bbox;
-                    bbox_nodes.emplace_back(k, C2::Rect64(bb.min.x(), bb.min.y(), bb.max.x(), bb.max.y()));
+                    bbox_nodes.emplace_back(k, C2::Rect64(bb.min.x(), bb.min.y(), bb.max.x(), bb.max.y()), kPad);
                 }
                 AABBTreeIndirect::Tree<2, coord_t> aabb;
                 aabb.build(std::move(bbox_nodes));
@@ -1674,8 +2524,37 @@ ExPolygons simplify_polygons_ex(const Polygons &subject)
                     std::sort(candidates.begin(), candidates.end(), [&](size_t a, size_t b) {
                         return rings[ccw_indices[a]].area < rings[ccw_indices[b]].area;
                     });
+                    bool assigned = false;
                     for (size_t k : candidates) {
                         if (simple_ring_encloses(rings[ccw_indices[k]].poly, rings[h_ring].poly)) {
+                            out[base_out + k].holes.emplace_back(std::move(rings[h_ring].poly));
+                            assigned = true;
+                            break;
+                        }
+                    }
+                    if (! assigned)
+                        unmatched_holes.push_back(h_ring);
+                }
+            }
+
+            if (! unmatched_holes.empty()) {
+                std::vector<size_t> ccw_by_area(ccw_indices.size());
+                std::iota(ccw_by_area.begin(), ccw_by_area.end(), size_t(0));
+                std::sort(ccw_by_area.begin(), ccw_by_area.end(), [&](size_t a, size_t b) {
+                    return rings[ccw_indices[a]].area < rings[ccw_indices[b]].area;
+                });
+                for (size_t h_ring : unmatched_holes) {
+                    const BoundingBox padded_h = rings[h_ring].bbox.inflated(kPad);
+                    const double      h_abs    = -rings[h_ring].area;
+                    for (size_t k : ccw_by_area) {
+                        const SimpleRing &cr = rings[ccw_indices[k]];
+                        if (cr.area <= h_abs || ! cr.bbox.inflated(kPad).overlap(padded_h))
+                            continue;
+                        const ExPolygons diff_res = diff_ex(Polygons{ cr.poly }, Polygons{ rings[h_ring].poly });
+                        double           diff_area = 0.;
+                        for (const ExPolygon &d : diff_res)
+                            diff_area += d.area();
+                        if (diff_area < cr.area - 0.25 * h_abs) {
                             out[base_out + k].holes.emplace_back(std::move(rings[h_ring].poly));
                             break;
                         }
@@ -1886,7 +2765,7 @@ static void variable_offset(const ExPolygon &expoly, const std::vector<std::vect
 	C2::Paths64 contours = unite(mittered_offset_path_scaled(expoly.contour.points, deltas.front(), miter_limit), C2::FillRule::Positive);
 #ifndef NDEBUG
 	for (auto &c : contours)
-		assert(C2::Area(c) > 0.);
+		assert(c2_exact_area_sign(c) > 0);
 #endif /* NDEBUG */
 
 	// 2) Offset the holes one by one, collect the results.
@@ -1896,7 +2775,7 @@ static void variable_offset(const ExPolygon &expoly, const std::vector<std::vect
 		append(holes, unite(mittered_offset_path_scaled(hole.points, deltas[1 + &hole - expoly.holes.data()], miter_limit), C2::FillRule::Negative));
 #ifndef NDEBUG
 	for (auto &c : holes)
-		assert(C2::Area(c) > 0.);
+		assert(c2_exact_area_sign(c) > 0);
 #endif /* NDEBUG */
 
 	// 3) Subtract holes from the contours.

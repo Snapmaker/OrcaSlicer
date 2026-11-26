@@ -5,6 +5,7 @@
 #include <numeric>
 
 #include "AABBTreeIndirect.hpp"
+#include "Int128.hpp"
 #include <clipper2/clipper2_z.hpp>
 
 namespace Slic3r {
@@ -41,10 +42,16 @@ double area(const ZPath &path)
     const size_t size = path.size();
     if (size < 3)
         return 0.;
-    double a = 0.;
-    for (size_t i = 0, j = size - 1; i < size; j = i ++)
-        a += (double(path[j].x()) + path[i].x()) * (double(path[j].y()) - path[i].y());
-    return -a * 0.5;
+    Int128        acc(0);
+    const ZPoint &p0 = path[0];
+    for (size_t i = 1; i + 1 < size; ++i) {
+        const int64_t dx1 = int64_t(path[i].x()) - int64_t(p0.x());
+        const int64_t dy1 = int64_t(path[i].y()) - int64_t(p0.y());
+        const int64_t dx2 = int64_t(path[i + 1].x()) - int64_t(p0.x());
+        const int64_t dy2 = int64_t(path[i + 1].y()) - int64_t(p0.y());
+        acc += Int128::multiply(dx1, dy2) - Int128::multiply(dy1, dx2);
+    }
+    return 0.5 * double(acc);
 }
 
 static C2::ClipType to_c2(ClipType clip_type)
@@ -270,9 +277,26 @@ bool c2z_path_encloses(const C2::Path64 &outer, const C2::Path64 &inner)
     return inside_cnt * 2 > inner.size();
 }
 
+double c2z_exact_area(const C2::Path64 &path)
+{
+    const size_t n = path.size();
+    if (n < 3)
+        return 0.;
+    Int128             acc(0);
+    const C2::Point64 &p0 = path[0];
+    for (size_t i = 1; i + 1 < n; ++i) {
+        const int64_t dx1 = path[i].x - p0.x;
+        const int64_t dy1 = path[i].y - p0.y;
+        const int64_t dx2 = path[i + 1].x - p0.x;
+        const int64_t dy2 = path[i + 1].y - p0.y;
+        acc += Int128::multiply(dx1, dy2) - Int128::multiply(dy1, dx2);
+    }
+    return 0.5 * double(acc);
+}
+
 bool c2z_polytree_is_well_nested(const C2::PolyPath64 &node, unsigned depth)
 {
-    const double a = C2::Area(node.Polygon());
+    const double a = c2z_exact_area(node.Polygon());
     if ((depth % 2 == 0) ? (a <= 0.) : (a >= 0.))
         return false;
     for (const auto &child : node)
@@ -301,7 +325,7 @@ void c2z_collect_polytree_paths(const C2::PolyPath64 &node, std::vector<C2ZRebui
 {
     const C2::Path64 &poly = node.Polygon();
     if (poly.size() >= 3) {
-        const double a = C2::Area(poly);
+        const double a = c2z_exact_area(poly);
         if (a != 0.) {
             C2ZRebuiltNode item;
             item.path   = &poly;

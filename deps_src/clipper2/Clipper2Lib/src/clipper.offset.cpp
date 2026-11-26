@@ -37,22 +37,87 @@ const double arc_const = 0.002; // <-- 1/500
 // Miscellaneous methods
 //------------------------------------------------------------------------------
 
+// Orca: translation-invariant 128-bit area sign using path[0] as local origin so large translations never cancel to zero.
+static int ExactAreaSign(const Path64& path)
+{
+	const size_t cnt = path.size();
+	if (cnt < 3) return 0;
+	const Point64& p0 = path[0];
+#if (defined(__clang__) || defined(__GNUC__)) && UINTPTR_MAX >= UINT64_MAX
+	__int128_t acc = 0;
+	for (size_t i = 1; i + 1 < cnt; ++i)
+	{
+		const __int128_t dx1 = static_cast<__int128_t>(path[i].x - p0.x);
+		const __int128_t dy1 = static_cast<__int128_t>(path[i].y - p0.y);
+		const __int128_t dx2 = static_cast<__int128_t>(path[i + 1].x - p0.x);
+		const __int128_t dy2 = static_cast<__int128_t>(path[i + 1].y - p0.y);
+		acc += dx1 * dy2 - dy1 * dx2;
+	}
+	return (acc > 0) - (acc < 0);
+#else
+	int64_t acc_hi = 0;
+	uint64_t acc_lo = 0;
+	auto add_prod = [&acc_hi, &acc_lo](int64_t a, int64_t b, bool subtract) {
+		if (a == 0 || b == 0) return;
+		const bool neg = ((a < 0) != (b < 0)) != subtract;
+		const uint64_t ua = (a < 0) ? (uint64_t(0) - static_cast<uint64_t>(a)) : static_cast<uint64_t>(a);
+		const uint64_t ub = (b < 0) ? (uint64_t(0) - static_cast<uint64_t>(b)) : static_cast<uint64_t>(b);
+		const UInt128Struct prod = MultiplyUInt64(ua, ub);
+		uint64_t lo = prod.lo;
+		int64_t hi = static_cast<int64_t>(prod.hi);
+		if (neg) {
+			if (lo == 0) hi = -hi;
+			else { lo = ~lo + 1; hi = ~hi; }
+		}
+		acc_hi += hi;
+		acc_lo += lo;
+		if (acc_lo < lo) ++acc_hi;
+	};
+	for (size_t i = 1; i + 1 < cnt; ++i)
+	{
+		const int64_t dx1 = path[i].x - p0.x;
+		const int64_t dy1 = path[i].y - p0.y;
+		const int64_t dx2 = path[i + 1].x - p0.x;
+		const int64_t dy2 = path[i + 1].y - p0.y;
+		add_prod(dx1, dy2, false);
+		add_prod(dy1, dx2, true);
+	}
+	if (acc_hi != 0) return (acc_hi > 0) ? 1 : -1;
+	return (acc_lo > 0) ? 1 : 0;
+#endif
+}
+
+// Orca: true if path has < 3 distinct points or all vertices are collinear.
+static bool IsCollinearClosedPath(const Path64& path)
+{
+	if (path.size() < 3) return true;
+	const Point64& p0 = path[0];
+	size_t i = 1;
+	while (i < path.size() && path[i] == p0) ++i;
+	if (i >= path.size()) return true;
+	const Point64& p1 = path[i];
+	for (++i; i < path.size(); ++i)
+		if (CrossProductSign(p0, p1, path[i]) != 0)
+			return false;
+	return true;
+}
+
 void GetLowestClosedPathInfo(const Paths64& paths, std::optional<size_t>& idx, bool& is_neg_area)
 {
 	idx.reset();
 	Point64 botPt = Point64(INT64_MAX, INT64_MIN);
 	for (size_t i = 0; i < paths.size(); ++i)
 	{
-		double a = MAX_DBL;
+		int area_sign = 2;
 		for (const Point64& pt : paths[i])
 		{
 			if ((pt.y < botPt.y) ||
 				((pt.y == botPt.y) && (pt.x >= botPt.x))) continue;
-			if (a == MAX_DBL) 
+			if (area_sign == 2)
 			{
-				a = Area(paths[i]);
-				if (a == 0) break; // invalid closed path, so break from inner loop
-				is_neg_area = a < 0;
+				area_sign = ExactAreaSign(paths[i]);
+				if (area_sign == 0) break; // invalid closed path, so break from inner loop
+				is_neg_area = area_sign < 0;
 			}
       idx = i;
 			botPt.x = pt.x;
@@ -481,9 +546,18 @@ void ClipperOffset::DoGroupOffset(Group& group)
 {
 	if (group.end_type == EndType::Polygon)
 	{
-		// a straight path (2 points) can now also be 'polygon' offset
-		// where the ends will be treated as (180 deg.) joins
-        if (!group.lowest_path_idx.has_value()) delta_ = std::abs(delta_);
+		// Orca: only flip negative delta for degenerate/collinear paths, not self-intersecting
+		// zero-area closed polygons (e.g. bowties), so negative offsets shrink their positive-winding lobes.
+        if (!group.lowest_path_idx.has_value()) {
+			bool all_collinear = true;
+			for (const Path64& p : group.paths_in) {
+				if (!IsCollinearClosedPath(p)) {
+					all_collinear = false;
+					break;
+				}
+			}
+			if (all_collinear) delta_ = std::abs(delta_);
+		}
 		group_delta_ = (group.is_reversed) ? -delta_ : delta_;
 	}
 	else

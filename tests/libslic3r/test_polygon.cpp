@@ -2,6 +2,7 @@
 
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Polygon.hpp"
+#include "libslic3r/ClipperZUtils.hpp"
 
 using namespace Slic3r;
 
@@ -270,4 +271,42 @@ TEST_CASE("point_in_polygon handles large coordinates without int64 overflow", "
         CHECK(contains(with_hole, { R - 1, R - 1 }, true));
         CHECK(contains(with_hole, { R - 1, R - 1 }, false));
     }
+}
+
+TEST_CASE("Polygon area and winding are invariant under large coordinates (1e9)", "[Polygon]")
+{
+    const coord_t offset_xy = 1000000000;
+    auto make_sq = [&](coord_t size, bool cw) {
+        Polygon p({ { offset_xy, offset_xy },
+                    { offset_xy + size, offset_xy },
+                    { offset_xy + size, offset_xy + size },
+                    { offset_xy, offset_xy + size } });
+        if (cw)
+            p.reverse();
+        return p;
+    };
+
+    const Polygon ccw10 = make_sq(10, false);
+    const Polygon cw10  = make_sq(10, true);
+    const Polygon ccw2  = make_sq(2, false);
+    const Polygon cw2   = make_sq(2, true);
+
+    CHECK(ccw10.area() == 100.);
+    CHECK(ccw10.is_counter_clockwise());
+    CHECK_FALSE(ccw10.is_clockwise());
+
+    CHECK(cw10.area() == -100.);
+    CHECK_FALSE(cw10.is_counter_clockwise());
+    CHECK(cw10.is_clockwise());
+
+    CHECK(ccw2.area() == 4.);
+    CHECK(ccw2.is_counter_clockwise());
+
+    CHECK(cw2.area() == -4.);
+    CHECK(cw2.is_clockwise());
+
+    ClipperZUtils::ZPath z_ccw2 = ClipperZUtils::to_zpath<false>(ccw2.points, 0);
+    ClipperZUtils::ZPath z_cw2  = ClipperZUtils::to_zpath<false>(cw2.points, 0);
+    CHECK(ClipperZUtils::area(z_ccw2) == 4.);
+    CHECK(ClipperZUtils::area(z_cw2) == -4.);
 }

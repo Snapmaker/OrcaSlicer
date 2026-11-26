@@ -32,7 +32,7 @@ set(CLIPPER2_SRC
 )
 
 # 2d version of Clipper2
-add_library(Clipper2 ${CLIPPER2_INC} ${CLIPPER2_SRC})
+add_library(Clipper2 STATIC ${CLIPPER2_INC} ${CLIPPER2_SRC})
 
 target_include_directories(Clipper2
   PUBLIC Clipper2Lib/include

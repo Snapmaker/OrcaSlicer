@@ -334,6 +334,43 @@ namespace ClipperUtils {
     [[nodiscard]] Polygons clip_clipper_polygons_with_subject_bbox(const ExPolygon &src, const BoundingBox &bbox, const bool get_entire_polygons = false);
     [[nodiscard]] Polygons clip_clipper_polygons_with_subject_bbox(const ExPolygons &src, const BoundingBox &bbox, const bool get_entire_polygons = false);
 
+    enum class OpenClipBoundaryRule {
+        Inclusive,
+        Clipper1ExcludeTop
+    };
+
+    struct OpenClipInterval {
+        double t0     = 0.;
+        double t1     = 1.;
+        Point  p0;
+        Point  p1;
+        bool   inside = false;
+    };
+
+    // Spatial edge index for exact per-segment open-path clipping (preserving source vertices and paired roles).
+    class ClipEdgesIndex {
+    public:
+        ClipEdgesIndex();
+        ~ClipEdgesIndex();
+        ClipEdgesIndex(ClipEdgesIndex &&) noexcept;
+        ClipEdgesIndex& operator=(ClipEdgesIndex &&) noexcept;
+        explicit ClipEdgesIndex(const Polygons &clip);
+        explicit ClipEdgesIndex(const ExPolygons &clip);
+
+        void build(const Polygons &clip);
+        void build(const ExPolygons &clip);
+        bool empty() const;
+
+        void clip_segment(const Point &a, const Point &b, OpenClipBoundaryRule rule, std::vector<OpenClipInterval> &out) const;
+
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> m_impl;
+    };
+
+    // Partition a closed polygon into supported (inside / non-top boundary) and overhang (outside / top boundary) polylines in one pass.
+    void clip_closed_polygon_split(const Polygon &subject, const Polygons &clip, Polylines &inside_out, Polylines &outside_out);
+
     }
 
 // offset Polygons

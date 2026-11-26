@@ -2470,6 +2470,7 @@ int GUI_App::OnExit()
     m_uninstall_watcher_registration.stop();
 #endif
     WidgetInspector::disable();
+    GUI::unregister_modal_dialog_hook();
 
     ::Slic3r::SnapLog::v1::SnapLogClient::instance().shutdown();
 
@@ -2634,6 +2635,8 @@ bool GUI_App::on_init_inner()
     CBaseException::set_log_folder(data_dir());
 #endif
 
+    GUI::register_modal_dialog_hook();
+
 #ifdef __WINDOWS__
     m_session_end_reset_timer.SetOwner(this);
     Bind(wxEVT_TIMER, [this](wxTimerEvent&) { reset_session_end(); }, m_session_end_reset_timer.GetId());
@@ -2658,8 +2661,7 @@ bool GUI_App::on_init_inner()
                 return;
             }
         }
-        for (auto d : dialogStack)
-            d->EndModal(wxID_ABORT);
+        GUI::abort_all_modal_dialogs();
     });
 #endif
 
@@ -2925,14 +2927,16 @@ bool GUI_App::on_init_inner()
                 wxString      description_text = wxString::FromUTF8(this->app_config->get("upgrade", "description"));
                 std::string   download_url = this->app_config->get("upgrade", "url");
                 wxString tips = wxString::Format(_L("Click to download new version in default browser: %s"), version_str);
-                DownloadDialog dialog(this->mainframe,
-                    tips,
-                    _L("The Snapmaker Orca needs an upgrade"),
-                    false,
-                    wxCENTER | wxICON_INFORMATION);
-                dialog.SetExtendedMessage(description_text);
-
-                int result = dialog.ShowModal();
+                int result = wxID_CANCEL;
+                {
+                    DownloadDialog dialog(this->mainframe,
+                        tips,
+                        _L("The Snapmaker Orca needs an upgrade"),
+                        false,
+                        wxCENTER | wxICON_INFORMATION);
+                    dialog.SetExtendedMessage(description_text);
+                    result = dialog.ShowModal();
+                }
                 switch (result)
                 {
                  case wxID_YES:

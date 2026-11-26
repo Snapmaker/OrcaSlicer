@@ -499,30 +499,92 @@ DPIFrame(NULL, wxID_ANY, "", wxDefaultPosition, wxDefaultSize, BORDERLESS_FRAME_
     update_title();
 
     // declare events
+    m_forced_close_timer.SetOwner(this);
+    Bind(wxEVT_TIMER, [this](wxTimerEvent&) {
+        if (!IsBeingDeleted())
+            this->Close(true);
+    }, m_forced_close_timer.GetId());
+
     Bind(wxEVT_CLOSE_WINDOW, [this](wxCloseEvent& event) {
-        BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< ": mainframe received close_widow event";
+        if (!m_waiting_modal_close)
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__<< ": mainframe received close_widow event";
+
+        // Never schedule MainFrame for destruction while a modal dialog (often
+        // stack-allocated with MainFrame/Plater as parent) is still running or
+        // unwinding ShowModal(), or while this close handler is re-entering.
+        // Otherwise wxPendingDelete deletes MainFrame during the modal loop's
+        // ProcessIdle(), and DestroyChildren() calls delete on the stack dialog
+        // (Sentry SNAPMAKER_ORCA-81M).
+        if (m_in_close_handler || any_modal_dialog_showing()) {
+            if (wxGetApp().in_session_end()) {
+                const bool aborted = GUI::abort_top_modal_dialog();
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                    << ": [MODAL-CLOSE] skipping frame teardown during session end while modal dialog is active (aborted="
+                    << aborted << ")";
+                if (event.CanVeto())
+                    event.Veto();
+                return;
+            }
+            if (event.CanVeto()) {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                    << ": [MODAL-CLOSE] close vetoed, task still active ("
+                    << (m_in_close_handler ? "close handler re-entry" : "modal dialog") << ")";
+                if (wxDialog* dlg = GUI::top_active_modal_dialog()) {
+#ifndef __WXOSX__
+                    dlg->Raise();
+#endif
+                    dlg->SetFocus();
+                }
+                event.Veto();
+                return;
+            }
+            // Forced close (!CanVeto): end only the innermost abortable wxDialog
+            // and retry via a one-shot wxTimer (native timer message, not a wx
+            // pending event drained inside wxEventLoopManual::DoRun() before
+            // ShowModal() returns). When the topmost modal is a native OS dialog
+            // that cannot be ended programmatically, retry slowly without log spam.
+            if (!m_forced_close_timer.IsRunning()) {
+                if (GUI::abort_top_modal_dialog()) {
+                    m_waiting_modal_close = false;
+                    BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                        << ": [MODAL-CLOSE] aborting top modal dialog before deferred forced close";
+                    m_forced_close_timer.StartOnce(10);
+                } else {
+                    if (!m_waiting_modal_close) {
+                        m_waiting_modal_close = true;
+                        BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                            << ": [MODAL-CLOSE] waiting for active modal dialog before deferred forced close";
+                    }
+                    m_forced_close_timer.StartOnce(200);
+                }
+            }
+            return;
+        }
+
+        m_forced_close_timer.Stop();
+        if (m_waiting_modal_close) {
+            m_waiting_modal_close = false;
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__
+                << ": [MODAL-CLOSE] modal dialogs cleared, proceeding with deferred close";
+        }
+
+        m_in_close_handler = true;
+        ScopeGuard close_guard([this]() { m_in_close_handler = false; });
+
         // Session end: no interaction, no teardown - wx deletes all windows
         // under us (Sentry SNAPMAKER_ORCA-1H6, see GUI_App QUERY_END_SESSION).
         if (wxGetApp().in_session_end()) {
             event.Skip();
             return;
         }
-        // A modal dialog or gizmo task is still active: destroying the main
-        // frame now would crash the nested modal loop.
-        if (event.CanVeto()) {
-            // Keep is_in_editing_mode() behind the CanVeto() check, matching
-            // the evaluation order of the original gizmo-only guard: its
-            // BrimEars branch calls update_model_object(), which must not
-            // run for non-vetoable close events.
-            const bool gizmo_editing = m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true);
-            if (gizmo_editing || any_modal_dialog_showing()) {
-                // prevents to open the save dirty project dialog
-                event.Veto();
-                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
-                    << ": [MODAL-CLOSE] close vetoed, task still active ("
-                    << (gizmo_editing ? "gizmo editing" : "modal dialog") << ")";
-                return;
-            }
+        // Keep is_in_editing_mode() behind the CanVeto() check: its BrimEars
+        // branch calls update_model_object(), which must not run for
+        // non-vetoable close events.
+        if (event.CanVeto() && m_plater->get_view3D_canvas3D()->get_gizmos_manager().is_in_editing_mode(true)) {
+            // prevents to open the save dirty project dialog
+            event.Veto();
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": [MODAL-CLOSE] close vetoed, task still active (gizmo editing)";
+            return;
         }
 
         //BBS:

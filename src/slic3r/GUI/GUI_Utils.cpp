@@ -3,6 +3,8 @@
 #include "GUI_App.hpp"
 
 #include <algorithm>
+#include <cassert>
+#include <vector>
 #include <boost/lexical_cast.hpp>
 #include <boost/format.hpp>
 
@@ -12,6 +14,8 @@
     #include <wx/msw/registry.h>
 #endif // _WIN32
 
+#include <wx/modalhook.h>
+#include <wx/thread.h>
 #include <wx/toplevel.h>
 #include <wx/sizer.h>
 #include <wx/checkbox.h>
@@ -501,33 +505,131 @@ bool generate_image(const std::string &filename, wxImage &image, wxSize img_size
 }
 
 
-void abort_all_modal_dialogs()
+namespace {
+
+class ModalDialogTracker final : public wxModalDialogHook
 {
-    for (wxDialog* dlg : dialogStack) {
-        if (dlg == nullptr)
-            continue;
-        // Skip stale entries: a dialog can already be deleted while its
-        // ShowModal frame is still on the stack.
-        bool alive = false;
-        for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
-            if (node->GetData() == dlg) {
-                alive = true;
+public:
+    static ModalDialogTracker& instance()
+    {
+        static ModalDialogTracker tracker;
+        return tracker;
+    }
+
+    void ensure_registered()
+    {
+        if (!m_registered) {
+            Register();
+            m_registered = true;
+        }
+    }
+
+    void ensure_unregistered()
+    {
+        if (m_registered) {
+            Unregister();
+            m_registered = false;
+        }
+        m_stack.clear();
+    }
+
+    int Enter(wxDialog* dialog) override
+    {
+        if (dialog != nullptr)
+            m_stack.push_back(dialog);
+        return wxID_NONE;
+    }
+
+    void Exit(wxDialog* dialog) override
+    {
+        for (auto it = m_stack.rbegin(); it != m_stack.rend(); ++it) {
+            if (*it == dialog) {
+                m_stack.erase(std::next(it).base());
                 break;
             }
         }
-        if (alive && dlg->IsModal())
-            dlg->EndModal(wxID_ABORT);
     }
+
+    const std::vector<wxDialog*>& stack() const { return m_stack; }
+
+private:
+    bool                   m_registered{ false };
+    std::vector<wxDialog*> m_stack;
+};
+
+wxDialog* as_live_toplevel_dialog(const wxWindow* win)
+{
+    if (win == nullptr)
+        return nullptr;
+    for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
+        if (node->GetData() == win)
+            return dynamic_cast<wxDialog*>(node->GetData());
+    }
+    return nullptr;
+}
+
+} // namespace
+
+void register_modal_dialog_hook()
+{
+    assert(wxIsMainThread());
+    ModalDialogTracker::instance().ensure_registered();
+}
+
+void unregister_modal_dialog_hook()
+{
+    assert(wxIsMainThread());
+    ModalDialogTracker::instance().ensure_unregistered();
+}
+
+wxDialog* top_active_modal_dialog()
+{
+    assert(wxIsMainThread());
+    const auto& hooked = ModalDialogTracker::instance().stack();
+    if (!hooked.empty()) {
+        // Inspect only the innermost hooked modal. Native OS dialogs (e.g.
+        // wxMessageDialog / wxFileDialog) call WX_HOOK_MODAL_DIALOG() without
+        // registering in wxTopLevelWindows: return nullptr rather than falling
+        // through to an outer wxDialog beneath them.
+        return as_live_toplevel_dialog(hooked.back());
+    }
+    for (wxDialog* dlg : dialogStack) {
+        if (wxDialog* live = as_live_toplevel_dialog(dlg))
+            return live;
+    }
+    for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetLast(); node; node = node->GetPrevious()) {
+        wxDialog* dlg = dynamic_cast<wxDialog*>(node->GetData());
+        if (dlg != nullptr && dlg->IsModal())
+            return dlg;
+    }
+    return nullptr;
+}
+
+bool abort_top_modal_dialog()
+{
+    assert(wxIsMainThread());
+    wxDialog* dlg = top_active_modal_dialog();
+    if (dlg != nullptr && dlg->IsModal()) {
+        dlg->EndModal(wxID_CANCEL);
+        return true;
+    }
+    return false;
+}
+
+void abort_all_modal_dialogs()
+{
+    assert(wxIsMainThread());
+    // wxEventLoopBase::Exit() only exits the currently running innermost loop;
+    // calling EndModal() on outer dialogs hides them without exiting their loops.
+    (void)abort_top_modal_dialog();
 }
 
 bool any_modal_dialog_showing()
 {
-    for (wxWindowList::compatibility_iterator node = wxTopLevelWindows.GetFirst(); node; node = node->GetNext()) {
-        wxDialog* dlg = dynamic_cast<wxDialog*>(node->GetData());
-        if (dlg != nullptr && dlg->IsModal())
-            return true;
-    }
-    return false;
+    assert(wxIsMainThread());
+    if (!ModalDialogTracker::instance().stack().empty())
+        return true;
+    return top_active_modal_dialog() != nullptr;
 }
 
 void fit_in_display(wxTopLevelWindow& window, wxSize desired_size)

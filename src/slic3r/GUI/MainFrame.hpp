@@ -7,6 +7,7 @@
 #include <wx/settings.h>
 #include <wx/string.h>
 #include <wx/filehistory.h>
+#include <wx/timer.h>
 #ifdef __APPLE__
 #include <wx/taskbar.h>
 #endif // __APPLE__
@@ -418,6 +419,9 @@ public:
     mutable bool          m_slice_enable{ true };
     mutable bool          m_print_enable{ true };
     bool                  m_shutting_down{ false };
+    bool                  m_in_close_handler{ false };
+    bool                  m_waiting_modal_close{ false };
+    wxTimer               m_forced_close_timer;
     bool get_enable_slice_status();
     bool get_enable_print_status();
     //BBS

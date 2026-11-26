@@ -3135,8 +3135,7 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
                     t_buffer.model.instances.offsets = instances_offsets[i];
                 }
             }
-            const MultiVertexBuffer& v_multibuffer = vertices[i];
-            for (const VertexBuffer& v_buffer : v_multibuffer) {
+            for (VertexBuffer& v_buffer : vertices[i]) {
                 const size_t size_elements = v_buffer.size();
                 const size_t size_bytes = size_elements * sizeof(float);
                 const size_t vertices_count = size_elements / t_buffer.vertices.vertex_size_floats();
@@ -3152,6 +3151,8 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
                 glsafe(::glGenBuffers(1, &id));
                 glsafe(::glBindBuffer(GL_ARRAY_BUFFER, id));
                 glsafe(::glBufferData(GL_ARRAY_BUFFER, size_bytes, v_buffer.data(), GL_STATIC_DRAW));
+                // OpenGL has consumed the client data. Release each staging buffer as it is uploaded.
+                clear_and_shrink(v_buffer);
                 glsafe(::glBindBuffer(GL_ARRAY_BUFFER, 0));
 
                 t_buffer.vertices.vbos.push_back(static_cast<unsigned int>(id));
@@ -3287,8 +3288,7 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
     for (size_t i = 0; i < m_buffers.size(); ++i) {
         TBuffer& t_buffer = m_buffers[i];
         if (t_buffer.render_primitive_type != TBuffer::ERenderPrimitiveType::InstancedModel) {
-            const MultiIndexBuffer& i_multibuffer = indices[i];
-            for (const IndexBuffer& i_buffer : i_multibuffer) {
+            for (IndexBuffer& i_buffer : indices[i]) {
                 const size_t size_elements = i_buffer.size();
                 const size_t size_bytes = size_elements * sizeof(IBufferType);
 
@@ -3307,6 +3307,7 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
                 glsafe(::glGenBuffers(1, &ibuf.ibo));
                 glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibuf.ibo));
                 glsafe(::glBufferData(GL_ELEMENT_ARRAY_BUFFER, size_bytes, i_buffer.data(), GL_STATIC_DRAW));
+                clear_and_shrink(i_buffer);
                 glsafe(::glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0));
             }
         }
@@ -3323,13 +3324,11 @@ void GCodeViewer::load_toolpaths(const GCodeProcessorResult& gcode_result, const
     }
 
     auto update_segments_count = [&](EMoveType type, int64_t& count) {
-        unsigned int id = buffer_id(type);
-        const MultiIndexBuffer& buffers = indices[id];
+        const TBuffer& t_buffer = m_buffers[buffer_id(type)];
         int64_t indices_count = 0;
-        for (const IndexBuffer& buffer : buffers) {
-            indices_count += buffer.size();
+        for (const IBuffer& buffer : t_buffer.indices) {
+            indices_count += buffer.count;
         }
-        const TBuffer& t_buffer = m_buffers[id];
         if (t_buffer.render_primitive_type == TBuffer::ERenderPrimitiveType::Triangle)
             indices_count -= static_cast<int64_t>(12 * t_buffer.paths.size()); // remove the starting + ending caps = 4 triangles
 

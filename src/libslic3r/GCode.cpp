@@ -2557,6 +2557,18 @@ static BambuBedType to_bambu_bed_type(BedType type)
     return bambu_bed_type;
 }
 
+// Snapmaker 2.0 (A250/A350 family) touchscreen firmware only reads the Luban-style
+// `;thumbnail: data:image/png;base64,...` header key; it ignores the Prusa-style
+// `; thumbnail begin` block (see issue #971). Match the 2.0 models by printer_model;
+// the Artisan, J1 and U1 use different firmware/flows and are not covered here.
+static bool is_snapmaker_2_printer(const Print& print)
+{
+    const ConfigOptionString* model = print.full_print_config().option<ConfigOptionString>("printer_model");
+    if (model == nullptr)
+        return false;
+    return boost::starts_with(model->value, "Snapmaker A250") || boost::starts_with(model->value, "Snapmaker A350");
+}
+
 void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGeneratorCallback thumbnail_cb)
 {
     PROFILE_FUNC();
@@ -2729,10 +2741,19 @@ void GCode::_do_export(Print& print, GCodeOutputStream& file, ThumbnailsGenerato
                 throw Slic3r::ExportError(error_str);
             }
 
-            if (!thumbnails.empty())
+            if (!thumbnails.empty()) {
+                // Snapmaker 2.0 (A250/A350) touchscreen firmware only reads the Luban-style
+                // `;thumbnail:` header key and ignores the Prusa-style block below (#971),
+                // so emit the Luban header first for those printers. The standard block is
+                // still written: the app's own preprint dialog parses it (SSWCP.cpp).
+                if (is_snapmaker_2_printer(print))
+                    GCodeThumbnails::export_luban_thumbnail_to_file(
+                        thumbnail_cb, print.get_plate_index(), thumbnails, [&file](const char* sz) { file.write(sz); },
+                        [&print]() { print.throw_if_canceled(); });
                 GCodeThumbnails::export_thumbnails_to_file(
                     thumbnail_cb, print.get_plate_index(), thumbnails, [&file](const char* sz) { file.write(sz); },
                     [&print]() { print.throw_if_canceled(); });
+            }
         }
     }
 

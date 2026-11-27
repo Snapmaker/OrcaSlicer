@@ -2324,6 +2324,8 @@ void WipeTower2::toolchange_Change(WipeTowerWriter2& writer, const size_t new_to
     // This is where we want to place the custom gcodes. We will use placeholders for this.
     // These will be substituted by the actual gcodes when the gcode is generated.
     //writer.append("[filament_end_gcode]\n");
+    // Lift to the layer Z so change_filament_gcode can't hit taller printed parts.
+    writer.append("[restore_layer_z_before_toolchange]\n");
     writer.append("[change_filament_gcode]\n");
 
     if (m_is_mk4mmu3)

@@ -2654,8 +2654,8 @@ bool c2_is_clean_convex_offset_impl(const C2::Path64 &path, bool is_cw, float ef
         return true;
     }
 
-    std::array<C2::PointD, 16> norms_stack{};
-    std::array<C2::Point64, 16> shifted_stack{};
+    std::array<C2::PointD, 16> norms_stack;
+    std::array<C2::Point64, 16> shifted_stack;
     std::vector<C2::PointD> norms_heap;
     std::vector<C2::Point64> shifted_heap;
     C2::PointD *norms = norms_stack.data();

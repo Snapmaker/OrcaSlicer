@@ -2401,8 +2401,6 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
         m_left_to_right = !m_left_to_right;
     }
 
-    float retract_length = m_filpar[m_current_tool].retract_length;
-    float retract_speed  = m_filpar[m_current_tool].retract_speed * 60;
 
     // now the wiping itself:
     for (int i = 0; true; ++i) {
@@ -2428,13 +2426,15 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
                     if (abs(dx) < ironing_length)
                         ironing_length = abs(dx);
                     writer.extrude(writer.x() + ironing_length, writer.y(), wipe_speed);
-                    writer.retract(retract_length, retract_speed);
+                    // No retract around the ironing: a dry retract -> XY scrub -> unretract
+                    // drags PETG onto the nozzle and breaks the prime tower on PLA<->PETG
+                    // tool changes (GH #908). Ironing with the filament loaded lets the
+                    // small ooze deposit on the tower instead, as in 2.3.4.
                     writer.travel(writer.x() - 1.5 * ironing_length, writer.y(), 600.);
                     writer.travel(writer.x() + 0.5f * ironing_length, writer.y(), 240.);
                     Vec2f pos{writer.x() + 1.f * ironing_length, writer.y()};
                     writer.spiral_flat_ironing(writer.pos(), m_filpar[m_current_tool].flat_iron_area, m_perimeter_width, flat_iron_speed);
                     writer.travel(pos, wipe_speed);
-                    writer.retract(-retract_length, retract_speed);
                     writer.extrude(xr - m_perimeter_width / 2.f, writer.y(), wipe_speed);
                 }
                 else
@@ -2443,13 +2443,12 @@ void WipeTower2::toolchange_Wipe(WipeTowerWriter2& writer, const WipeTower::box_
                     if (abs(dx) < ironing_length)
                         ironing_length = abs(dx);
                     writer.extrude(writer.x() - ironing_length, writer.y(), wipe_speed);
-                    writer.retract(retract_length, retract_speed);
+                    // No retract around the ironing (GH #908, see above).
                     writer.travel(writer.x() + 1.5 * ironing_length, writer.y(), 600.);
                     writer.travel(writer.x() - 0.5f * ironing_length, writer.y(), 240.);
                     Vec2f pos{writer.x() - 1.0f * ironing_length, writer.y()};
                     writer.spiral_flat_ironing(writer.pos(), m_filpar[m_current_tool].flat_iron_area, m_perimeter_width, flat_iron_speed);
                     writer.travel(pos, wipe_speed);
-                    writer.retract(-retract_length, retract_speed);
                     writer.extrude(xl + m_perimeter_width / 2.f, writer.y(), wipe_speed);
                 }
             } 
@@ -2512,8 +2511,6 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer,
     float line_width = m_perimeter_width * m_extra_flow;
     writer.change_analyzer_line_width(line_width);
 
-    float retract_length = m_filpar[m_current_tool].retract_length;
-    float retract_speed = m_filpar[m_current_tool].retract_speed * 60;
 
     bool should_flat_ironging = true;
     bool should_line_ironing = true;
@@ -2557,7 +2554,10 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer,
                     if (abs(dx) < ironing_length)
                         ironing_length = abs(dx);
                     writer.extrude(writer.x() + ironing_length, writer.y(), wipe_speed);
-                    writer.retract(retract_length, retract_speed);
+                    // No retract around the ironing: a dry retract -> XY scrub -> unretract
+                    // drags PETG onto the nozzle and breaks the prime tower on PLA<->PETG
+                    // tool changes (GH #908). Ironing with the filament loaded lets the
+                    // small ooze deposit on the tower instead, as in 2.3.4.
                     writer.travel(writer.x() - 1.5 * ironing_length, writer.y(), 600.);
                     if (should_flat_ironging) {
                         writer.travel(writer.x() + 0.5f * ironing_length, writer.y(), 240.);
@@ -2567,7 +2567,6 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer,
                     }
                     else
                         writer.travel(writer.x() + 1.5 * ironing_length, writer.y(), 240.);
-                    writer.retract(-retract_length, retract_speed);
                 }
                 writer.extrude(xr, writer.y(), wipe_speed);
             }
@@ -2577,7 +2576,7 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer,
                     if (abs(dx) < ironing_length)
                         ironing_length = abs(dx);
                     writer.extrude(writer.x() - ironing_length, writer.y(), wipe_speed);
-                    writer.retract(retract_length, retract_speed);
+                    // No retract around the ironing (GH #908, see above).
                     writer.travel(writer.x() + 1.5 * ironing_length, writer.y(), 600.);
                     if (should_flat_ironging) {
                         writer.travel(writer.x() - 0.5f * ironing_length, writer.y(), 240.);
@@ -2587,7 +2586,6 @@ void WipeTower2::toolchange_wipe_new(WipeTowerWriter2& writer,
                     }
                     else
                         writer.travel(writer.x() - 1.5 * ironing_length, writer.y(), 240.);
-                    writer.retract(-retract_length, retract_speed);
                 }
                 writer.extrude(xl, writer.y(), wipe_speed);
             }

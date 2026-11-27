@@ -416,8 +416,21 @@ HealedExPolygons Emboss::heal_polygons(const Polygons &shape, bool is_non_zero, 
     ClipperLib::Paths paths = ClipperLib::SimplifyPolygons(ClipperUtils::PolygonsProvider(shape), fill_type);
     ClipperLib::CleanPolygons(paths, clean_distance);
     Polygons polygons = to_polygons(paths);
-    polygons.erase(std::remove_if(polygons.begin(), polygons.end(), 
+    polygons.erase(std::remove_if(polygons.begin(), polygons.end(),
         [](const Polygon &p) { return p.size() < 3; }), polygons.end());
+    // Drop degenerate micro-contours (zero-area backtracks and ~1-2 font-unit
+    // slivers). Some fonts emit these as separate contours alongside the real
+    // outline (e.g. Natural Coffee '3' and 'I'); they contribute nothing
+    // visible, but after the union they leave a duplicate point / self
+    // intersection that heal_dupl_inter can never resolve, so the glyph falls
+    // back to its bounding rectangle (a hollow box, GH #785). A real glyph
+    // feature is orders of magnitude larger than this threshold.
+    // Polygon area is in shape units^2 (1 font unit = 1000 shape units, so
+    // 5 font-unit^2 = 5'000'000 shape-unit^2).
+    constexpr double min_glyph_polygon_area = 5e6;
+    polygons.erase(std::remove_if(polygons.begin(), polygons.end(),
+        [](const Polygon &p) { return std::abs(p.area()) < min_glyph_polygon_area; }),
+        polygons.end());
     
     if (polygons.empty())
         return {{}, false};

@@ -14931,6 +14931,24 @@ void Plater::priv::on_select_bed_type(wxCommandEvent &evt)
                     }
                 }
 
+                // The sidebar selector is the plate the user is printing on now, so
+                // apply the selection to the current plate as well. A plate that
+                // carries an explicit bed type in its own config otherwise keeps
+                // slicing with the old type: BackgroundSlicingProcess::apply()
+                // overlays the plate config over the global config, so the
+                // selection shown in the UI never reaches the G-code (see #1258:
+                // global "Cool Plate" vs a plate still set to "Textured PEI
+                // Plate", G-code came out at 65 C instead of 35 C) and the
+                // slice is not even invalidated for that plate. set_bed_type()
+                // invalidates the plate's slice result when its effective type
+                // changes. Other plates keep their explicit types; a plate can
+                // still be given its own type in Plate Settings.
+                if (!plate_list.empty()) {
+                    if (PartPlate* curr_plate = partplate_list.get_curr_plate()) {
+                        curr_plate->set_bed_type(new_bed_type);
+                    }
+                }
+
                 // update render
                 view3D->get_canvas3d()->render();
                 preview->msw_rescale();

@@ -99,11 +99,18 @@ std::vector<Slic3r::GUI::FilamentData> collectVisibleOverwriteMachineFilaments(
     size_t designCount)
 {
     std::vector<Slic3r::GUI::FilamentData> visibleMachine;
-    size_t visibleCount = std::min(designCount, machineDataList.size());
-    visibleMachine.reserve(visibleCount);
-    for (size_t i = 0; i < visibleCount; ++i) {
-        if (!Slic3r::GUI::is_none_filament(machineDataList[i]))
-            visibleMachine.push_back(machineDataList[i]);
+    visibleMachine.reserve(std::min(designCount, machineDataList.size()));
+    // Count only real (non-"none") filaments toward the cap. The machine list
+    // has one entry per printer slot, including empty ones, so capping the
+    // *index* window before skipping empties drops one real filament per sync
+    // whenever an empty slot sits before the last real one (GH #1123: with
+    // machine [A, none, C, D] and 4 design filaments, repeated syncs shrink
+    // the slicer list 4 -> 3 -> 2 -> 1 instead of staying at 3).
+    for (const auto& fd : machineDataList) {
+        if (visibleMachine.size() >= designCount)
+            break;
+        if (!Slic3r::GUI::is_none_filament(fd))
+            visibleMachine.push_back(fd);
     }
     return visibleMachine;
 }

@@ -3,6 +3,19 @@
 
 namespace Slic3r {
 
+size_t retract_value_index(const ConfigBase &config, size_t value_count, unsigned int extruder_id)
+{
+    const auto *steps = config.option<ConfigOptionInts>("filament_flow_step_size");
+    if (steps == nullptr || steps->values.empty())
+        return extruder_id;
+    size_t slots = 0;
+    for (int step : steps->values)
+        slots += size_t(std::max(1, step));
+    if (value_count != slots)
+        return extruder_id;
+    return get_config_idx(config, ConfigFlowDomain::Filament, extruder_id);
+}
+
 double Extruder::m_share_E = 0.;
 double Extruder::m_share_retracted = 0.;
 
@@ -164,7 +177,7 @@ double Extruder::retract_before_wipe() const
 
 double Extruder::retraction_length() const
 {
-    return get_value_at(*m_config, m_config->retraction_length, ConfigFlowDomain::Filament, m_id);
+    return m_config->retraction_length.get_at(retract_value_index(*m_config, m_config->retraction_length.size(), m_id));
 }
 
 double Extruder::retract_lift() const
@@ -174,7 +187,7 @@ double Extruder::retract_lift() const
 
 int Extruder::retract_speed() const
 {
-    return int(floor(get_value_at(*m_config, m_config->retraction_speed, ConfigFlowDomain::Filament, m_id)+0.5));
+    return int(floor(m_config->retraction_speed.get_at(retract_value_index(*m_config, m_config->retraction_speed.size(), m_id))+0.5));
 }
 
 bool Extruder::use_firmware_retraction() const
@@ -184,7 +197,7 @@ bool Extruder::use_firmware_retraction() const
 
 int Extruder::deretract_speed() const
 {
-    int speed = int(floor(get_value_at(*m_config, m_config->deretraction_speed, ConfigFlowDomain::Filament, m_id)+0.5));
+    int speed = int(floor(m_config->deretraction_speed.get_at(retract_value_index(*m_config, m_config->deretraction_speed.size(), m_id))+0.5));
     return (speed > 0) ? speed : this->retract_speed();
 }
 
@@ -195,11 +208,14 @@ double Extruder::retract_restart_extra() const
 
 double Extruder::retract_length_toolchange() const
 {
-    return get_value_at(*m_config, m_config->retract_length_toolchange, ConfigFlowDomain::Filament, m_id);
+    // Same lookup as retract_speed(). A plain get_at(m_id) ignores filament_flow_step_size,
+    // so a filament with two flow variants would shift every later tool onto the previous slot.
+    return m_config->retract_length_toolchange.get_at(retract_value_index(*m_config, m_config->retract_length_toolchange.size(), m_id));
 }
 
 double Extruder::retract_restart_extra_toolchange() const
 {
+    // Not a flow-variant option: its filament override keeps one value per filament.
     return m_config->retract_restart_extra_toolchange.get_at(m_id);
 }
 

@@ -229,6 +229,45 @@ static inline bool config_options_equal(const ConfigOption *lhs, const ConfigOpt
     return *lhs == *rhs;
 }
 
+
+// Which printer extruder owns each index of a filament override array.
+// filament_flow_step_size can be 2,1,1,1 when the first filament declares
+// standard and high_flow. Those two slots both belong to extruder 0.
+static std::vector<size_t> filament_slot_extruders(const DynamicPrintConfig &cfg, bool flow_variant)
+{
+    const auto *steps = cfg.option<ConfigOptionInts>("filament_flow_step_size");
+    const auto *fmap  = cfg.option<ConfigOptionInts>("filament_map");
+
+    size_t n_filaments = 0;
+    if (flow_variant && steps != nullptr && !steps->values.empty())
+        n_filaments = steps->values.size();
+    else if (fmap != nullptr && !fmap->values.empty())
+        n_filaments = fmap->values.size();
+    if (n_filaments == 0)
+        return {};
+
+    auto extruder_of = [&](size_t filament) -> size_t {
+        if (fmap != nullptr && filament < fmap->values.size() && fmap->values[filament] > 0)
+            return size_t(fmap->values[filament] - 1);
+        return filament;
+    };
+
+    std::vector<size_t> slots;
+    if (flow_variant && steps != nullptr && steps->values.size() == n_filaments) {
+        for (size_t f = 0; f < n_filaments; ++f) {
+            const size_t step     = size_t(std::max(1, steps->values[f]));
+            const size_t extruder = extruder_of(f);
+            for (size_t k = 0; k < step; ++k)
+                slots.push_back(extruder);
+        }
+    } else {
+        slots.reserve(n_filaments);
+        for (size_t f = 0; f < n_filaments; ++f)
+            slots.push_back(extruder_of(f));
+    }
+    return slots;
+}
+
 static t_config_option_keys print_config_diffs(
     const PrintConfig        &current_config,
     const DynamicPrintConfig &new_full_config,
@@ -260,8 +299,15 @@ static t_config_option_keys print_config_diffs(
             if (overriden || !config_options_equal(opt_old, opt_new)) {
                 auto opt_copy = opt_new->clone();
                 if (!((opt_key == "long_retractions_when_cut" || opt_key == "retraction_distances_when_cut")
-                    && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament)) // ugly code, remove it later if firmware supports
-                    opt_copy->apply_override(opt_new_filament);
+                    && new_full_config.option<ConfigOptionInt>("enable_long_retraction_when_cut")->value != LongRectrationLevel::EnableFilament)) { // ugly code, remove it later if firmware supports
+                    const bool flow_key = is_filament_flow_variant_option(std::string("filament_") + opt_key);
+                    const std::vector<size_t> slot_extruder = filament_slot_extruders(new_full_config, flow_key);
+                    const auto *filament_vec = dynamic_cast<const ConfigOptionVectorBase *>(opt_new_filament);
+                    if (filament_vec != nullptr && slot_extruder.size() == filament_vec->size())
+                        opt_copy->apply_override(opt_new_filament, &slot_extruder);
+                    else
+                        opt_copy->apply_override(opt_new_filament);
+                }
                 bool changed = !config_options_equal(opt_old, opt_copy);
                 if (changed)
                     print_diff.emplace_back(opt_key);

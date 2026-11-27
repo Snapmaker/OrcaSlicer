@@ -8,6 +8,7 @@
 #include "../enum_bitmask.hpp"
 
 #include <vector>
+#include <algorithm>
 #include <memory>
 #include <string_view>
 
@@ -101,6 +102,46 @@ inline void export_thumbnails_to_file(ThumbnailsGeneratorCallback&              
             }
         }
         i++;
+    }
+}
+
+// Write the thumbnail in the Luban format read by Snapmaker 2.0 (A250/A350) touchscreen
+// firmware: a single-line `;thumbnail: data:image/png;base64,...` inside a
+// `;Header Start` / `;Header End` block. The 2.0 firmware only reads this header key and
+// ignores the Prusa-style `; thumbnail begin` block written by export_thumbnails_to_file
+// (see issue #971), so for those printers this is emitted in addition to the standard
+// block. The largest configured thumbnail is used, rendered as PNG like Luban does.
+template<typename WriteToOutput, typename ThrowIfCanceledCallback>
+inline void export_luban_thumbnail_to_file(ThumbnailsGeneratorCallback&                                thumbnail_cb,
+                                           int                                                         plate_id,
+                                           const std::vector<std::pair<GCodeThumbnailsFormat, Vec2d>>& thumbnails_list,
+                                           WriteToOutput                                               output,
+                                           ThrowIfCanceledCallback                                     throw_if_canceled)
+{
+    if (thumbnail_cb == nullptr || thumbnails_list.empty())
+        return;
+    const auto largest = std::max_element(thumbnails_list.begin(), thumbnails_list.end(),
+        [](const auto& a, const auto& b) { return a.second.x() * a.second.y() < b.second.x() * b.second.y(); });
+    ThumbnailsList thumbnails = thumbnail_cb(ThumbnailsParams{{largest->second}, true, true, true, true, plate_id});
+    for (const ThumbnailData& data : thumbnails) {
+        if (!data.is_valid())
+            continue;
+        auto compressed = compress_thumbnail(data, GCodeThumbnailsFormat::PNG);
+        if (!compressed->data || !compressed->size)
+            continue;
+        std::string encoded;
+        encoded.resize(boost::beast::detail::base64::encoded_size(compressed->size));
+        encoded.resize(boost::beast::detail::base64::encode((void*)encoded.data(), (const void*)compressed->data,
+                                                            compressed->size));
+        // NOTE: a single line on purpose — Luban writes the whole base64 payload on one
+        // line and the 2.0 firmware reads it that way; do not wrap it like the Prusa block.
+        output(";Header Start\n");
+        output(";header_type: 3dp\n");
+        output((boost::format(";thumbnail: data:image/png;base64,%s\n") % encoded).str().c_str());
+        output(";Header End\n\n");
+        throw_if_canceled();
+        // Only one `;thumbnail:` line — Luban writes exactly one.
+        return;
     }
 }
 

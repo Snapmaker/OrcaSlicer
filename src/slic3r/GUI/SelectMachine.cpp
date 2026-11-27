@@ -2544,7 +2544,21 @@ void SelectMachineDialog::on_selection_changed(wxCommandEvent &event)
         }
     }
 
-    if (obj && !obj->get_lan_mode_connection_state()) {
+    if (!obj) {
+        BOOST_LOG_TRIVIAL(error) << "on_selection_changed dev_id not found";
+        return;
+    }
+
+    // Only request version/push info when the printer is not already in LAN
+    // connection state. m_lan_mode_connection_state is set when a LAN printer
+    // is (re)connected and is never cleared, so re-selecting an already
+    // connected LAN printer used to fall into the else branch below and
+    // return without selecting the printer or refreshing the status, leaving
+    // the printer unselectable for a second print job (#927). The version/push
+    // requests (and the I3 timelapse reset tied to a fresh connect) are the
+    // only parts that must be skipped when already connected; selecting the
+    // machine and refreshing the AMS layout / status must still happen.
+    if (!obj->get_lan_mode_connection_state()) {
         obj->command_get_version();
         obj->command_request_push_all();
         if (!dev->get_selected_machine()) {
@@ -2559,14 +2573,21 @@ void SelectMachineDialog::on_selection_changed(wxCommandEvent &event)
             AppConfig *config = wxGetApp().app_config;
             if (config) config->set_str("print", "timelapse", "0");
         }
-
-        // Has changed machine unrecoverably
-        GUI::wxGetApp().sidebar().load_ams_list(obj->dev_id, obj);
-        update_select_layout(obj);
     } else {
-        BOOST_LOG_TRIVIAL(error) << "on_selection_changed dev_id not found";
-        return;
+        // Already in LAN connection state (e.g. the same printer re-selected
+        // for a second job): still make it the selected machine when it is
+        // not the current one. When it already is the selected machine this
+        // is a no-op and no reconnect is triggered.
+        if (!dev->get_selected_machine()) {
+            dev->set_selected_machine(m_printer_last_select, true);
+        }else if (dev->get_selected_machine()->dev_id != m_printer_last_select) {
+            dev->set_selected_machine(m_printer_last_select, true);
+        }
     }
+
+    // Has changed machine unrecoverably
+    GUI::wxGetApp().sidebar().load_ams_list(obj->dev_id, obj);
+    update_select_layout(obj);
 
 
     //reset print status

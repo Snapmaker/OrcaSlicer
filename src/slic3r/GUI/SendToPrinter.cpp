@@ -990,18 +990,28 @@ void SendToPrinterDialog::on_selection_changed(wxCommandEvent &event)
         }
     }
 
-    if (obj && !obj->get_lan_mode_connection_state()) {
-        obj->command_get_version();
-        obj->command_request_push_all();
-        if (!dev->get_selected_machine()) {
-            dev->set_selected_machine(m_printer_last_select, true);
-        }else if (dev->get_selected_machine()->dev_id != m_printer_last_select) {
-            dev->set_selected_machine(m_printer_last_select, true);
-        }
-    }
-    else {
+    if (!obj) {
         BOOST_LOG_TRIVIAL(error) << "on_selection_changed dev_id not found";
         return;
+    }
+
+    // Only request version/push info when the printer is not already in LAN
+    // connection state. m_lan_mode_connection_state is set when a LAN printer
+    // is (re)connected and is never cleared, so re-selecting an already
+    // connected LAN printer used to fall into the else branch below and
+    // return without selecting the printer or refreshing the status, leaving
+    // the printer unselectable and Send greyed out for a second print job
+    // (#927). The version/push requests are the only part that must be
+    // skipped when already connected; selecting the machine and refreshing
+    // the status must still happen.
+    if (!obj->get_lan_mode_connection_state()) {
+        obj->command_get_version();
+        obj->command_request_push_all();
+    }
+    if (!dev->get_selected_machine()) {
+        dev->set_selected_machine(m_printer_last_select, true);
+    }else if (dev->get_selected_machine()->dev_id != m_printer_last_select) {
+        dev->set_selected_machine(m_printer_last_select, true);
     }
 
     update_show_status();

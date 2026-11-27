@@ -1888,7 +1888,7 @@ bool GCodeProcessor::get_last_z_from_gcode(const std::string& gcode_str, double&
                     // Try to parse the numeric value.
                     std::string z_sub = line_str.substr(z_pos + 2);
                     char* c = &z_sub[0];
-                    char* end = c + sizeof(z_sub.c_str());
+                    char* end = c + z_sub.size();
 
                     auto is_end_of_word = [](char c) {
                         return c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == 0 || c == ';';

@@ -1117,6 +1117,32 @@ static ExPolygons outer_inner_brim_area(const Print& print,
     const float scaled_flow_width = print.brim_flow().scaled_spacing();
     no_brim_area = offset2_ex(no_brim_area, scaled_flow_width, -scaled_flow_width);
 
+    // BBS (#1003): first-layer holes and islands per object, in print coordinates.
+    // The thin ring excluded from brim around a hole (see the !has_inner_brim branch
+    // above) only keeps brim away from the hole edge. The outer brim of a neighbouring
+    // island reaches far beyond that ring whenever brim_width is larger than the gap
+    // to the hole, so with "outer brim only" brim is still generated inside holes.
+    // The whole hole interior has to be kept free of brim instead.
+    std::map<ObjectID, ExPolygons> holes_by_object;
+    std::map<ObjectID, ExPolygons> islands_by_object;
+    for (const PrintObject *object : print.objects()) {
+        if (object->layers().empty())
+            continue;
+        for (const PrintInstance &instance : object->instances()) {
+            const Point instance_shift = instance.shift_without_plate_offset();
+            for (const ExPolygon &ex_poly : object->layers().front()->lslices) {
+                for (const Polygon &hole : ex_poly.holes) {
+                    ExPolygon hole_expoly(hole);
+                    hole_expoly.translate(instance_shift);
+                    holes_by_object[object->id()].push_back(std::move(hole_expoly));
+                }
+                ExPolygon island(ex_poly);
+                island.translate(instance_shift);
+                islands_by_object[object->id()].push_back(std::move(island));
+            }
+        }
+    }
+
     for (const PrintObject* object : print.objects()) {
         if (brimAreaMap.find(object->id()) != brimAreaMap.end())
         {
@@ -1125,6 +1151,39 @@ static ExPolygons outer_inner_brim_area(const Print& print,
 
         if (supportBrimAreaMap.find(object->id()) != supportBrimAreaMap.end())
             supportBrimAreaMap[object->id()] = diff_ex(supportBrimAreaMap[object->id()], no_brim_area);
+
+        // BBS (#1003): keep brim out of the whole interior of every first-layer hole.
+        // Two exceptions, both legitimate brim inside a hole: this object's own inner
+        // brim (only when inner brim is enabled), and the outer brim of a part nested
+        // inside the hole (this object has a first-layer island inside that hole).
+        const BrimType brim_type = object->config().brim_type.value;
+        const bool has_inner_brim = brim_type == btInnerOnly || brim_type == btOuterAndInner ||
+                                    brim_type == btEar || brim_type == btPainted;
+        ExPolygons holes_to_exclude;
+        for (const auto &holes_entry : holes_by_object) {
+            for (const ExPolygon &hole : holes_entry.second) {
+                if (holes_entry.first == object->id() && has_inner_brim)
+                    continue;
+                bool nested = false;
+                const auto it_islands = islands_by_object.find(object->id());
+                if (it_islands != islands_by_object.end()) {
+                    for (const ExPolygon &island : it_islands->second) {
+                        if (!intersection_ex(island, hole).empty()) {
+                            nested = true;
+                            break;
+                        }
+                    }
+                }
+                if (!nested)
+                    holes_to_exclude.push_back(hole);
+            }
+        }
+        if (!holes_to_exclude.empty()) {
+            if (brimAreaMap.find(object->id()) != brimAreaMap.end())
+                brimAreaMap[object->id()] = diff_ex(brimAreaMap[object->id()], holes_to_exclude);
+            if (supportBrimAreaMap.find(object->id()) != supportBrimAreaMap.end())
+                supportBrimAreaMap[object->id()] = diff_ex(supportBrimAreaMap[object->id()], holes_to_exclude);
+        }
     }
 
     brim_area.clear();

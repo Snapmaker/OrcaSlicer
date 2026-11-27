@@ -92,6 +92,10 @@ struct TreeSupportMeshGroupSettings {
         this->support_tree_branch_diameter_angle  = std::clamp<double>(config.tree_support_branch_diameter_angle * M_PI / 180., 0., 0.5 * M_PI - EPSILON);
         this->support_tree_top_rate       = config.tree_support_top_rate.value; // percent
         this->minimum_roof_area           = scaled<double>(scaled<double>(config.support_interface_min_area.value));
+        // Wire the same setting into minimum_support_area: the overhang filters in
+        // TreeSupport3D.cpp guard on it, and it was never assigned, so sub-threshold
+        // overhangs were never filtered (#1214).
+        this->minimum_support_area        = scaled<double>(scaled<double>(config.support_interface_min_area.value));
     //    this->support_tree_tip_diameter = this->support_line_width;
         this->support_tree_tip_diameter = std::clamp(scaled<coord_t>(config.tree_support_tip_diameter.value), (coord_t)0, this->support_tree_branch_diameter);
 
@@ -194,7 +198,7 @@ struct TreeSupportMeshGroupSettings {
     coord_t                         support_roof_line_distance              { scaled<coord_t>(0.4) };
     // Minimum Support Area
     // Minimum area size for support polygons. Polygons which have an area smaller than this value will not be generated.
-    coord_t                         minimum_support_area                    { scaled<coord_t>(0.) };
+    double                          minimum_support_area                    { scaled<double>(scaled<double>(0.)) };
     // Minimum Support Floor Area
     // Minimum area size for the floors of the support. Polygons which have an area smaller than this value will be printed as normal support.
     coord_t                         minimum_bottom_area                     { scaled<coord_t>(1.0) };

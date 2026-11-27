@@ -191,6 +191,7 @@ bool Layer::is_perimeter_compatible(const PrintRegion& a, const PrintRegion& b)
         && config.gap_infill_speed == other_config.gap_infill_speed
         && config.filter_out_gap_fill.value == other_config.filter_out_gap_fill.value
 		&& config.detect_overhang_wall                   == other_config.detect_overhang_wall
+		&& config.unsupported_wall_last                  == other_config.unsupported_wall_last
 		&& config.overhang_reverse                       == other_config.overhang_reverse
 		&& config.overhang_reverse_threshold             == other_config.overhang_reverse_threshold
 		&& config.wall_direction                         == other_config.wall_direction

@@ -996,8 +996,18 @@ std::string CoolingBuffer::apply_layer_cooldown(
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_current_fan_speed);
                 fan_speed_change_requests[CoolingLine::TYPE_FORCE_RESUME_FAN] = false;
             }
-            else
+            else {
+                // Restoring the base (layer-time) fan speed after a role-based fan
+                // (overhang / bridge / support-interface / ironing) ends: record it
+                // as the currently active speed. Without this, m_current_fan_speed
+                // keeps the stale role-based speed, and the next toolchange's
+                // ;_FORCE_RESUME_FAN_SPEED marker re-emits that stale speed,
+                // latching the fan at overhang speed for the rest of the layer
+                // (and, across layers, until the next overhang START/END cycle).
+                // See #780.
                 new_gcode += GCodeWriter::set_fan(m_config.gcode_flavor, m_fan_speed);
+                m_current_fan_speed = m_fan_speed;
+            }
             need_set_fan = false;
         }
         pos = line_end;

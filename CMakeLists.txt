@@ -416,8 +416,14 @@ if (NOT MSVC AND ("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU" OR "${CMAKE_CXX_COMP
         add_compile_options(-Wno-deprecated-declarations)
     endif()
 
+    # The diagnostic was removed in newer clang (e.g. Apple clang 21), where passing the
+    # option is an unknown-warning error in targets built with -Werror.
     if((${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang" OR ${CMAKE_CXX_COMPILER_ID} STREQUAL "AppleClang") AND ${CMAKE_CXX_COMPILER_VERSION} VERSION_GREATER 15)
-        add_compile_options(-Wno-error=enum-constexpr-conversion)
+        include(CheckCXXCompilerFlag)
+        check_cxx_compiler_flag(-Wno-error=enum-constexpr-conversion HAS_NO_ERROR_ENUM_CONSTEXPR_CONVERSION)
+        if(HAS_NO_ERROR_ENUM_CONSTEXPR_CONVERSION)
+            add_compile_options(-Wno-error=enum-constexpr-conversion)
+        endif()
     endif()
 
     #GCC generates loads of -Wunknown-pragmas when compiling igl. The fix is not easy due to a bug in gcc, see

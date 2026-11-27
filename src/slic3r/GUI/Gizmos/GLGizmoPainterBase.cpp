@@ -482,6 +482,12 @@ void GLGizmoPainterBase::render_cursor_height_range(const Transform3d& trafo) co
     {
         const ModelVolume& volume = *model_object->volumes[volumeIndex];
 
+        // The outline follows the same visibility contract as the paint hit test:
+        // a gizmo that hides parts of the object (partial-volume selection) must
+        // not draw the contour on them.
+        if (! volume_is_paint_target(&volume))
+            continue;
+
         // Keep the exact baseline transform expression, including assemble view and explosion.
         Transform3d effectiveTransform = Transform3d::Identity();
         if (m_parent.get_canvas_type() == GLCanvas3D::CanvasAssembleView) {
@@ -1428,7 +1434,7 @@ void GLGizmoPainterBase::update_raycast_cache(const Vec2d& mouse_position,
     // Cast a ray on all meshes, pick the closest hit and save it for the respective mesh
     for (int mesh_id = 0; mesh_id < int(trafo_matrices.size()); ++mesh_id) {
 
-        if (mesh_id < int(parts.size()) && ! volume_is_raycast_target(parts[size_t(mesh_id)]))
+        if (mesh_id < int(parts.size()) && ! volume_is_paint_target(parts[size_t(mesh_id)]))
             continue; // this part is hidden for the session: the ray passes through it
 
         if (m_c->raycaster()->raycasters()[mesh_id]->unproject_on_mesh(

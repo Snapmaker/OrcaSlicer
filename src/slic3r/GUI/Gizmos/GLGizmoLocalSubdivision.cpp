@@ -13,6 +13,8 @@
 #include "slic3r/GUI/NotificationManager.hpp"
 #include "slic3r/GUI/format.hpp"
 #include "slic3r/GUI/GUI.hpp"
+
+#include <algorithm>
 #include "slic3r/Utils/UndoRedo.hpp"
 
 #include <GL/glew.h>
@@ -73,10 +75,6 @@ bool GLGizmoLocalSubdivision::gizmo_event(SLAGizmoEventType action, const Vec2d&
         if (m_finishingPaintingInteraction)
             return true;
         m_finishingPaintingInteraction = true;
-        // The stroke may have painted hidden parts "through" (the raycaster spans
-        // the whole object); drop those facets before the preview rebuild so the
-        // hidden parts can never reappear through a preview or an apply.
-        clear_painting_on_hidden_parts();
         DiscardPaintingPreviewsAndFlush();
         update_model_object();
         m_button_down             = Button::None;
@@ -119,7 +117,19 @@ void GLGizmoLocalSubdivision::update_from_model_object(bool first_update)
     m_budget_flow.reset();
 
     wxBusyCursor wait;
-    const ModelObject* mo = m_c->selection_info()->model_object();
+    const ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
+    if (mo == nullptr)
+        return; // no selection info (e.g. selection emptied while still open): nothing to rebuild
+    // Remember the selection this session was synced to: a later switch to
+    // another part of the same object re-syncs through data_changed() and must
+    // discard the painting and previews built for the previous part.
+    m_session_volume_idxs = current_selected_volume_idxs();
+    // The failure-notification throttles are session-scoped: a fresh session (new
+    // selection, undo, mesh change) reports its failures again instead of being
+    // suppressed by a stale {level, reason} pair from the previous one.
+    m_last_failed_levels = {0, 0};
+    m_last_failed_reason  = 0;
+    m_notified_no_subdiv_faces = false;
     // Model data replaces these selectors; do not write the active stroke back.
     ResetPaintingStroke();
     // The selectors may still hold GPU buffers uploaded while painting was
@@ -141,6 +151,41 @@ void GLGizmoLocalSubdivision::update_from_model_object(bool first_update)
         m_triangle_selectors.emplace_back(std::make_unique<TriangleSelectorPatch>(*mesh, ebt_colors));
         m_triangle_selectors.back()->request_update_render_data();
     }
+}
+
+std::vector<int> GLGizmoLocalSubdivision::current_selected_volume_idxs() const
+{
+    std::vector<int> idxs;
+    const Selection& selection = m_parent.get_selection();
+    if (!selection.is_empty() && selection.is_from_single_instance())
+        for (const auto& i : selection.get_volume_idxs()) {
+            const GLVolume* v = selection.get_volume(i);
+            if (v != nullptr && v->volume_idx() >= 0)
+                idxs.push_back(v->volume_idx());
+        }
+    std::sort(idxs.begin(), idxs.end());
+    return idxs;
+}
+
+void GLGizmoLocalSubdivision::data_changed(bool is_serializing)
+{
+    // The base refresh rebuilds the selectors only when the object id, the volume
+    // count or the serialization state changed. A selection change INSIDE the same
+    // object (A -> B in the sidebar) keeps all three and would leave this session's
+    // painting and previews attached to part A: the preview would still draw A and
+    // the Subdivide button would write A's mesh back, resetting A's painting.
+    // Re-sync the whole session when the selected volume set changed.
+    GLGizmoPainterBase::data_changed(is_serializing);
+    if (m_state != On)
+        return;
+    if (m_c->selection_info() == nullptr || m_c->selection_info()->model_object() == nullptr)
+        return; // empty selection: the manager's refresh_on_off_state closes the gizmo
+    if (current_selected_volume_idxs() == m_session_volume_idxs)
+        return;
+    // Rebuilds the selectors from scratch (the previous part's transient painting
+    // is dropped with them), clears the previews and re-hides/shows the volumes
+    // for the new selection.
+    update_from_model_object(!is_serializing);
 }
 
 PainterGizmoType GLGizmoLocalSubdivision::get_painter_type() const
@@ -353,8 +398,20 @@ void GLGizmoLocalSubdivision::on_render_input_window(float x, float y, float bot
     // idle frames reuse the cached total instead of walking and allocating per frame.
     if (m_preview_dirty) {
         m_selected_facet_count = 0;
-        for (const auto& triangle_selector : m_triangle_selectors)
-            m_selected_facet_count += int(triangle_selector->get_facets_indices_by_state(EnforcerBlockerType::ENFORCER).size());
+        // Count only the selected parts: hidden parts may carry transient marks
+        // (height-range strokes), which the preview build filters out as well.
+        const ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
+        if (mo != nullptr) {
+            int idx = -1; // counts model parts only, indexing m_triangle_selectors
+            for (const ModelVolume* mv : mo->volumes) {
+                if (! mv->is_model_part())
+                    continue;
+                ++idx;
+                if (! is_selected_volume(mv) || size_t(idx) >= m_triangle_selectors.size())
+                    continue;
+                m_selected_facet_count += int(m_triangle_selectors[size_t(idx)]->get_facets_indices_by_state(EnforcerBlockerType::ENFORCER).size());
+            }
+        }
     }
     m_imgui->text(format_wxstr("%1%: %2%", m_desc["selected_facets"], m_selected_facet_count));
 
@@ -494,6 +551,14 @@ bool GLGizmoLocalSubdivision::compute_preview_caches(ModelObject* mo, bool& chan
                 if (! mv->is_model_part())
                     continue;
                 ++idx;
+                // Structural filter: only the selected parts may enter the previews
+                // and, through them, the apply list. The height-range tool marks
+                // ALL parts in the Z-band (regardless of the raycast hit), and a
+                // stroke whose mouse capture is lost never runs this class's
+                // stroke-end cleanup - marking the parts outside the selection
+                // here would send an unselected part into the write-back.
+                if (! is_selected_volume(mv))
+                    continue;
                 if (size_t(idx) >= m_triangle_selectors.size())
                     break;
                 std::vector<int> facets = m_triangle_selectors[idx]->get_facets_indices_by_state(EnforcerBlockerType::ENFORCER);
@@ -761,10 +826,11 @@ PreviewUpdateOutcome GLGizmoLocalSubdivision::update_preview(BudgetPromptMode pr
     return PreviewUpdateOutcome::Ready;
 }
 
-bool GLGizmoLocalSubdivision::volume_is_raycast_target(const ModelVolume* mv) const
+bool GLGizmoLocalSubdivision::volume_is_paint_target(const ModelVolume* mv) const
 {
     // Mirror of the per-volume draw gate: a part outside a partial-volume
-    // selection is hidden, so the paint hit test must pass through it.
+    // selection is hidden, so the paint hit test and the height-range cursor
+    // outline must pass through it.
     return is_selected_volume(mv);
 }
 
@@ -890,29 +956,6 @@ bool GLGizmoLocalSubdivision::is_selected_volume(const ModelVolume* mv) const
     return false;
 }
 
-void GLGizmoLocalSubdivision::clear_painting_on_hidden_parts()
-{
-    const ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
-    if (mo == nullptr)
-        return;
-    // Same clear idiom as the "Erase all selection" button, applied only to the
-    // parts that are hidden (outside the current selection). The raycaster spans
-    // the whole object, so a stroke over a hidden part paints invisibly; without
-    // this wipe that painting would resurrect the part through a preview.
-    int mesh_id = -1;
-    for (const ModelVolume* mv : mo->volumes) {
-        if (! mv->is_model_part())
-            continue;
-        ++mesh_id;
-        if (is_selected_volume(mv))
-            continue;
-        if (mesh_id < int(m_triangle_selectors.size())) {
-            m_triangle_selectors[mesh_id]->reset();
-            m_triangle_selectors[mesh_id]->request_update_render_data(true);
-        }
-    }
-}
-
 wxString GLGizmoLocalSubdivision::subdivision_failure_text(int lowest_achieved, bool apply, int* reason_key_out) const
 {
     bool any_non_manifold = false, any_degenerate = false;
@@ -974,6 +1017,8 @@ void GLGizmoLocalSubdivision::gather_budget_inputs(size_t &painted, size_t &tota
         if (! mv->is_model_part())
             continue;
         ++idx;
+        if (! is_selected_volume(mv))
+            continue; // only the selected parts take part in the estimate (and in the computation)
         total_faces += mv->mesh().its.indices.size();
         if (size_t(idx) < m_triangle_selectors.size())
             painted += m_triangle_selectors[size_t(idx)]->get_facets_indices_by_state(EnforcerBlockerType::ENFORCER).size();
@@ -1084,6 +1129,11 @@ void GLGizmoLocalSubdivision::apply_subdivision()
             continue; // failed below the requested level: leave this part untouched
         const int level = std::min(m_subdiv_level, int(p.meshes.size()) - 1);
         if (level <= 0)
+            continue;
+        // Defense in depth: a preview outside the current selection (e.g. left
+        // over by a stroke whose mouse capture was lost before this class could
+        // clean up) must never be written back.
+        if (! is_selected_volume(p.volume))
             continue;
         int cur_obj_idx = -1;
         for (size_t i = 0; i < model.objects.size(); ++i) {

@@ -394,13 +394,14 @@ protected:
     // overrides this to skip exactly those volumes - the conditions must mirror
     // the replacement draw's, or volumes vanish / get drawn twice.
     virtual bool render_selector_for_volume(const ModelVolume* mv) const { return true; }
-    // Whether the paint hit test may land on this model part. update_raycast_cache
-    // skips volumes for which this returns false, so a stroke can never hit them.
-    // A derived gizmo that hides some parts of the selected object (partial-volume
-    // selection) overrides this to make hidden parts ray-transparent: without it,
-    // a hidden sibling in front of the cursor would swallow the stroke instead of
-    // the visible part behind it.
-    virtual bool volume_is_raycast_target(const ModelVolume* mv) const { return true; }
+    // Whether this model part takes part in the paint session. The hit test
+    // (update_raycast_cache) skips parts for which this returns false, so a stroke
+    // can never land on them, and the height-range cursor outline (white contour
+    // at both boundary Zs) is not drawn for them either. A derived gizmo that
+    // hides some parts of the selected object (partial-volume selection) overrides
+    // this to make hidden parts transparent: without it, a hidden sibling in front
+    // of the cursor would swallow the stroke instead of the visible part behind it.
+    virtual bool volume_is_paint_target(const ModelVolume* mv) const { return true; }
     void render_cursor();
     void render_cursor_circle();
     void render_cursor_sphere(const Transform3d& trafo) const;

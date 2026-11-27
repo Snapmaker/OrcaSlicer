@@ -63,7 +63,14 @@ protected:
 
 private:
     bool on_init() override;
-    // The selection is transient, so nothing is stored on the ModelVolume. A finished
+    // The base data_changed only reacts to object-id / volume-count / serialization
+    // changes; a selection change within the same object (e.g. switching to another
+    // part in the sidebar while the gizmo stays open) must also re-sync the
+    // session - otherwise the previously painted part's caches would still be
+    // applicable and the Subdivide button would write them back.
+    void data_changed(bool is_serializing) override;
+    // On a session-foreign event, update the preview from the selection. The facet
+    // selection is transient, so nothing is stored on the ModelVolume. A finished
     // paint stroke ends in update_model_object(), used here to invalidate the preview.
     void update_model_object() override { m_preview_dirty = true; }
     void update_from_model_object(bool first_update = false) override;
@@ -117,10 +124,14 @@ private:
     // Whether the given model part belongs to the current selection. Parts outside
     // a partial-volume selection are hidden for the whole session.
     bool is_selected_volume(const ModelVolume* mv) const;
-    // Painting hits on unselected parts (possible through the object-wide raycaster
-    // while those parts are hidden) must not survive the stroke: their transient
-    // selection is cleared so no preview or apply ever sees it.
-    void clear_painting_on_hidden_parts();
+    // Full volume indexes (sorted) of the current selection, or empty when the
+    // selection is not a single instance. Used to detect A -> B switches while the
+    // gizmo stays open.
+    std::vector<int> current_selected_volume_idxs() const;
+    // The selection the session was last synced to (captured by
+    // update_from_model_object); when it changes, the session is re-synced and the
+    // previous part's painting and previews are discarded.
+    std::vector<int> m_session_volume_idxs;
     // Rebuilds the preview caches from the current painting state and grows
     // them level by level to m_subdiv_level; also raises the "stopped early"
     // notification. Returns false when it could not run (never in practice:
@@ -141,8 +152,10 @@ private:
     // parts outside a partial-volume selection (hidden for the session).
     bool render_selector_for_volume(const ModelVolume* mv) const override;
     // Hidden parts must not swallow paint strokes aimed at the visible part behind
-    // them: the hit test skips them, so the ray passes through to the selection.
-    bool volume_is_raycast_target(const ModelVolume* mv) const override;
+    // them, and must not show the height-range cursor outline: the hit test and
+    // the cursor visual skip them, so the ray and the outline pass through to the
+    // selection.
+    bool volume_is_paint_target(const ModelVolume* mv) const override;
     // Failure notification text matching the recorded per-preview reasons: the
     // specific cause when all failed previews share one, the combined wording when
     // they mix. apply selects the "Subdivision failed" family, otherwise the

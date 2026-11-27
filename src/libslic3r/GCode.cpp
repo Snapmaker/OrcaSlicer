@@ -563,6 +563,30 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
         gcode += gcodegen.writer().unretract();
     }
 
+    // Port of upstream OrcaSlicer PR #15441 ("fix no sparse layers during a toolchange"):
+    // with "No sparse layers" the tower is compacted far below the object, so the custom
+    // change_filament_gcode (and a firmware Tn dock) would run at the tower height, below
+    // the print top. Lift back to the object layer height first; the tower G-code descends
+    // to the compacted tower height again once over the tower. The lift is emitted into the
+    // tower G-code via the [restore_layer_z_before_toolchange] placeholder (see
+    // WipeTower::toolchange_Change), so it runs just before the toolchange, and only when a
+    // real toolchange is happening and something in it may travel (a custom macro, or a
+    // switch to another physical extruder whose firmware Tn may dock). Computed here, right
+    // after the descent and before the toolchange is processed, so the writer's Z tracking
+    // stays in emitted order.
+    std::string restore_layer_z_str;
+    {
+        const bool tool_may_travel = !gcodegen.config().change_filament_gcode.value.empty()
+            || (gcodegen.writer().extruder() != nullptr && new_extruder_id >= 0
+                && gcodegen.writer().extruder()->id() != (unsigned)new_extruder_id);
+        if (!is_approx(z, current_z) && !tcr.priming && new_extruder_id >= 0
+            && gcodegen.writer().need_toolchange(new_extruder_id) && tool_may_travel
+            && gcodegen.writer().get_position().z() < current_z - EPSILON) {
+            restore_layer_z_str += gcodegen.writer().travel_to_z(current_z, "Restore layer Z before toolchange");
+            check_add_eol(restore_layer_z_str);
+        }
+    }
+
     // Process the end filament gcode.
     std::string end_filament_gcode_str;
     if (gcodegen.writer().extruder() != nullptr) {
@@ -730,6 +754,7 @@ std::string WipeTowerIntegration::append_tcr(GCode& gcodegen, const WipeTower::T
     // Insert the end filament, toolchange, and start filament gcode into the generated gcode.
     DynamicConfig config;
     config.set_key_value("filament_end_gcode", new ConfigOptionString(end_filament_gcode_str));
+    config.set_key_value("restore_layer_z_before_toolchange", new ConfigOptionString(restore_layer_z_str));
     config.set_key_value("change_filament_gcode", new ConfigOptionString(toolchange_gcode_str));
     config.set_key_value("filament_start_gcode", new ConfigOptionString(start_filament_gcode_str));
     std::string tcr_gcode,
@@ -825,6 +850,30 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
     }
 
     const bool needs_toolchange = gcodegen.writer().need_toolchange(new_extruder_id);
+
+    // Port of upstream OrcaSlicer PR #15441 ("fix no sparse layers during a toolchange"):
+    // with "No sparse layers" the tower is compacted far below the object, so the custom
+    // change_filament_gcode (and a firmware Tn dock) would run at the tower height, below
+    // the print top. Lift back to the object layer height first; the deretraction below
+    // descends to the tower height again for the wipe. The lift is emitted into the tower
+    // G-code via the [restore_layer_z_before_toolchange] placeholder (see
+    // WipeTower2::toolchange_Change), so it runs just before the toolchange, and only when
+    // a real toolchange is happening and something in it may travel (a custom macro, or a
+    // switch to another physical extruder whose firmware Tn may dock). Computed here,
+    // before set_extruder() runs, so the writer's Z tracking stays in emitted order.
+    std::string restore_layer_z_str;
+    {
+        const bool tool_may_travel = !gcodegen.config().change_filament_gcode.value.empty()
+            || (gcodegen.writer().extruder() != nullptr && new_extruder_id >= 0
+                && gcodegen.writer().extruder()->id() != (unsigned)new_extruder_id);
+        if (will_go_down && !tcr.priming && new_extruder_id >= 0 && needs_toolchange && tool_may_travel
+            && gcodegen.config().enable_prime_tower
+            && gcodegen.writer().get_position().z() < current_z - EPSILON) {
+            restore_layer_z_str += gcodegen.writer().travel_to_z(current_z, "Restore layer Z before toolchange");
+            check_add_eol(restore_layer_z_str);
+        }
+    }
+
     const bool will_detour = gcodegen.config().wipe_tower_wall_gap.value
         && !tcr.priming && needs_toolchange;
     
@@ -962,6 +1011,7 @@ std::string WipeTowerIntegration::append_tcr2(GCode& gcodegen, const WipeTower::
 
     DynamicConfig config;
     config.set_key_value("change_filament_gcode", new ConfigOptionString(toolchange_gcode_str));
+    config.set_key_value("restore_layer_z_before_toolchange", new ConfigOptionString(restore_layer_z_str));
     config.set_key_value("layer_num", new ConfigOptionInt(gcodegen.m_layer_index));
     config.set_key_value("layer_z", new ConfigOptionFloat(tcr.print_z));
     config.set_key_value("toolchange_z", new ConfigOptionFloat(z));

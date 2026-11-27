@@ -1,12 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "libslic3r/Model.hpp"
 #include "libslic3r/Format/3mf.hpp"
+#include "libslic3r/Format/bbs_3mf.hpp"
 #include "libslic3r/Format/STL.hpp"
 
 #include <boost/filesystem/operations.hpp>
 
 using namespace Slic3r;
+using Catch::Matchers::WithinAbs;
 
 SCENARIO("Reading 3mf file", "[3mf]") {
     GIVEN("umlauts in the path of the file") {
@@ -19,6 +22,44 @@ SCENARIO("Reading 3mf file", "[3mf]") {
             THEN("load should succeed") {
                 REQUIRE(ret);
             }
+        }
+    }
+}
+
+// The loader centers a mesh on its first use and shares it with every later component that uses it, so each of those
+// volumes has to apply the same centering shift before its component transform.
+TEST_CASE("Components sharing an off-center mesh keep their placement", "[3mf]") {
+    Model                     model;
+    DynamicPrintConfig        config;
+    ConfigSubstitutionContext substitutions{ ForwardCompatibilitySubstitutionRule::Disable };
+    PlateDataPtrs             plates;
+    std::vector<Preset*>      presets;
+    bool                      is_bbl = false;
+    Semver                    version;
+    // One box mesh (x 10..12, y 0..4, z 0..1) used by four components: rotated 90 degrees about X (its first use),
+    // rotated the same way and moved 20 mm along X, scaled 2x along X and moved 40 mm, moved 80 mm.
+    const std::string path = std::string(TEST_DATA_DIR) + "/test_3mf/shared_mesh_components.3mf";
+    REQUIRE(load_bbs_3mf(path.c_str(), &config, &substitutions, &model, &plates, &presets, &is_bbl, &version, nullptr, LoadStrategy::LoadModel));
+    release_PlateData_list(plates);
+    REQUIRE(model.objects.size() == 1);
+    const ModelVolumePtrs &volumes = model.objects.front()->volumes;
+    REQUIRE(volumes.size() == 4);
+
+    // Where each component puts the box, in object coordinates.
+    const std::vector<std::pair<Vec3d, Vec3d>> expected = {
+        { { 10., -1., 0. }, { 12., 0., 4. } },
+        { { 30., -1., 0. }, { 32., 0., 4. } },
+        { { 60., 0., 0. }, { 64., 4., 1. } },
+        { { 90., 0., 0. }, { 92., 4., 1. } },
+    };
+    for (size_t i = 0; i < volumes.size(); ++i) {
+        INFO("volume " << i);
+        REQUIRE(volumes[i]->mesh_ptr() == volumes.front()->mesh_ptr());
+        const BoundingBoxf3 box = volumes[i]->mesh().transformed_bounding_box(volumes[i]->get_matrix());
+        for (int axis = 0; axis < 3; ++axis) {
+            INFO("axis " << axis);
+            CHECK_THAT(box.min(axis), WithinAbs(expected[i].first(axis), 1e-6));
+            CHECK_THAT(box.max(axis), WithinAbs(expected[i].second(axis), 1e-6));
         }
     }
 }

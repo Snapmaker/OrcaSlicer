@@ -153,6 +153,8 @@ enum class NotificationType
         FilamentIncompatibleMixed,
     // Nozzle hardness (HRC) too low for the loaded filament, no fade-out
     NozzleHrcWarning,
+    // A plate keeps its own bed type after the global plate type was changed (#1258)
+    PlateBedTypeOverride,
 };
 
 class NotificationManager

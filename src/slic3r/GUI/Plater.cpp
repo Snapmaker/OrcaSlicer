@@ -15015,11 +15015,23 @@ void Plater::priv::on_select_bed_type(wxCommandEvent &evt)
 
                 //update slice status
                 auto plate_list = partplate_list.get_plate_list();
-                for (auto plate : plate_list) {
-                    if (plate->get_bed_type() == btDefault) {
-                        plate->update_slice_result_valid_state(false);
+                // A plate with its own bed type (Plate Settings, or a downloaded 3MF that carries one)
+                // keeps slicing with it, so the sidebar alone would show one plate and the G-code use another (#1258).
+                std::string overridden_plates;
+                for (size_t i = 0; i < plate_list.size(); ++i) {
+                    BedType own_bed_type = plate_list[i]->get_bed_type();
+                    if (own_bed_type == btDefault) {
+                        plate_list[i]->update_slice_result_valid_state(false);
+                    } else if (own_bed_type != new_bed_type) {
+                        overridden_plates += (overridden_plates.empty() ? "" : ", ") + std::to_string(i + 1);
                     }
                 }
+                notification_manager->close_notification_of_type(NotificationType::PlateBedTypeOverride);
+                if (!overridden_plates.empty())
+                    notification_manager->push_notification(NotificationType::PlateBedTypeOverride,
+                        NotificationManager::NotificationLevel::WarningNotificationLevel,
+                        format(_L("Plate %s keeps the bed type set in its Plate Settings, so this selection does not apply to it. "
+                                  "Set the plate's bed type to \"Same as Global Plate Type\" to use it."), overridden_plates));
 
                 // update render
                 view3D->get_canvas3d()->render();

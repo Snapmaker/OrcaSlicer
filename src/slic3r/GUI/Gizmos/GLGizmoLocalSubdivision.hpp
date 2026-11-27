@@ -49,13 +49,28 @@ protected:
     // Opened from the object context menu only, never from the toolbar.
     bool on_is_selectable() const override { return false; }
 
+    // The base painter requires a single full instance, but this gizmo only needs
+    // the selection to belong to one instance of one object: the object/part context
+    // menu can be invoked with just one volume of a multi-volume object selected
+    // (e.g. right after repairing that part), and the per-volume preview machinery
+    // already handles the unselected parts. Multi-object and multi-instance
+    // selections are still refused, as the data path assumes a single instance.
+    bool on_is_activable() const override;
+
     // Finer circle brush than the painting gizmos default.
     static const constexpr float CursorRadiusMin = 0.1f;
     const float get_cursor_radius_min() const override { return CursorRadiusMin; }
 
 private:
     bool on_init() override;
-    // The selection is transient, so nothing is stored on the ModelVolume. A finished
+    // The base data_changed only reacts to object-id / volume-count / serialization
+    // changes; a selection change within the same object (e.g. switching to another
+    // part in the sidebar while the gizmo stays open) must also re-sync the
+    // session - otherwise the previously painted part's caches would still be
+    // applicable and the Subdivide button would write them back.
+    void data_changed(bool is_serializing) override;
+    // On a session-foreign event, update the preview from the selection. The facet
+    // selection is transient, so nothing is stored on the ModelVolume. A finished
     // paint stroke ends in update_model_object(), used here to invalidate the preview.
     void update_model_object() override { m_preview_dirty = true; }
     void update_from_model_object(bool first_update = false) override;
@@ -102,6 +117,21 @@ private:
     PreviewUpdateOutcome update_preview(BudgetPromptMode prompt_mode);
     void                 restore_preview();
     void                 render_preview_meshes();
+    // GLVolume of the previewed volume inside the selected object instance. Looks
+    // over ALL canvas volumes, not just the selected ones: with a partial-volume
+    // selection the painted volume may lie outside the selection.
+    const GLVolume* matching_glvolume(const Preview& p) const;
+    // Whether the given model part belongs to the current selection. Parts outside
+    // a partial-volume selection are hidden for the whole session.
+    bool is_selected_volume(const ModelVolume* mv) const;
+    // Full volume indexes (sorted) of the current selection, or empty when the
+    // selection is not a single instance. Used to detect A -> B switches while the
+    // gizmo stays open.
+    std::vector<int> current_selected_volume_idxs() const;
+    // The selection the session was last synced to (captured by
+    // update_from_model_object); when it changes, the session is re-synced and the
+    // previous part's painting and previews are discarded.
+    std::vector<int> m_session_volume_idxs;
     // Rebuilds the preview caches from the current painting state and grows
     // them level by level to m_subdiv_level; also raises the "stopped early"
     // notification. Returns false when it could not run (never in practice:
@@ -118,8 +148,14 @@ private:
     void        gather_budget_inputs(size_t &painted, size_t &total_faces) const;
     // Shows the over-budget confirmation dialog (reentrancy-guarded).
     bool        ask_face_budget_dialog();
-    // Skip the selector draw only for volumes replaced by a live preview.
+    // Skip the selector draw only for volumes replaced by a live preview, and for
+    // parts outside a partial-volume selection (hidden for the session).
     bool render_selector_for_volume(const ModelVolume* mv) const override;
+    // Hidden parts must not swallow paint strokes aimed at the visible part behind
+    // them, and must not show the height-range cursor outline: the hit test and
+    // the cursor visual skip them, so the ray and the outline pass through to the
+    // selection.
+    bool volume_is_paint_target(const ModelVolume* mv) const override;
     // Failure notification text matching the recorded per-preview reasons: the
     // specific cause when all failed previews share one, the combined wording when
     // they mix. apply selects the "Subdivision failed" family, otherwise the

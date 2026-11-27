@@ -1956,13 +1956,19 @@ int CLI::run(int argc, char **argv)
     if (filament_count == 0)
         filament_count = load_filament_count;
 
-    if (is_bbl_3mf && (load_filament_count > 0) && (load_filaments_set.size() == 1))
+    if (is_bbl_3mf && (load_filament_count == 1) && (load_filaments_set.size() == 1))
     {
         // Same preset name does not mean the same filament: several "Generic PLA"
         // configs can carry different colours. Only map them to one filament (and
         // disable the prime tower) when the effective colours are also the same.
         // Check the loaded filament configs first, then the project config from
         // the 3MF (GH #1119).
+        //
+        // Only one filament file may be mapped at all: two files sharing a name
+        // and a colour are still two spools on two heads, and the heads come back
+        // from the dock after each toolchange needing a place to prime. Mapping
+        // them to one filament would disable the tower while both heads are still
+        // extruding (alandebortolo's row 2 in the PR #1190 review).
         std::set<std::string> filament_color_set;
         for (const DynamicPrintConfig &fila_config : load_filaments_config) {
             const ConfigOptionStrings *color_opt = fila_config.option<ConfigOptionStrings>("filament_colour");

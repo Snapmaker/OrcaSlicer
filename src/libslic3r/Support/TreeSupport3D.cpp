@@ -70,7 +70,7 @@ static inline void validate_range(const Point &pt)
 {
     static constexpr const int32_t hi = 65536 * 16384;
     if (pt.x() > hi || pt.y() > hi || -pt.x() > hi || -pt.y() > hi)
-      throw ClipperLib::clipperException("Coordinate outside allowed range");
+      throw RuntimeError("Coordinate outside allowed range");
 }
 
 static inline void validate_range(const Points &points)
@@ -840,7 +840,7 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
     }
     // offset in steps
     for (int i = 0; i < steps; ++ i) {
-        ret = diff(offset(ret, step_size, ClipperLib::jtRound, scaled<float>(0.01)), collision_trimmed());
+        ret = diff(offset(ret, step_size, jtRound, scaled<float>(0.01)), collision_trimmed());
         // ensure that if many offsets are done the performance does not suffer extremely by the new vertices of jtRound.
         if (i % 10 == 7)
             ret = polygons_simplify(ret, scaled<double>(0.015), polygons_strictly_simple);
@@ -848,7 +848,7 @@ static std::optional<std::pair<Point, size_t>> polyline_sample_next_point_at_dis
     // offset the remainder
     float last_offset = distance - steps * step_size;
     if (last_offset > SCALED_EPSILON)
-        ret = offset(ret, distance - steps * step_size, ClipperLib::jtRound, scaled<float>(0.01));
+        ret = offset(ret, distance - steps * step_size, jtRound, scaled<float>(0.01));
     ret = polygons_simplify(ret, scaled<double>(0.015), polygons_strictly_simple);
 
     if (do_final_difference)
@@ -1620,7 +1620,7 @@ static Point move_inside_if_outside(const Polygons &polygons, Point from, int di
                 safe_movement_distance, safe_movement_distance + radius, 1);
         }
         if (settings.no_error && settings.move)
-            // as ClipperLib::jtRound has to be used for offsets this simplify is VERY important for performance.
+            // as jtRound has to be used for offsets this simplify is VERY important for performance.
             polygons_simplify(increased, scaled<float>(0.025), polygons_strictly_simple);
     } else
         // if no movement is done the areas keep parent area as no move == offset(0)

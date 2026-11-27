@@ -1735,7 +1735,7 @@ static ExPolygons make_expolygons_simple(std::vector<IntersectionLine> &lines)
     return slices;
 }
 
-static void make_expolygons(const Polygons &loops, const float closing_radius, const float extra_offset, ClipperLib::PolyFillType fill_type, ExPolygons* slices)
+static void make_expolygons(const Polygons &loops, const float closing_radius, const float extra_offset, PolyFillType fill_type, ExPolygons* slices)
 {
     /*
         Input loops are not suitable for evenodd nor nonzero fill types, as we might get
@@ -2029,8 +2029,8 @@ std::vector<ExPolygons> slice_mesh_ex(
                 const auto this_mode = layer_id < params.slicing_mode_normal_below_layer ? params.mode_below : params.mode;
                 Slic3r::make_expolygons(
                     layers_p[layer_id], params.closing_radius, params.extra_offset,
-                    this_mode == MeshSlicingParams::SlicingMode::EvenOdd ? ClipperLib::pftEvenOdd : 
-                    this_mode == MeshSlicingParams::SlicingMode::PositiveLargestContour ? ClipperLib::pftPositive : ClipperLib::pftNonZero,
+                    this_mode == MeshSlicingParams::SlicingMode::EvenOdd ? pftEvenOdd : 
+                    this_mode == MeshSlicingParams::SlicingMode::PositiveLargestContour ? pftPositive : pftNonZero,
                     &expolygons);
                 //FIXME simplify
                 if (this_mode == MeshSlicingParams::SlicingMode::PositiveLargestContour)
@@ -2348,7 +2348,7 @@ void cut_mesh(const indexed_triangle_set& mesh, float z, indexed_triangle_set* u
     IntersectionLines  upper_lines, lower_lines;
     std::vector<int>   upper_slice_vertices, lower_slice_vertices;
     std::vector<Vec3i32> facets_edge_ids = its_face_edge_ids(mesh);
-    std::map<int, Vec3f *> section_vertices_map;
+    std::map<int, Vec3f *> section_vertices_map; // vertices on the cut plane
 
     for (int facet_idx = 0; facet_idx < int(mesh.indices.size()); ++ facet_idx) {
         const stl_triangle_vertex_indices &facet = mesh.indices[facet_idx];

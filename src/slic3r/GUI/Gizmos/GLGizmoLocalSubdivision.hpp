@@ -5,6 +5,7 @@
 #include "GLGizmoPainterBase.hpp"
 
 #include "slic3r/GUI/GLModel.hpp"
+#include "libslic3r/PreviewBudgetGate.hpp"
 #include "libslic3r/TriangleMeshDeal.hpp"
 
 #include <utility>
@@ -60,7 +61,7 @@ private:
     void update_from_model_object(bool first_update = false) override;
     // Every time the gizmo is opened, start without a subdivision preview and
     // recalibrate the fixed panel height from scratch.
-    void on_opening() override { m_subdiv_level = 0; m_param_area_max_height = 0.f; }
+    void on_opening() override { m_subdiv_level = 0; m_param_area_max_height = 0.f; m_budget_flow.reset(); }
     void on_shutdown() override;
 
     void apply_subdivision();
@@ -91,15 +92,37 @@ private:
         GLModel                   model_region;     // region-only geometry, colored like the level-0 painting
         bool                      hidden = false;   // the original volume is hidden while the preview is shown
     };
-    void        update_preview();
-    void        restore_preview();
-    void        render_preview_meshes();
-    // Per-volume gate for the inherited selector draw: skip exactly the volumes
-    // whose draw render_preview_meshes replaces (conditions mirrored), so
-    // unpainted siblings and failed previews keep their original rendering.
-    bool        render_selector_for_volume(const ModelVolume* mv) const override;
-    // Failure notification text (the only reachable cause is the non-manifold
-    // guard). apply selects the "Subdivision failed" family, otherwise the
+    // One frame of the live preview: updates the caches from the current
+    // selection and level. Returns a judgeable outcome - callers that may
+    // apply the caches (apply_subdivision) proceed only on Ready, which means
+    // the caches reflect the current inputs. prompt_mode selects whether the
+    // budget dialog may be shown (the panel asks; an apply-time forced
+    // recompute never shows one - it is authorized by a recorded
+    // confirmation instead).
+    PreviewUpdateOutcome update_preview(BudgetPromptMode prompt_mode);
+    void                 restore_preview();
+    void                 render_preview_meshes();
+    // Rebuilds the preview caches from the current painting state and grows
+    // them level by level to m_subdiv_level; also raises the "stopped early"
+    // notification. Returns false when it could not run (never in practice:
+    // per-preview failures are recorded in the caches and reported here).
+    bool                 compute_preview_caches(ModelObject* mo, bool& changed);
+    // Cheap budget gate run BEFORE any subdivision computation: estimates the face
+    // count of the requested level from the current selection and asks the user
+    // when it would exceed LocalSubdivisionFaceBudget (soft limit, Yes continues).
+    // Returns false when the user cancelled, true otherwise (also true when the
+    // estimate is within the budget or there is nothing selected).
+    bool        confirm_face_budget(int level);
+    // Counts the current selection and the meshes it sits on for the budget
+    // estimate (no subdivision is run).
+    void        gather_budget_inputs(size_t &painted, size_t &total_faces) const;
+    // Shows the over-budget confirmation dialog (reentrancy-guarded).
+    bool        ask_face_budget_dialog();
+    // Skip the selector draw only for volumes replaced by a live preview.
+    bool render_selector_for_volume(const ModelVolume* mv) const override;
+    // Failure notification text matching the recorded per-preview reasons: the
+    // specific cause when all failed previews share one, the combined wording when
+    // they mix. apply selects the "Subdivision failed" family, otherwise the
     // "stopped at level" family.
     wxString    subdivision_failure_text(int lowest_achieved, bool apply, int* reason_key_out = nullptr) const;
 
@@ -108,9 +131,25 @@ private:
     std::map<std::string, wxString> m_desc;
 
     static const int MaxSubdivLevel = 3;
+    // Face-count budget shared by the live preview and the applied subdivision:
+    // both ask the user before spending the computation beyond this size.
+    static constexpr size_t LocalSubdivisionFaceBudget = 1000000;
     int  m_subdiv_level  = 0;   // wanted subdivision level (slider)
     bool m_preview_dirty = true; // painted facets changed, the caches must be rebuilt
     int  m_shown_level   = 0;   // level whose geometry is currently displayed (0 = original)
+    // Budget gate of the live preview: the state machine remembers a decline
+    // only for the (level, selection size) it was raised for, so a selection
+    // that shrinks back under the budget unblocks the preview automatically
+    // (still over: silent block, no dialog spam), and a level change
+    // re-evaluates from scratch. The flow additionally carries the one-shot
+    // apply-time confirmation: a forced recompute is authorized exactly once
+    // for exactly the inputs the confirmation was given for, and update_preview
+    // reports a judgeable outcome so apply only ever submits caches that were
+    // actually recomputed for the current selection.
+    PreviewBudgetFlow m_budget_flow;
+    // Reentrancy guard: a modal budget dialog pumps events, which may repaint the
+    // canvas and re-enter update_preview while the dialog is still open.
+    bool m_awaiting_budget_confirmation = false;
     int  m_selected_facet_count = 0; // painted original-face count shown in the panel; refreshed while m_preview_dirty
     // (Requested, achieved) level pair of the last "subdivision stopped early"
     // notification; repaints that fail the same way do not re-notify.

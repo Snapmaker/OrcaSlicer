@@ -20,6 +20,8 @@
 #include "EmbossShape.hpp"
 #include "TriangleSelector.hpp"
 
+#include <functional>
+
 //BBS: add bbs 3mf
 #include "Format/bbs_3mf.hpp"
 //BBS: add step
@@ -532,8 +534,26 @@ public:
     void delete_connectors();
     void clone_for_cut(ModelObject **obj);
 
-    void split(ModelObjectPtrs*new_objects);
+    void split(ModelObjectPtrs*new_objects, bool remap_paint);
     void merge();
+
+    // Two-phase commit of repaired meshes with painting preservation (used by
+    // the Windows repair worker). Phase A remaps every volume's painting onto
+    // its repaired mesh WITHOUT touching the volumes, checking `cancel_check`
+    // between volumes and annotations; phase B applies all meshes and
+    // precomputed paintings back-to-back with no further checks. The final
+    // cancel check runs directly before phase B, so the returned status always
+    // matches what was actually written: canceled/failed leaves every volume
+    // and its painting untouched, committed updates all volumes together.
+    struct RepairCommitItem
+    {
+        ModelVolume* volume         = nullptr;
+        TriangleMesh repaired_mesh;
+    };
+    enum class RepairCommitResult { Committed, Canceled, Failed };
+
+    RepairCommitResult commit_repaired_meshes_with_painting(std::vector<RepairCommitItem>& items, bool keep_painting,
+                                                            const std::function<bool()>& cancel_check, std::string* error = nullptr);
 
     // BBS: Boolean opts - Musang King
     bool make_boolean(ModelObject *cut_object, const std::string &boolean_opts);
@@ -746,6 +766,7 @@ public:
     void assign(const FacetsAnnotation &rhs) { if (! this->timestamp_matches(rhs)) { m_data = rhs.m_data; this->copy_timestamp(rhs); } }
     void assign(FacetsAnnotation &&rhs) { if (! this->timestamp_matches(rhs)) { m_data = std::move(rhs.m_data); this->copy_timestamp(rhs); } }
     const TriangleSelector::TriangleSplittingData &get_data() const noexcept { return m_data; }
+    void set_data(TriangleSelector::TriangleSplittingData &&data) { m_data = std::move(data); this->touch(); }
     bool set(const TriangleSelector& selector);
     indexed_triangle_set get_facets(const ModelVolume& mv, EnforcerBlockerType type) const;
     // BBS
@@ -880,6 +901,19 @@ public:
     void                set_mesh(std::shared_ptr<const TriangleMesh> &mesh) { m_mesh = mesh; }
     void                set_mesh(std::unique_ptr<const TriangleMesh> &&mesh) { m_mesh = std::move(mesh); }
 	void				reset_mesh() { m_mesh = std::make_shared<const TriangleMesh>(); }
+
+    // Replace the mesh with a mesh rebuilt in the SAME stored coordinates
+    // (simplify, global smooth, local subdivision results). Such results are
+    // fresh TriangleMesh objects whose init_shift is zero; carrying the
+    // current init_shift over keeps the source-file <-> stored-mesh
+    // relationship intact. reload from disk and replace with STL map the
+    // painting between the two spaces through those shifts
+    // (paint_relink_transform), so a same-coordinate replacement without this
+    // helper would relink the painting at a wrong offset whenever the source
+    // file's center is not the origin. Callers must guarantee the replacement
+    // is expressed in the current stored coordinates.
+    void                set_mesh_preserving_init_shift(TriangleMesh &&mesh);
+    void                set_mesh_preserving_init_shift(indexed_triangle_set &&mesh);
     const std::shared_ptr<const TriangleMesh>& get_mesh_shared_ptr() const { return m_mesh; }
     // Configuration parameters specific to an object model geometry or a modifier volume, 
     // overriding the global Slic3r settings and the ModelObject settings.
@@ -897,12 +931,60 @@ public:
     // List of mesh facets painted for fuzzy skin.
     FacetsAnnotation    fuzzy_skin_facets;
 
+    // Save painting data before reset_extra_facets() discards it.
+    // Used for replacing mesh without losing painting data.
+    // Only for model parts (not modifiers/connectors).
+    std::optional<TriangleSelector::SavedPainting> save_painting() const;
+
+    // Remap painting data from a previous saved source onto this mesh.
+    // `target_to_source` transforms this volume's mesh into the saved source
+    // mesh's coordinate space (the source snapshot keeps its original vertex /
+    // corner order; the caller passes the actual relative transform - see
+    // TriangleSelector::remap_painting). `transfer_by_projection` selects the
+    // projection strategy suited for simplified meshes, whose surface no longer
+    // intersects the original one.
+    void restore_painting(const std::optional<TriangleSelector::SavedPainting>& saved, const Transform3d& target_to_source,
+                          bool keep_existing_paint = false, bool transfer_by_projection = false);
+
+    // Restore painting onto a mesh that was just produced by add_volume()
+    // (boolean result, split piece, cut part): add_volume() re-centers the
+    // stored mesh, so the relative transform first un-does that centering
+    // (mesh().get_init_shift() holds the centering translation) and then maps
+    // the result coordinates back into the snapshot's space through
+    // `inverse_composite`, the inverse of the source-to-result placement.
+    // Precondition: the mesh handed to add_volume() was freshly built, i.e.
+    // had a zero init_shift. That holds for split pieces (TriangleMesh::split()
+    // constructs new meshes), boolean results and cut outputs; a mesh COPIED
+    // from an already centered volume keeps that volume's init_shift and must
+    // not go through this helper. center_geometry_after_creation() overwrites
+    // init_shift with the shift it applies and leaves an approximately zero
+    // shift untouched (it then stays zero), so init_shift is exactly the
+    // centering this call has to compensate.
+    void restore_painting_on_centered_result(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                             const Transform3d& inverse_composite, bool keep_existing_paint = false);
+
+    void restore_painting_split(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                const TriangleMesh::SplitProvenance& provenance);
+
+    // Restore painting across one global-smooth subdivision (see
+    // TriangleSelector::remap_painting_smooth). `target_origins` maps every face
+    // of this volume's mesh to (source face, child ordinal) as produced by
+    // TriangleMeshDeal::smooth_triangle_mesh(). The painting of the source face
+    // is clipped by the four child regions in the face's barycentric domain,
+    // because the subdivision moves vertices and normals.
+    void restore_painting_smooth(const std::optional<TriangleSelector::SavedPainting>& saved,
+                                 const std::vector<std::pair<int, int>>& target_origins);
+
+    // Relative transform mapping a replacement mesh (with its own init shift
+    // and unit conversion) into the saved source mesh's coordinate space, for
+    // paint relinking after replace / reload from disk: the stored coordinates
+    // equal unit_scale * (file - init_shift) on both sides, so only the shift
+    // difference survives. The source mesh itself is never re-shifted.
+    static Transform3d paint_relink_transform(const Vec3d& source_init_shift, const Vec3d& target_init_shift, double unit_scale);
+
     // BBS: quick access for volume extruders, 1 based
     mutable std::vector<int> mmuseg_extruders;
     mutable Timestamp        mmuseg_ts;
-
-    // List of exterior faces
-    FacetsAnnotation    exterior_facets;
 
     // Is set only when volume is Embossed Text type
     // Contain information how to re-create volume
@@ -945,7 +1027,7 @@ public:
     // Split this volume, append the result to the object owning this volume.
     // Return the number of volumes created from this one.
     // This is useful to assign different materials to different volumes of an object.
-    size_t              split(unsigned int max_extruders);
+    size_t              split(unsigned int max_extruders, bool remap_paint);
     void                translate(double x, double y, double z) { translate(Vec3d(x, y, z)); }
     void                translate(const Vec3d& displacement);
     void                scale(const Vec3d& scaling_factors);
@@ -966,6 +1048,15 @@ public:
     void                calculate_convex_hull();
     const TriangleMesh& get_convex_hull() const;
     const std::shared_ptr<const TriangleMesh>& get_convex_hull_shared_ptr() const { return m_convex_hull; }
+    // Non-throwing commit of a previously prepared repair (used by
+    // ModelObject::commit_repaired_meshes_with_painting). Every allocation and
+    // computation - wrapping the repaired mesh, computing its convex hull,
+    // remapping the painting - must have happened in the prepare phase; this
+    // method only moves shared_ptrs and precomputed data and writes POD fields,
+    // so it cannot fail part-way and needs no rollback.
+    void commit_prepared_repair(std::shared_ptr<const TriangleMesh> mesh,
+                                std::shared_ptr<const TriangleMesh> convex_hull,
+                                std::array<std::optional<TriangleSelector::TriangleSplittingData>, 4>&& painting) noexcept;
     //BBS: add convex_hell_2d related logic
     const Polygon& get_convex_hull_2d(const Transform3d &trafo_instance) const;
     void invalidate_convex_hull_2d()
@@ -1028,6 +1119,7 @@ public:
     bool is_seam_painted() const { return !this->seam_facets.empty(); }
     bool is_mm_painted() const { return !this->mmu_segmentation_facets.empty(); }
     bool is_fuzzy_skin_painted() const { return !this->fuzzy_skin_facets.empty(); }
+    bool is_any_painted() const { return is_fdm_support_painted() || is_seam_painted() || is_mm_painted() || is_fuzzy_skin_painted(); }
 
     // Id of the source ModelObject this volume was cloned from when objects were
     // assembled (merged) into a multi-part object. Opaque group label only compared for

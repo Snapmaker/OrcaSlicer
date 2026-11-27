@@ -2,6 +2,7 @@
 
 #include "libslic3r/Point.hpp"
 #include "libslic3r/Polygon.hpp"
+#include "libslic3r/ClipperZUtils.hpp"
 
 using namespace Slic3r;
 
@@ -147,4 +148,165 @@ SCENARIO("Remove collinear points from Polygon", "[Polygon]") {
             }
         }
     }
+}
+
+TEST_CASE("point_in_polygon handles large coordinates without int64 overflow", "[Polygon]")
+{
+    auto check_inside = [](const Polygon &poly, const Point &pt) {
+        CHECK(contains(poly, pt, true));
+        CHECK(contains(poly, pt, false));
+    };
+    auto check_boundary = [](const Polygon &poly, const Point &pt) {
+        CHECK(contains(poly, pt, true));
+        CHECK_FALSE(contains(poly, pt, false));
+    };
+    auto check_outside = [](const Polygon &poly, const Point &pt) {
+        CHECK_FALSE(contains(poly, pt, true));
+        CHECK_FALSE(contains(poly, pt, false));
+    };
+
+    SECTION("3.3e9 scale triangle (cross product > INT64_MAX)") {
+        constexpr coord_t S = 3300000000LL;
+        constexpr coord_t H = S / 2;
+        const Polygon ccw_tri{ { S, 0 }, { 0, S }, { 0, 0 } };
+        Polygon       cw_tri(ccw_tri);
+        cw_tri.reverse();
+
+        for (const Polygon &tri : { ccw_tri, cw_tri }) {
+            // Strictly inside (including points where raw int64 cross product overflows)
+            check_inside(tri, { 100000000, 100000000 });
+            check_inside(tri, { 1000000000, 1000000000 });
+            check_inside(tri, { H - 1, H });
+
+            // Vertices
+            check_boundary(tri, { S, 0 });
+            check_boundary(tri, { 0, S });
+            check_boundary(tri, { 0, 0 });
+
+            // Horizontal, vertical, and diagonal edges
+            check_boundary(tri, { H, 0 });
+            check_boundary(tri, { 0, H });
+            check_boundary(tri, { H, H });
+            check_boundary(tri, { 1000000000, S - 1000000000 });
+
+            // Strictly outside and collinear extensions outside edges
+            check_outside(tri, { H + 1, H });
+            check_outside(tri, { S, S });
+            check_outside(tri, { -1, 100000000 });
+            check_outside(tri, { 100000000, -1 });
+            check_outside(tri, { -100000000, 0 });
+            check_outside(tri, { S + 100000000, 0 });
+            check_outside(tri, { 0, -100000000 });
+            check_outside(tri, { 0, S + 100000000 });
+            check_outside(tri, { S + 100000000, -100000000 });
+            check_outside(tri, { -100000000, S + 100000000 });
+        }
+    }
+
+    SECTION("InfiniteBed +/-2^50 scale polygons") {
+        constexpr coord_t R = coord_t(1) << 50;
+
+        // Diamond with diagonal edges spanning +/-2^50
+        const Polygon ccw_diamond{ { R, 0 }, { 0, R }, { -R, 0 }, { 0, -R } };
+        Polygon       cw_diamond(ccw_diamond);
+        cw_diamond.reverse();
+
+        for (const Polygon &diamond : { ccw_diamond, cw_diamond }) {
+            check_inside(diamond, { 0, 0 });
+            check_inside(diamond, { R / 2 - 1, R / 2 });
+            check_inside(diamond, { -R / 2 + 1, -R / 2 });
+            check_inside(diamond, { R - 1, 0 });
+            check_inside(diamond, { 0, -R + 1 });
+
+            check_boundary(diamond, { R, 0 });
+            check_boundary(diamond, { 0, R });
+            check_boundary(diamond, { -R, 0 });
+            check_boundary(diamond, { 0, -R });
+            check_boundary(diamond, { R / 2, R / 2 });
+            check_boundary(diamond, { -R / 2, R / 2 });
+            check_boundary(diamond, { -R / 2, -R / 2 });
+            check_boundary(diamond, { R / 2, -R / 2 });
+
+            check_outside(diamond, { R / 2 + 1, R / 2 });
+            check_outside(diamond, { -R / 2 - 1, R / 2 });
+            check_outside(diamond, { -R / 2 - 1, -R / 2 });
+            check_outside(diamond, { R / 2 + 1, -R / 2 });
+            check_outside(diamond, { R, 1 });
+            check_outside(diamond, { -R, -1 });
+            check_outside(diamond, { R + 1, -1 });
+            check_outside(diamond, { -1, R + 1 });
+        }
+
+        // Near-collinear diagonal at 2^50 scale (determinant = +/-1 at {1, 1}, sub-ULP for double)
+        const Polygon ccw_skew{ { 0, 0 }, { R, R - 1 }, { 0, R } };
+        Polygon       cw_skew(ccw_skew);
+        cw_skew.reverse();
+
+        for (const Polygon &tri : { ccw_skew, cw_skew }) {
+            check_inside(tri, { 1, 1 });
+            check_inside(tri, { R / 2, R / 2 });
+            check_boundary(tri, { 0, R / 2 });
+            check_outside(tri, { R / 2 + 1, R / 2 });
+            check_outside(tri, { 2, 1 });
+            check_outside(tri, { -1, R / 2 });
+        }
+
+        // Axis-aligned InfiniteBed box with a large diamond hole
+        const Polygon  box{ { -R, -R }, { R, -R }, { R, R }, { -R, R } };
+        const Polygon  hole{ { R / 2, 0 }, { 0, -R / 2 }, { -R / 2, 0 }, { 0, R / 2 } };
+        const Polygons with_hole{ box, hole };
+
+        check_inside(box, { 0, 0 });
+        check_inside(box, { R - 1, R - 1 });
+        check_boundary(box, { -R, -R });
+        check_boundary(box, { 0, R });
+        check_boundary(box, { R, 0 });
+        check_outside(box, { R + 1, 0 });
+        check_outside(box, { 0, -R - 1 });
+
+        CHECK_FALSE(contains(with_hole, { 0, 0 }, true));
+        CHECK_FALSE(contains(with_hole, { 0, 0 }, false));
+        CHECK(contains(with_hole, { R / 4, R / 4 }, true));
+        CHECK_FALSE(contains(with_hole, { R / 4, R / 4 }, false));
+        CHECK(contains(with_hole, { R - 1, R - 1 }, true));
+        CHECK(contains(with_hole, { R - 1, R - 1 }, false));
+    }
+}
+
+TEST_CASE("Polygon area and winding are invariant under large coordinates (1e9)", "[Polygon]")
+{
+    const coord_t offset_xy = 1000000000;
+    auto make_sq = [&](coord_t size, bool cw) {
+        Polygon p({ { offset_xy, offset_xy },
+                    { offset_xy + size, offset_xy },
+                    { offset_xy + size, offset_xy + size },
+                    { offset_xy, offset_xy + size } });
+        if (cw)
+            p.reverse();
+        return p;
+    };
+
+    const Polygon ccw10 = make_sq(10, false);
+    const Polygon cw10  = make_sq(10, true);
+    const Polygon ccw2  = make_sq(2, false);
+    const Polygon cw2   = make_sq(2, true);
+
+    CHECK(ccw10.area() == 100.);
+    CHECK(ccw10.is_counter_clockwise());
+    CHECK_FALSE(ccw10.is_clockwise());
+
+    CHECK(cw10.area() == -100.);
+    CHECK_FALSE(cw10.is_counter_clockwise());
+    CHECK(cw10.is_clockwise());
+
+    CHECK(ccw2.area() == 4.);
+    CHECK(ccw2.is_counter_clockwise());
+
+    CHECK(cw2.area() == -4.);
+    CHECK(cw2.is_clockwise());
+
+    ClipperZUtils::ZPath z_ccw2 = ClipperZUtils::to_zpath<false>(ccw2.points, 0);
+    ClipperZUtils::ZPath z_cw2  = ClipperZUtils::to_zpath<false>(cw2.points, 0);
+    CHECK(ClipperZUtils::area(z_ccw2) == 4.);
+    CHECK(ClipperZUtils::area(z_cw2) == -4.);
 }

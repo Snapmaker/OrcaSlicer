@@ -4,7 +4,6 @@
 	#undef assert
 #endif
 
-#include "clipper.hpp"
 #include "ShortestPath.hpp"
 #include "ExtrusionEntityCollection.hpp"
 #include "KDTreeIndirect.hpp"
@@ -1098,7 +1097,7 @@ std::vector<size_t> chain_expolygons(const ExPolygons &input_exploy) {
 	return chain_points(points);
 }
 
-std::vector<size_t> chain_points(const Points &points, Point *start_near)
+std::vector<size_t> chain_points(const Points &points, const Point *start_near)
 {
 	auto segment_end_point = [&points](size_t idx, bool /* first_point */) -> const Point& { return points[idx]; };
 	std::vector<std::pair<size_t, bool>> ordered = chain_segments_greedy<Point, decltype(segment_end_point)>(segment_end_point, points.size(), start_near);
@@ -1988,22 +1987,6 @@ Polylines chain_polylines(Polylines &&polylines, const Point *start_near)
 	svg_draw_polyline_chain("chain_polylines-final", iRun, out);
 #endif /* DEBUG_SVG_OUTPUT */
 	return out;
-}
-
-template<class T> static inline T chain_path_items(const Points &points, const T &items)
-{
-	auto segment_end_point = [&points](size_t idx, bool /* first_point */) -> const Point& { return points[idx]; };
-	std::vector<std::pair<size_t, bool>> ordered = chain_segments_greedy<Point, decltype(segment_end_point)>(segment_end_point, points.size(), nullptr);
-	T out;
-	out.reserve(items.size());
-	for (auto &segment_and_reversal : ordered)
-		out.emplace_back(items[segment_and_reversal.first]);
-	return out;
-}
-
-ClipperLib::PolyNodes chain_clipper_polynodes(const Points &points, const ClipperLib::PolyNodes &items)
-{
-	return chain_path_items(points, items);
 }
 
 // BBS

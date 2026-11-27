@@ -130,8 +130,7 @@ struct SplitOutputFn {
 };
 
 // Splits a mesh into multiple meshes when possible.
-template<class Its, class OutputIt>
-void its_split(const Its &m, OutputIt out_it)
+template<class Its, class OutputIt> void its_split(const Its& m, OutputIt out_it, std::vector<std::vector<size_t>>* face_sources = nullptr)
 {
     using namespace meshsplit_detail;
 
@@ -176,6 +175,8 @@ void its_split(const Its &m, OutputIt out_it)
             mesh.indices.emplace_back(new_face);
         }
 
+        if (face_sources)
+            face_sources->push_back(facets);
         *out_it = std::move(mesh);
         ++out_it;
     }

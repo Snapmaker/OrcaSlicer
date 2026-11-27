@@ -462,7 +462,7 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                     // if a key does not exist when it is accessed it is added!
                     collision_areas_offsetted[layer_idx] = offset_value == 0 ?
                             union_(collision_areas) :
-                            offset(union_ex(collision_areas), offset_value, ClipperLib::jtMiter, 1.2);
+                            offset(union_ex(collision_areas), offset_value, jtMiter, 1.2);
                     if(throw_on_cancel)
                         throw_on_cancel();
                 }
@@ -515,10 +515,10 @@ void TreeModelVolumes::calculateCollision(const coord_t radius, const LayerIndex
                                     // the conditional -0.5 ensures that plastic can never touch on the diagonal
                                     // downward when the z_distance_top_layers = 1. It is assumed to be better to
                                     // not support an overhang<90 degree than to risk fusing to it.
-                                append(collisions, offset(union_ex(collision_areas_original), radius + required_range_x, ClipperLib::jtMiter, 1.2));
+                                append(collisions, offset(union_ex(collision_areas_original), radius + required_range_x, jtMiter, 1.2));
                             }
                         collisions = processing_last_mesh && layer_idx < int(anti_overhang.size()) ? 
-                                union_(collisions, offset(union_ex(anti_overhang[layer_idx]), radius, ClipperLib::jtMiter, 1.2)) : 
+                                union_(collisions, offset(union_ex(anti_overhang[layer_idx]), radius, jtMiter, 1.2)) : 
                                 union_(collisions);
                         auto &dst = data[layer_idx];
                         if (processing_last_mesh) {
@@ -601,7 +601,7 @@ void TreeModelVolumes::calculateCollisionHolefree(const std::vector<RadiusLayerP
                     // this union is important as otherwise holes(in form of lines that will increase to holes in a later step) can get unioned onto the area.
                     data.emplace_back(RadiusLayerPair(radius, layer_idx), polygons_simplify(
                         offset(union_ex(this->getCollision(m_increase_until_radius, layer_idx, false)),
-                            5 - increase_radius_ceil, ClipperLib::jtRound, m_min_resolution),
+                            5 - increase_radius_ceil, jtRound, m_min_resolution),
                         m_min_resolution, polygons_strictly_simple));
                     if (throw_on_cancel)
                         throw_on_cancel();
@@ -688,7 +688,7 @@ void TreeModelVolumes::calculateAvoidance(const std::vector<RadiusLayerPair> &ke
                     latest_avoidance = union_(current_layer_collisions,
                         offset(latest_avoidance,
                             istep + 1 == move_steps ? - last_move_step : - move_step,
-                            ClipperLib::jtRound, m_min_resolution));
+                            jtRound, m_min_resolution));
                 if (task.to_model)
                     latest_avoidance = diff(latest_avoidance, getPlaceableAreas(task.radius, layer_idx, throw_on_cancel));
                 latest_avoidance = polygons_simplify(latest_avoidance, m_min_resolution, polygons_strictly_simple);

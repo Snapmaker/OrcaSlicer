@@ -122,6 +122,7 @@ public:
 
 #else /* HAS_INTRINSIC_128_TYPE */
 
+public:
 /******************************************** Splitting the 128bit number into two 64bit words *********************************************/
 
 	Int128(int64_t lo = 0) : m_lo((uint64_t)lo), m_hi((lo < 0) ? -1 : 0) {}
@@ -179,11 +180,14 @@ public:
 	operator double() const
 	{
 		const double shift64 = 18446744073709551616.0; //2^64
-		return (m_hi < 0) ?
-		((m_lo == 0) ? 
-		(double)m_hi * shift64 :
-		-(double)(~m_lo + ~m_hi * shift64)) :
-		(double)(m_lo + m_hi * shift64);
+		if (m_hi < 0) {
+			if (m_lo == 0)
+				return (double)m_hi * shift64;
+			const uint64_t abs_lo = ~m_lo + 1;
+			const uint64_t abs_hi = static_cast<uint64_t>(~m_hi);
+			return -(static_cast<double>(abs_lo) + static_cast<double>(abs_hi) * shift64);
+		}
+		return static_cast<double>(m_lo) + static_cast<double>(m_hi) * shift64;
 	}
 
 	static inline Int128 multiply(int64_t lhs, int64_t rhs)

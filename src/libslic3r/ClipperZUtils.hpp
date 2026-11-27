@@ -1,10 +1,11 @@
 #ifndef slic3r_ClipperZUtils_hpp_
 #define slic3r_ClipperZUtils_hpp_
 
+#include <functional>
 #include <numeric>
 #include <vector>
 
-#include <clipper/clipper_z.hpp>
+#include <libslic3r/ClipperUtils.hpp>
 #include <libslic3r/Point.hpp>
 #include <libslic3r/ExPolygon.hpp>
 
@@ -12,10 +13,13 @@ namespace Slic3r {
 
 namespace ClipperZUtils {
 
-using ZPoint  = ClipperLib_Z::IntPoint;
-using ZPoints = ClipperLib_Z::Path;
-using ZPath   = ClipperLib_Z::Path;
-using ZPaths  = ClipperLib_Z::Paths;
+using ZPoint  = Vec3crd;
+using ZPoints = std::vector<ZPoint, PointsAllocator<ZPoint>>;
+using ZPath   = ZPoints;
+using ZPaths  = std::vector<ZPath, PointsAllocator<ZPath>>;
+
+// Sets Z of an intersection point from the edges crossing there.
+using ZFillCallback = std::function<void(const ZPoint &e1bot, const ZPoint &e1top, const ZPoint &e2bot, const ZPoint &e2top, ZPoint &pt)>;
 
 inline bool zpoint_lower(const ZPoint &l, const ZPoint &r)
 {
@@ -101,6 +105,21 @@ inline VecOfPoints from_zpaths(const ZPaths &paths)
     return out;
 }
 
+// Signed area, positive for a CCW path.
+double area(const ZPath &path);
+
+// Boolean, the subject may be open. zfill only sees intersections off the input vertices.
+// Fill rule defaults to non-zero; pass pftEvenOdd to restore Clipper1 SimplifyPolygons/
+// Execute semantics where a caller relied on even-odd.
+ZPaths clip_zpaths(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill, bool preserve_collinear = false, PolyFillType fill = pftNonZero);
+
+// Boolean with a polygon tree result: the callback receives every closed contour of the
+// result with its depth. Depth 0 contours are top level (outer contours of the result islands),
+// odd depths are holes of their parent, even depths above 0 are islands inside holes. Use it
+// where the Clipper1 PolyTree hierarchy mattered, e.g. to keep only top level contours.
+void clip_zpaths_polytree(ClipType clip_type, const ZPaths &subject, bool subject_open, const ZPaths &clip, const ZFillCallback &zfill,
+    const std::function<void(const ZPath &contour, unsigned depth)> &callback, bool preserve_collinear = false, PolyFillType fill = pftNonZero);
+
 class ClipperZIntersectionVisitor {
 public:
     using Intersection  = std::pair<coord_t, coord_t>;
@@ -126,8 +145,8 @@ public:
             }
         }
     }
-    ClipperLib_Z::ZFillCallback clipper_callback() {
-        return [this](const ZPoint &e1bot, const ZPoint &e1top, 
+    ZFillCallback clipper_callback() {
+        return [this](const ZPoint &e1bot, const ZPoint &e1top,
                  const ZPoint &e2bot, const ZPoint &e2top, ZPoint &pt)
         { return (*this)(e1bot, e1top, e2bot, e2top, pt); };
     }

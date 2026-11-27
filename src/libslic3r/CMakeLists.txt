@@ -86,10 +86,9 @@ set(lisbslic3r_sources
     calib.hpp
     Circle.cpp
     Circle.hpp
-    clipper.cpp
-    clipper.hpp
     ClipperUtils.cpp
     ClipperUtils.hpp
+    ClipperZUtils.cpp
     ClipperZUtils.hpp
     Color.cpp
     Color.hpp
@@ -583,7 +582,7 @@ target_link_libraries(libslic3r
         ${OCCT_LINK_LIBRARIES}
         boost_libs
         cereal::cereal
-        clipper
+        Clipper2
         eigen
         glu-libtess
         JPEG::JPEG

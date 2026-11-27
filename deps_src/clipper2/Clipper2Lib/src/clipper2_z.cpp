@@ -1,7 +1,9 @@
 // Hackish wrapper around the ClipperLib library to compile the Clipper library with the Z support.
-
 // Enable the Z coordinate support.
-#define CLIPPERLIB_USE_XYZ
+#define USINGZ
 
 // and let it compile
-#include "clipper.cpp"
+#include "clipper.engine.cpp"
+#include "clipper.offset.cpp"
+#include "clipper.rectclip.cpp"
+#include "clipper.triangulation.cpp"

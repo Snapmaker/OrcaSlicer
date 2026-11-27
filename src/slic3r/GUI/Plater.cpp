@@ -13366,7 +13366,7 @@ void Plater::priv::split_object()
 
     wxBusyCursor wait;
     ModelObjectPtrs new_objects;
-    current_model_object->split(&new_objects);
+    current_model_object->split(&new_objects, wxGetApp().app_config->get_bool("keep_painting"));
     if (new_objects.size() == 1)
         // #ysFIXME use notification
         Slic3r::GUI::warning_catcher(q, _L("The selected object couldn't be split."));
@@ -14068,10 +14068,27 @@ bool Plater::priv::replace_volume_with_stl(int object_idx, int volume_idx, const
         new_volume->convert_from_imperial_units();
     else if (old_volume->source.is_converted_from_meters)
         new_volume->convert_from_meters();
-    new_volume->supported_facets.assign(old_volume->supported_facets);
-    new_volume->seam_facets.assign(old_volume->seam_facets);
-    new_volume->mmu_segmentation_facets.assign(old_volume->mmu_segmentation_facets);
-    new_volume->fuzzy_skin_facets.assign(old_volume->fuzzy_skin_facets);
+    if (wxGetApp().app_config->get_bool("keep_painting")) {
+        // Proper paint remapping. The snapshot keeps the old mesh in its own
+        // stored coordinate space; only the relative transform - derived from
+        // the two init shifts and the unit conversion - is passed along. The
+        // old mesh must NOT get the new mesh's centering offset (that used to
+        // detach the painting from geometry that stayed in place).
+        auto saved_painting = old_volume->save_painting();
+        if (saved_painting) {
+            const double unit_scale = old_volume->source.is_converted_from_inches ? 25.4 :
+                                      old_volume->source.is_converted_from_meters ? 1000.0 : 1.0;
+            const Transform3d target_to_source = ModelVolume::paint_relink_transform(
+                saved_painting->mesh.get_init_shift(), new_volume->mesh().get_init_shift(), unit_scale);
+            new_volume->restore_painting(saved_painting, target_to_source);
+        }
+    } else {
+        // Won't work well if mesh changed, but kept for old behavior
+        new_volume->supported_facets.assign(old_volume->supported_facets);
+        new_volume->seam_facets.assign(old_volume->seam_facets);
+        new_volume->mmu_segmentation_facets.assign(old_volume->mmu_segmentation_facets);
+        new_volume->fuzzy_skin_facets.assign(old_volume->fuzzy_skin_facets);
+    }
     std::swap(old_model_object->volumes[volume_idx], old_model_object->volumes.back());
     old_model_object->delete_volume(old_model_object->volumes.size() - 1);
     if (!sinking)
@@ -14475,6 +14492,19 @@ void Plater::priv::reload_from_disk()
                     new_volume->convert_from_imperial_units();
                 else if (old_volume->source.is_converted_from_meters)
                     new_volume->convert_from_meters();
+
+                // Remap paint
+                if (wxGetApp().app_config->get_bool("keep_painting")) {
+                    auto saved_painting = old_volume->save_painting();
+                    if (saved_painting) {
+                        const double unit_scale = old_volume->source.is_converted_from_inches ? 25.4 :
+                                                  old_volume->source.is_converted_from_meters ? 1000.0 : 1.0;
+                        const Transform3d target_to_source = ModelVolume::paint_relink_transform(
+                            saved_painting->mesh.get_init_shift(), new_volume->mesh().get_init_shift(), unit_scale);
+                        new_volume->restore_painting(saved_painting, target_to_source);
+                    }
+                }
+
                 std::swap(old_model_object->volumes[vol_idx], old_model_object->volumes.back());
                 old_model_object->delete_volume(old_model_object->volumes.size() - 1);
                 if (!sinking) old_model_object->ensure_on_bed();
@@ -20809,7 +20839,7 @@ TriangleMesh Plater::combine_mesh_fff(const ModelObject& mo, int instance_id, st
     }
 
     if (instance_id == -1) {
-        TriangleMesh vols_mesh(mesh);
+        TriangleMesh vols_mesh(std::move(mesh));
         mesh = TriangleMesh();
         for (const ModelInstance* i : mo.instances) {
             TriangleMesh m = vols_mesh;
@@ -23748,6 +23778,8 @@ void Plater::clear_before_change_mesh(int obj_idx)
         mv->fuzzy_skin_facets.reset();
     }
     if (paint_removed) {
+        BOOST_LOG_TRIVIAL(warning) << "clear_before_change_mesh: clearing painting of object " << obj_idx
+                                   << " (entry point ran with keep_painting off or unset)";
         // snapshot_time is captured by copy so the lambda knows where to undo/redo to.
         get_notification_manager()->push_notification(
                     NotificationType::CustomSupportsAndSeamRemovedAfterRepair,

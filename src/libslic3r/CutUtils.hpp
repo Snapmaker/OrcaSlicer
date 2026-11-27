@@ -11,7 +11,7 @@ namespace Slic3r {
 
 using ModelObjectPtrs = std::vector<ModelObject*>;
 
-enum class ModelObjectCutAttribute : int { KeepUpper, KeepLower, KeepAsParts, FlipUpper, FlipLower, PlaceOnCutUpper, PlaceOnCutLower, CreateDowels, InvalidateCutInfo };
+enum class ModelObjectCutAttribute : int { KeepUpper, KeepLower, KeepAsParts, FlipUpper, FlipLower, PlaceOnCutUpper, PlaceOnCutLower, CreateDowels, InvalidateCutInfo, KeepPaint };
 using ModelObjectCutAttributes = enum_bitmask<ModelObjectCutAttribute>;
 ENABLE_ENUM_BITMASK_OPERATORS(ModelObjectCutAttribute);
 
@@ -25,7 +25,8 @@ class Cut {
 
     void post_process(ModelObject* object, ModelObjectPtrs& objects, bool keep, bool place_on_cut, bool flip);
     void post_process(ModelObject* upper_object, ModelObject* lower_object, ModelObjectPtrs& objects);
-    void finalize(const ModelObjectPtrs& objects);
+    void finalize(const ModelObjectPtrs& objects, const std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>>& saved_paintings,
+                  const std::vector<std::pair<ModelVolume*, int>>& output_sources = {});
 
 public:
 
@@ -56,7 +57,17 @@ public:
     };
 
     const ModelObjectPtrs& perform_with_plane();
-    const ModelObjectPtrs& perform_by_contour(std::vector<Part> parts, int dowels_count);
+    const ModelObjectPtrs& perform_by_contour(const ModelObject* src_object, std::vector<Part> parts, int dowels_count);
+
+    // Preprocessing the cut gizmo runs before a by-contour cut: a plane pre-cut
+    // into the upper/lower parts (kept as whole volumes), then a split of every
+    // splittable part into its connected components. Each source volume's
+    // painting is carried through both steps ALWAYS, independently of the
+    // keep_painting preference: the selection built on this model lives until
+    // the user performs the cut and the preference may change in between. The
+    // final cut alone decides, through its KeepPaint attribute, whether the
+    // painting is written back or dropped.
+    static Model prepare_for_contour_cut(const ModelObject& object, int instance_idx, const Transform3d& cut_matrix);
 
     /// Cut the object with a single dovetail groove (legacy signature).
     /// \param groove Dovetail groove dimensions and angles.

@@ -2911,7 +2911,7 @@ void Print::_make_skirt()
             Polygon loop;
             {
                 // BBS. skirt_distance is defined as the gap between skirt and outer most brim, so no need to add max_brim_width
-                Polygons loops = offset(convex_hull, distance, ClipperLib::jtRound, float(scale_(0.1)));
+                Polygons loops = offset(convex_hull, distance, jtRound, float(scale_(0.1)));
                 Geometry::simplify_polygons(loops, scale_(0.05), &loops);
 			    if (loops.empty())
 				    break;
@@ -2953,7 +2953,7 @@ void Print::_make_skirt()
     m_skirt.reverse();
 
     // Remember the outer edge of the last skirt line extruded as m_skirt_convex_hull.
-    for (Polygon &poly : offset(convex_hull, distance + 0.5f * float(scale_(spacing)), ClipperLib::jtRound, float(scale_(0.1))))
+    for (Polygon &poly : offset(convex_hull, distance + 0.5f * float(scale_(spacing)), jtRound, float(scale_(0.1))))
         append(m_skirt_convex_hull, std::move(poly.points));
 
     if (m_config.skirt_type == stPerObject) {
@@ -2968,7 +2968,7 @@ void Print::_make_skirt()
                 Polygon loop;
                 {
                     // BBS. skirt_distance is defined as the gap between skirt and outer most brim, so no need to add max_brim_width
-                    Polygons loops = offset(obj_cvx_hull.second, object_skirt_distance, ClipperLib::jtRound, float(scale_(0.1)));
+                    Polygons loops = offset(obj_cvx_hull.second, object_skirt_distance, jtRound, float(scale_(0.1)));
                     Geometry::simplify_polygons(loops, scale_(0.05), &loops);
                     if (loops.empty())
                         break;

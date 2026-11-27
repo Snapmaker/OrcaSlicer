@@ -7,6 +7,7 @@
 #include <array>
 #include <cfloat>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -90,6 +91,11 @@ public:
         virtual int  vertices_inside(const Triangle &tr, const std::vector<Vertex> &vertices) const;
         virtual bool is_edge_inside_cursor(const Triangle &tr, const std::vector<Vertex> &vertices) const = 0;
         virtual bool is_facet_visible(int facet_idx, const std::vector<Vec3f> &face_normals) const = 0;
+        // Whether a target leaf that is only partially inside this cursor still
+        // covers a positive area of it. Cursors that only remap painted leaves
+        // override this so that a leaf touching the cursor by a shared edge or a
+        // single vertex (zero area) never gets assigned a state.
+        virtual bool covers_partial_leaf(const Triangle &tr, const std::vector<Vertex> &vertices) const { return true; }
 
         static bool is_facet_visible(const Cursor &cursor, int facet_idx, const std::vector<Vec3f> &face_normals);
 
@@ -388,7 +394,8 @@ public:
                       EnforcerBlockerType       new_state,                     // enforcer or blocker?
                       const Transform3d        &trafo_no_translate,            // matrix to get from mesh to world without translation
                       bool                      triangle_splitting,            // If triangles will be split base on the cursor or not
-                      float                     highlight_by_angle_deg = 0.f); // The maximal angle of overhang. If it is set to a non-zero value, it is possible to paint only the triangles of overhang defined by this angle in degrees.
+                      float                     highlight_by_angle_deg = 0.f,  // The maximal angle of overhang. If it is set to a non-zero value, it is possible to paint only the triangles of overhang defined by this angle in degrees.
+                      bool                      select_partially = false);     // Select a triangle if it's partially in the cursor but too small to be subdivided
 
     /** Applies a height-range cursor directly to indexed source-root candidates without root-neighbor traversal. */
     void SelectHeightRange(const std::vector<uint32_t>& sourceRoots, std::unique_ptr<HeightRange>&& cursor,
@@ -459,6 +466,95 @@ public:
     // For all triangles selected by seed fill, set new EnforcerBlockerType and remove flag indicating that triangle was selected by seed fill.
     // The operation may merge split triangles if they are being assigned the same color.
     void seed_fill_apply_on_triangles(EnforcerBlockerType new_state, CleanupMode cleanupMode = CleanupMode::Immediate);
+
+    // Saved painting data for remapping after mesh change.
+    struct SavedPainting {
+        // Source mesh in its original local coordinate space with the ORIGINAL
+        // vertex and corner order. Callers must NOT pre-transform it (no handedness
+        // fix, no init-shift compensation): the painting tree is decoded against
+        // this exact corner order, and the relative transform is applied once to
+        // the target mesh inside remap_painting().
+        TriangleMesh          mesh;
+        TriangleSplittingData supported;
+        TriangleSplittingData seam;
+        TriangleSplittingData mmu;
+        TriangleSplittingData fuzzy;
+    };
+
+    // Instrumentation of one remap_painting() run, for regression coverage.
+    struct RemapStats
+    {
+        size_t painted_leaves  = 0; // painted source leaves processed
+        size_t candidate_faces = 0; // target faces passing the normal and distance-band filters
+        size_t select_calls    = 0; // select_triangle() invocations on candidate faces
+        bool   identity_path   = false; // identical geometry + identity transform short-circuit taken
+    };
+
+    // Remap painting data from the source mesh onto the target mesh using spatial
+    // intersection mapping. The source snapshot must keep its original vertex /
+    // corner order; `target_to_source` transforms the TARGET mesh into the
+    // source's coordinate space (its inverse moves the decoded leaves into the
+    // target space, where a negative determinant flips the leaf winding exactly
+    // once and the normals come from the transformed geometry - so decoded
+    // strokes stay on their corners). Only target faces that overlap the
+    // painted leaves within the source plane's distance tolerance band are
+    // painted; terminal leaves require positive-area coverage evidence. When
+    // `existing_painting` is present, the result combines `existing_painting`
+    // with the remapped `source_painting` (source painted on top). If the target
+    // geometry and corner order are identical to the source and
+    // `target_to_source` is the identity, the source painting is returned
+    // unchanged instead of being re-derived through subdivision.
+    static TriangleSplittingData remap_painting(
+        const indexed_triangle_set& source_its,
+        const TriangleSplittingData& source_painting,
+        const indexed_triangle_set& target_its,
+        const Transform3d& target_to_source,
+        const std::optional<std::reference_wrapper<const TriangleSplittingData>>& existing_painting,
+        RemapStats* stats = nullptr);
+
+    // Connected-component splits retain source face identity. Copy the complete
+    // painting subtree without spatial queries; account for split() winding correction.
+    static TriangleSplittingData remap_painting_split(
+        const indexed_triangle_set& source_its, const TriangleSplittingData& source_painting,
+        const indexed_triangle_set& target_its, const TriangleMesh::SplitProvenance& provenance);
+
+    // Transfer painting across one Loop subdivision (global smooth): the output
+    // faces carry (original source face, child ordinal 0..3) origins produced by
+    // TriangleMeshDeal::smooth_triangle_mesh(). Loop moves vertices and changes
+    // normals, so intersection-based remapping cannot see the correspondence;
+    // instead the painting is resolved in the PARENT face's barycentric domain:
+    // whole-face states are inherited directly, and local strokes are split by
+    // the four child regions and written into the children's painting trees.
+    // A sub-face whose region touches differently painted leaves is subdivided
+    // down to the local painting resolution; at the limit it stays blank, so
+    // blank regions are never expanded. Duplicated input faces resolve to the
+    // first occurrence (see smooth_triangle_mesh).
+    static TriangleSplittingData remap_painting_smooth(
+        const indexed_triangle_set& source_its,
+        const TriangleSplittingData& source_painting,
+        const indexed_triangle_set& target_its,
+        const std::vector<std::pair<int, int>>& target_origins,
+        const std::optional<std::reference_wrapper<const TriangleSplittingData>>& existing_painting);
+
+    // Transfer painting from the source mesh onto a simplified target mesh:
+    // the painting state under sample points of every target face is queried from
+    // the deserialized source painting (closest leaf on the source surface), and
+    // target faces are subdivided adaptively while trusted samples disagree,
+    // nothing trusted could be sampled yet, or differently painted source
+    // geometry lies within the face's own reach - down to the LOCAL scale of the
+    // painting around each face (not a painting-wide average). Colored regions
+    // and boundaries are therefore re-established as one continuous assignment
+    // over the target surface. Queries that cannot be trusted (far side of a
+    // thin wall, numeric miss) are kept strictly apart from real NONE and are
+    // never guessed. All lengths are in mesh units of the volume's own coordinate
+    // space. Unlike remap_painting() this does not require the two surfaces to
+    // geometrically intersect, which a simplified surface cannot guarantee.
+    static TriangleSplittingData remap_painting_by_projection(
+        const indexed_triangle_set& source_its,
+        const TriangleSplittingData& source_painting,
+        const indexed_triangle_set& target_its,
+        const Transform3d& target_transform,
+        const std::optional<std::reference_wrapper<const TriangleSplittingData>>& existing_painting);
 
 protected:
     enum class MutationKind : uint8_t
@@ -596,8 +692,8 @@ private:
     void PrepareForLeafIdentityChange();
     void RecordDeferredCleanupRoot(uint32_t sourceTriangle);
     void ClearDeferredCleanup();
-    bool select_triangle(int facet_idx, EnforcerBlockerType type, bool triangle_splitting);
-    bool select_triangle_recursive(int facet_idx, const Vec3i32 &neighbors, EnforcerBlockerType type, bool triangle_splitting);
+    bool select_triangle(int facet_idx, EnforcerBlockerType type, bool triangle_splitting, bool select_partially = false);
+    bool select_triangle_recursive(int facet_idx, const Vec3i32 &neighbors, EnforcerBlockerType type, bool triangle_splitting, bool select_partially);
     void undivide_triangle(int facet_idx);
     void split_triangle(int facet_idx, const Vec3i32 &neighbors);
     bool remove_useless_children(int facet_idx); // No hidden meaning. Triangles are meant.
@@ -657,10 +753,9 @@ private:
     std::vector<uint32_t> m_triangleQueryStamp;
     int m_free_triangles_head { -1 };
     int m_free_vertices_head { -1 };
+
+    friend class TriangleCursor;
 };
-
-
-
 
 } // namespace Slic3r
 

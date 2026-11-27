@@ -118,7 +118,12 @@ public:
     void flip_triangles();
     void align_to_origin();
     void rotate(double angle, Point* center);
-    std::vector<TriangleMesh> split() const;
+    struct SplitProvenance
+    {
+        std::vector<size_t> source_faces; // Output face index -> original face index.
+        bool reversed = false;          // split() corrected a negative-volume shell.
+    };
+    std::vector<TriangleMesh> split(std::vector<SplitProvenance>* provenance = nullptr) const;
     void merge(const TriangleMesh &mesh);
     ExPolygons horizontal_projection() const;
     // 2D convex hull of a 3D mesh projected into the Z=0 plane.

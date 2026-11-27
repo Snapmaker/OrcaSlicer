@@ -800,7 +800,7 @@ wxBoxSizer *PreferencesDialog::create_item_checkbox(wxString title, wxWindow *pa
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " sync_user_preset: " << (sync ? "true" : "false");
         }
 
-        #ifdef __WXMSW__
+#ifdef __WXMSW__
         if (param == "associate_3mf") {
              bool pbool = app_config->get("associate_3mf") == "true" ? true : false;
              if (pbool) {
@@ -1368,6 +1368,7 @@ wxWindow* PreferencesDialog::create_general_page()
     auto title_develop_mode = create_item_title(_L("Develop mode"), page, _L("Develop mode"));
     auto item_develop_mode  = create_item_checkbox(_L("Develop mode"), page, _L("Develop mode"), 50, "developer_mode");
     auto item_skip_ams_blacklist_check  = create_item_checkbox(_L("Skip AMS blacklist check"), page, _L("Skip AMS blacklist check"), 50, "skip_ams_blacklist_check");
+    auto item_keep_painting  = create_item_checkbox(_L("(Experimental) Keep painted feature after mesh change"), page, _L("Attempt to keep painted features (color/seam/support/fuzzy etc.) after changing the object mesh (such as cut/reload from disk/simplify/fix etc.)\nHighly experimental! Slow and may create artifact."), 50, "keep_painting");
 
     sizer_page->Add(title_general_settings, 0, wxEXPAND, 0);
     sizer_page->Add(item_language, 0, wxTOP, FromDIP(3));
@@ -1453,6 +1454,7 @@ wxWindow* PreferencesDialog::create_general_page()
     sizer_page->Add(title_develop_mode, 0, wxTOP | wxEXPAND, FromDIP(20));
     sizer_page->Add(item_develop_mode, 0, wxTOP, FromDIP(3));
     sizer_page->Add(item_skip_ams_blacklist_check, 0, wxTOP, FromDIP(3));
+    sizer_page->Add(item_keep_painting, 0, wxTOP, FromDIP(3));
 
 
     sizer_page->Add(title_user_experience, 0, wxTOP, FromDIP(20));

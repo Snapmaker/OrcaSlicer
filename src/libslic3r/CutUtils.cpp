@@ -49,7 +49,9 @@ static void apply_tolerance(ModelVolume* vol)
     vol->set_offset(vol->get_offset() + rot_norm * z_offset);
 }
 
-static void add_cut_volume(TriangleMesh& mesh, ModelObject* object, const ModelVolume* src_volume, const Transform3d& cut_matrix, const std::string& suffix = {}, ModelVolumeType type = ModelVolumeType::MODEL_PART)
+static void add_cut_volume(TriangleMesh& mesh, ModelObject* object, const ModelVolume* src_volume, const Transform3d& cut_matrix,
+                           std::vector<std::pair<ModelVolume*, int>>* outputs, int source_index,
+                           const std::string& suffix = {}, ModelVolumeType type = ModelVolumeType::MODEL_PART)
 {
     if (mesh.empty())
         return;
@@ -57,6 +59,8 @@ static void add_cut_volume(TriangleMesh& mesh, ModelObject* object, const ModelV
     mesh.transform(cut_matrix);
     ModelVolume* vol = object->add_volume(mesh);
     vol->set_type(type);
+    if (outputs)
+        outputs->emplace_back(vol, source_index);
 
     vol->name = src_volume->name + suffix;
     // Don't copy the config's ID.
@@ -67,7 +71,7 @@ static void add_cut_volume(TriangleMesh& mesh, ModelObject* object, const ModelV
     vol->cut_info = src_volume->cut_info;
 }
 
-static void process_volume_cut( ModelVolume* volume, const Transform3d& instance_matrix, const Transform3d& cut_matrix,
+static void process_volume_cut( const ModelVolume* volume, const Transform3d& instance_matrix, const Transform3d& cut_matrix,
                                 ModelObjectCutAttributes attributes, TriangleMesh& upper_mesh, TriangleMesh& lower_mesh)
 {
     const auto volume_matrix = volume->get_matrix();
@@ -90,7 +94,8 @@ static void process_volume_cut( ModelVolume* volume, const Transform3d& instance
 
 static void process_connector_cut(  ModelVolume* volume, const Transform3d& instance_matrix, const Transform3d& cut_matrix,
                                     ModelObjectCutAttributes attributes, ModelObject* upper, ModelObject* lower,
-                                    std::vector<ModelObject*>& dowels)
+                                    std::vector<ModelObject*>& dowels,
+                                    std::vector<std::pair<ModelVolume*, int>>* outputs, int source_index)
 {
     assert(volume->cut_info.is_connector);
     volume->cut_info.set_processed();
@@ -153,9 +158,10 @@ static void process_connector_cut(  ModelVolume* volume, const Transform3d& inst
         upper_mesh.translate((-0.05 * Vec3d::UnitZ()).cast<float>());
         lower_mesh.translate((0.05 * Vec3d::UnitZ()).cast<float>());
 
-        // Add cut parts to the related objects
-        add_cut_volume(upper_mesh, upper, volume, cut_matrix, "_A", volume->type());
-        add_cut_volume(lower_mesh, lower, volume, cut_matrix, "_B", volume->type());
+        // Add cut parts to the related objects. Connectors are newly generated
+        // geometry without a painting source (source_index = -1).
+        add_cut_volume(upper_mesh, upper, volume, cut_matrix, outputs, -1, "_A", volume->type());
+        add_cut_volume(lower_mesh, lower, volume, cut_matrix, outputs, -1, "_B", volume->type());
     }
 }
 
@@ -182,29 +188,32 @@ static void process_modifier_cut(ModelVolume* volume, const Transform3d& instanc
         lower->add_volume(*volume);
 }
 
-static void process_solid_part_cut(ModelVolume* volume, const Transform3d& instance_matrix, const Transform3d& cut_matrix,
-                            ModelObjectCutAttributes attributes, ModelObject* upper, ModelObject* lower)
+static void process_solid_part_cut(const ModelVolume* volume, const Transform3d& instance_matrix, const Transform3d& cut_matrix,
+                            ModelObjectCutAttributes attributes, ModelObject* upper, ModelObject* lower,
+                            std::vector<std::pair<ModelVolume*, int>>* outputs, int source_index)
 {
     // Perform cut
     TriangleMesh upper_mesh, lower_mesh;
     process_volume_cut(volume, instance_matrix, cut_matrix, attributes, upper_mesh, lower_mesh);
 
-    // Add required cut parts to the objects
+    // Add required cut parts to the objects. Each output volume remembers which
+    // SOURCE volume it was cut from, so the painting of that source (and only
+    // that source) can be restored onto it.
 
     if (attributes.has(ModelObjectCutAttribute::KeepAsParts)) {
-        add_cut_volume(upper_mesh, upper, volume, cut_matrix, "_A");
+        add_cut_volume(upper_mesh, upper, volume, cut_matrix, outputs, source_index, "_A");
         if (!lower_mesh.empty()) {
-            add_cut_volume(lower_mesh, upper, volume, cut_matrix, "_B");
+            add_cut_volume(lower_mesh, upper, volume, cut_matrix, outputs, source_index, "_B");
             upper->volumes.back()->cut_info.is_from_upper = false;
         }
         return;
     }
 
     if (attributes.has(ModelObjectCutAttribute::KeepUpper))
-        add_cut_volume(upper_mesh, upper, volume, cut_matrix);
+        add_cut_volume(upper_mesh, upper, volume, cut_matrix, outputs, source_index);
 
     if (attributes.has(ModelObjectCutAttribute::KeepLower) && !lower_mesh.empty())
-        add_cut_volume(lower_mesh, lower, volume, cut_matrix);
+        add_cut_volume(lower_mesh, lower, volume, cut_matrix, outputs, source_index);
 }
 
 static void reset_instance_transformation(ModelObject* object, size_t src_instance_idx, 
@@ -283,9 +292,25 @@ void Cut::post_process(ModelObject* upper, ModelObject* lower, ModelObjectPtrs& 
 }
 
 
-void Cut::finalize(const ModelObjectPtrs& objects)
+void Cut::finalize(const ModelObjectPtrs& objects, const std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>>& saved_paintings,
+                   const std::vector<std::pair<ModelVolume*, int>>& output_sources)
 {
-    //clear model from temporarry objects
+    // Paint volumes: every output volume is restored ONLY from the painting of
+    // the source volume it was cut from (output_sources maps output volumes to
+    // the source volume index; -1 marks newly generated geometry - cut faces,
+    // connectors - which has no painting source). The output meshes live in the
+    // space of (instance_matrix * volume_matrix) applied to the source mesh
+    // (the cut matrices cancel), and add_volume() re-centered them; the helper
+    // composes the inverse composite with the centering compensation.
+    for (const auto& [volume, source_index] : output_sources) {
+        if (source_index < 0 || source_index >= int(saved_paintings.size()))
+            continue;
+        const auto& [saved_painting, inverse_composite] = saved_paintings[source_index];
+        if (saved_painting)
+            volume->restore_painting_on_centered_result(saved_painting, inverse_composite, true);
+    }
+
+    //clear model from temporary objects
     m_model.clear_objects();
 
     // add to model result objects
@@ -324,17 +349,32 @@ const ModelObjectPtrs& Cut::perform_with_plane()
     const Transformation    cut_transformation = Transformation(m_cut_matrix);
     const Transform3d       inverse_cut_matrix = cut_transformation.get_rotation_matrix().inverse() * translation_transform(-1. * cut_transformation.get_offset());
 
-    for (ModelVolume* volume : mo->volumes) {
+    std::vector<std::pair<std::optional<TriangleSelector::SavedPainting>, Transform3d>> saved_paintings;
+    std::vector<std::pair<ModelVolume*, int>>                                       outputs;
+    saved_paintings.reserve(mo->volumes.size());
+    for (size_t vindex = 0; vindex < mo->volumes.size(); ++vindex) {
+        ModelVolume* volume = mo->volumes[vindex];
+        // Save painting data before reset_extra_facets() discards it. The
+        // snapshot keeps its original vertex/corner order; the inverse of the
+        // transform process_volume_cut applies to the mesh maps the output
+        // volumes back into the snapshot's space. The vector stays indexed by
+        // source volume so the output volumes can be restored from their own
+        // source only.
+        if (m_attributes.has(ModelObjectCutAttribute::KeepPaint))
+            saved_paintings.emplace_back(volume->save_painting(), (instance_matrix * volume->get_matrix()).inverse());
+        else
+            saved_paintings.emplace_back(std::nullopt, Transform3d::Identity());
+
         volume->reset_extra_facets();
 
         if (!volume->is_model_part()) {
             if (volume->cut_info.is_processed)
                 process_modifier_cut(volume, instance_matrix, inverse_cut_matrix, m_attributes, upper, lower);
             else
-                process_connector_cut(volume, instance_matrix, m_cut_matrix, m_attributes, upper, lower, dowels);
+                process_connector_cut(volume, instance_matrix, m_cut_matrix, m_attributes, upper, lower, dowels, &outputs, -1);
         }
         else if (!volume->mesh().empty())
-            process_solid_part_cut(volume, instance_matrix, m_cut_matrix, m_attributes, upper, lower);
+            process_solid_part_cut(volume, instance_matrix, m_cut_matrix, m_attributes, upper, lower, &outputs, int(vindex));
     }
 
     // Post-process cut parts
@@ -380,9 +420,9 @@ const ModelObjectPtrs& Cut::perform_with_plane()
         }
     }
 
-    BOOST_LOG_TRIVIAL(trace) << "ModelObject::cut - end";
+    finalize(cut_object_ptrs, saved_paintings, outputs);
 
-    finalize(cut_object_ptrs);
+    BOOST_LOG_TRIVIAL(trace) << "ModelObject::cut - end";
 
     return m_model.objects;
 }
@@ -407,21 +447,66 @@ static void distribute_modifiers_from_object(ModelObject* from_obj, const int in
         }
 }
 
-static void merge_solid_parts_inside_object(ModelObjectPtrs& objects)
+// Rebase per-face painting data into a concatenated mesh: the entries' face
+// indices and bitstream offsets shift by the cumulative counts of the parts
+// merged before this one. The merged mesh appends faces (and therefore the
+// per-face painting trees) in part order, so this is an exact index shift,
+// not a geometric remap.
+static void append_painting_data(TriangleSelector::TriangleSplittingData& merged, const TriangleSelector::TriangleSplittingData& part,
+                                 int face_offset, int bit_offset)
+{
+    if (part.bitstream.empty())
+        return;
+    if (merged.used_states.size() < part.used_states.size())
+        merged.used_states.resize(part.used_states.size(), false);
+    for (size_t i = 0; i < part.used_states.size(); ++i)
+        if (part.used_states[i])
+            merged.used_states[i] = true;
+    for (const auto& [triangle_id, bit_start] : part.triangles_to_split)
+        merged.triangles_to_split.emplace_back(triangle_id + face_offset, bit_start + bit_offset);
+    merged.bitstream.insert(merged.bitstream.end(), part.bitstream.begin(), part.bitstream.end());
+}
+
+static void merge_solid_parts_inside_object(ModelObjectPtrs& objects, bool carry_paint)
 {
     for (ModelObject* mo : objects) {
         TriangleMesh mesh;
-        // Merge all SolidPart but not Connectors
+        int         face_offset = 0;
+        std::array<TriangleSelector::TriangleSplittingData, 4> merged_data;
+        std::array<int, 4>                                      bit_offsets = { 0, 0, 0, 0 };
+        // Merge all SolidPart but not Connectors. When the painting is kept, the
+        // per-face painting trees of every part are carried along and rebased by
+        // the part's face / bitstream offset in the concatenated mesh.
         for (const ModelVolume* mv : mo->volumes) {
             if (mv->is_model_part() && !mv->is_cut_connector()) {
                 TriangleMesh m = mv->mesh();
                 m.transform(mv->get_matrix());
                 mesh.merge(m);
+                if (carry_paint) {
+                    const std::array<const TriangleSelector::TriangleSplittingData*, 4> sources = {
+                        &mv->supported_facets.get_data(), &mv->seam_facets.get_data(),
+                        &mv->mmu_segmentation_facets.get_data(), &mv->fuzzy_skin_facets.get_data() };
+                    for (int k = 0; k < 4; ++k) {
+                        append_painting_data(merged_data[k], *sources[k], face_offset, bit_offsets[k]);
+                        bit_offsets[k] += int(sources[k]->bitstream.size());
+                    }
+                }
+                face_offset += int(mv->mesh().its.indices.size());
             }
         }
         if (!mesh.empty()) {
             ModelVolume* new_volume = mo->add_volume(mesh);
             new_volume->name = mo->name;
+            if (carry_paint) {
+                if (!merged_data[0].bitstream.empty())
+                    new_volume->supported_facets.set_data(std::move(merged_data[0]));
+                if (!merged_data[1].bitstream.empty())
+                    new_volume->seam_facets.set_data(std::move(merged_data[1]));
+                if (!merged_data[2].bitstream.empty())
+                    new_volume->mmu_segmentation_facets.set_data(std::move(merged_data[2]));
+                if (!merged_data[3].bitstream.empty())
+                    new_volume->fuzzy_skin_facets.set_data(std::move(merged_data[3]));
+            }
             // Delete all merged SolidPart but not Connectors
             for (int i = int(mo->volumes.size()) - 2; i >= 0; --i) {
                 const ModelVolume* mv = mo->volumes[i];
@@ -435,7 +520,23 @@ static void merge_solid_parts_inside_object(ModelObjectPtrs& objects)
 }
 
 
-const ModelObjectPtrs& Cut::perform_by_contour(std::vector<Part> parts, int dowels_count)
+Model Cut::prepare_for_contour_cut(const ModelObject& object, const int instance_idx, const Transform3d& cut_matrix)
+{
+    Cut cut(&object, instance_idx, cut_matrix,
+            ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::KeepLower | ModelObjectCutAttribute::KeepAsParts |
+            ModelObjectCutAttribute::KeepPaint);
+    Model model;
+    model.add_object(*cut.perform_with_plane().front());
+    ModelObject* parts = model.objects.front();
+    // Split into connected components; the split remaps each part's own
+    // painting onto its pieces (nothing is remapped for unpainted volumes).
+    for (int id = int(parts->volumes.size()) - 1; id >= 0; --id)
+        if (parts->volumes[id]->is_splittable())
+            parts->volumes[id]->split(1, true);
+    return model;
+}
+
+const ModelObjectPtrs& Cut::perform_by_contour(const ModelObject* src_object, std::vector<Part> parts, int dowels_count)
 {
     ModelObject* cut_mo = m_model.objects.front();
 
@@ -449,6 +550,11 @@ const ModelObjectPtrs& Cut::perform_by_contour(std::vector<Part> parts, int dowe
         upper->name = upper->name + "_A";
         lower->name = lower->name + "_B";
     }
+
+    // The contour parts are distributed as WHOLE volume copies below; each copy
+    // carries its source volume's painting (the geometry is unchanged), so the
+    // merge afterwards only has to rebase the per-face painting data - no
+    // spatial remap is needed here.
 
     const size_t cut_parts_cnt = parts.size();
     bool has_modifiers = false;
@@ -475,11 +581,13 @@ const ModelObjectPtrs& Cut::perform_by_contour(std::vector<Part> parts, int dowe
         // Just add Upper and Lower objects to cut_object_ptrs
         post_process(upper, lower, cut_object_ptrs);
 
-        // Now merge all model parts together:
-        merge_solid_parts_inside_object(cut_object_ptrs);
+        // Now merge all model parts together (the painting data of each part
+        // is rebased onto the merged mesh when KeepPaint is set):
+        merge_solid_parts_inside_object(cut_object_ptrs, m_attributes.has(ModelObjectCutAttribute::KeepPaint));
 
         // replace initial objects in model with cut object 
-        finalize(cut_object_ptrs);
+        finalize(cut_object_ptrs, {}, {});
+
     }
     else if (volumes.size() > cut_parts_cnt) {
         // Means that object is cut with connectors
@@ -506,11 +614,12 @@ const ModelObjectPtrs& Cut::perform_by_contour(std::vector<Part> parts, int dowe
         // Add Upper and Lower objects to cut_object_ptrs
         post_process(upper, lower, cut_object_ptrs);
 
-        // Now merge all model parts together:
-        merge_solid_parts_inside_object(cut_object_ptrs);
+        // Now merge all model parts together (the painting data of each part
+        // is rebased onto the merged mesh when KeepPaint is set):
+        merge_solid_parts_inside_object(cut_object_ptrs, m_attributes.has(ModelObjectCutAttribute::KeepPaint));
 
         // replace initial objects in model with cut object
-        finalize(cut_object_ptrs);
+        finalize(cut_object_ptrs, {}, {});
 
         // Add Dowel-connectors as separate objects to model
         if (cut_connectors_obj.size() >= 3)
@@ -549,6 +658,13 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
         upper->name = upper->name + "_A";
         lower->name = lower->name + "_B";
     }
+
+    // The nested plane cuts below preserve the painting per source volume when
+    // KeepPaint is set (each nested Cut saves from its input volumes and
+    // restores onto the volumes cut from them), and add_volumes_from_cut copies
+    // the painted outputs into upper/lower. The final merge then only has to
+    // rebase the per-face painting data onto the merged mesh.
+
     const double groove_half_depth = 0.5 * double(groove.depth);
 
     Model tmp_model_for_cut = Model();
@@ -569,9 +685,13 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
             }
     };
 
-    auto cut = [this, add_volumes_from_cut]
+    // Nested cuts use plain upper/lower semantics plus the paint-keeping flag;
+    // each nested Cut then preserves its input volumes' painting per volume.
+    const ModelObjectCutAttributes nested_attributes = ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::KeepLower |
+                                                       (m_attributes.has(ModelObjectCutAttribute::KeepPaint) ? ModelObjectCutAttribute::KeepPaint : ModelObjectCutAttributes());
+    auto cut = [this, nested_attributes, add_volumes_from_cut]
                 (ModelObject* object, const Transform3d& cut_matrix, const ModelObjectCutAttribute add_volumes_attribute, Model& tmp_model_for_cut) {
-        Cut cut(object, m_instance, cut_matrix);
+        Cut cut(object, m_instance, cut_matrix, nested_attributes);
 
         tmp_model_for_cut = Model();
         tmp_model_for_cut.add_object(*cut.perform_with_plane().front());
@@ -583,17 +703,17 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
     };
 
     // cut by upper plane
-
-    const Transform3d cut_matrix_upper = translation_transform(rotation_m * (groove_half_depth * Vec3d::UnitZ())) * m_cut_matrix;
     {
+        const Transform3d cut_matrix_upper = translation_transform(rotation_m * (groove_half_depth * Vec3d::UnitZ())) * m_cut_matrix;
+
         cut(tmp_object, cut_matrix_upper, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
         add_volumes_from_cut(upper, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
     }
 
     // cut by lower plane
-
-    const Transform3d cut_matrix_lower = translation_transform(rotation_m * (-groove_half_depth * Vec3d::UnitZ())) * m_cut_matrix;
     {
+        const Transform3d cut_matrix_lower = translation_transform(rotation_m * (-groove_half_depth * Vec3d::UnitZ())) * m_cut_matrix;
+
         cut(tmp_object, cut_matrix_lower, ModelObjectCutAttribute::KeepUpper, tmp_model_for_cut);
         add_volumes_from_cut(lower, ModelObjectCutAttribute::KeepLower, tmp_model_for_cut);
     }
@@ -725,11 +845,12 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
 
         post_process(upper, lower, cut_object_ptrs);
 
-        // Now merge all model parts together:
-        merge_solid_parts_inside_object(cut_object_ptrs);
+        // Now merge all model parts together (the painting data of each part
+        // is rebased onto the merged mesh when KeepPaint is set):
+        merge_solid_parts_inside_object(cut_object_ptrs, m_attributes.has(ModelObjectCutAttribute::KeepPaint));
     }
 
-    finalize(cut_object_ptrs);
+    finalize(cut_object_ptrs, {}, {});
 
     return m_model.objects;
 }

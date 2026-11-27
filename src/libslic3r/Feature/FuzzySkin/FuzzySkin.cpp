@@ -282,7 +282,7 @@ Polygon apply_fuzzy_skin(const Polygon& polygon, const PerimeterGenerator& perim
     // Split the loops into lines with different config, and fuzzy them separately
     fuzzified = polygon;
     for (const auto& r : fuzzified_regions) {
-        const auto splitted = Algorithm::split_line(fuzzified, r.second, true);
+        const auto splitted = Algorithm::split_line(fuzzified, r.second, true, ClipperUtils::OpenClipBoundaryRule::Clipper1ClipFirst);
         if (splitted.empty()) {
             // No intersection, skip
             continue;
@@ -350,7 +350,8 @@ void apply_fuzzy_skin(Arachne::ExtrusionLine* extrusion, const PerimeterGenerato
         if (!fuzzified_regions.empty()) {
             // Split the loops into lines with different config, and fuzzy them separately
             for (const auto& r : fuzzified_regions) {
-                const auto splitted = Algorithm::split_line(*extrusion, r.second, false);
+                const auto splitted = Algorithm::split_line(*extrusion, r.second, false,
+                                                            ClipperUtils::OpenClipBoundaryRule::Clipper1ClipFirst);
                 if (splitted.empty()) {
                     // No intersection, skip
                     continue;

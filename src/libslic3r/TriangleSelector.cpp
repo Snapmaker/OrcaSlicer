@@ -1,5 +1,6 @@
 #include "TriangleSelector.hpp"
 #include "Model.hpp"
+#include "AABBTreeIndirect.hpp"
 
 #include <algorithm>
 #include <boost/container/small_vector.hpp>
@@ -7,7 +8,10 @@
 #include <atomic>
 #include <cmath>
 #include <cstddef>
+#include <functional>
 #include <limits>
+#include <map>
+#include <stdexcept>
 #include <tbb/parallel_for.h>
 
 #ifndef NDEBUG
@@ -361,24 +365,69 @@ void TriangleSelector::Triangle::set_division(int sides_to_split, int special_si
     this->special_side_idx = char(special_side_idx);
 }
 
-inline bool is_point_inside_triangle(const Vec3f &pt, const Vec3f &p1, const Vec3f &p2, const Vec3f &p3)
+// Pre-computed barycentric resolver
+// Real-time collision detection, Ericson, Chapter 3.4
+// Cache inspired by Don Hatch at https://gamedev.stackexchange.com/questions/23743/whats-the-most-efficient-way-to-find-barycentric-coordinates/23745#comment390123_23745
+struct Barycentric
 {
-    // Real-time collision detection, Ericson, Chapter 3.4
-    auto barycentric = [&pt, &p1, &p2, &p3]() -> Vec3f {
-        std::array<Vec3f, 3> v     = {p2 - p1, p3 - p1, pt - p1};
-        float                d00   = v[0].dot(v[0]);
-        float                d01   = v[0].dot(v[1]);
-        float                d11   = v[1].dot(v[1]);
-        float                d20   = v[2].dot(v[0]);
-        float                d21   = v[2].dot(v[1]);
-        float                denom = d00 * d11 - d01 * d01;
+public:
+    Barycentric(const Vec3f& a, const Vec3f& b, const Vec3f& c)
+        :a_(a)
+    {
+         // Pre-compute denominator
+        const Vec3f v0 = b - a;
+        const Vec3f v1 = c - a;
+        const float d00 = v0.dot(v0);
+        const float d01 = v0.dot(v1);
+        const float d11 = v1.dot(v1);
+        const float inv_denom_ = 1.0f / (d00 * d11 - d01 * d01);
 
-        Vec3f barycentric_cords(1.f, (d11 * d20 - d01 * d21) / denom, (d00 * d21 - d01 * d20) / denom);
-        barycentric_cords.x() = barycentric_cords.x() - barycentric_cords.y() - barycentric_cords.z();
-        return barycentric_cords;
-    };
+        x1_ = (d11 * v0 - d01 * v1) * inv_denom_;
+        x2_ = (d00 * v1 - d01 * v0) * inv_denom_;
+    }
 
-    Vec3f barycentric_cords = barycentric();
+    Vec3f calc(const Vec3f& p) const
+    {
+        const Vec3f v2  = p - a_;
+        const float v = v2.dot(x1_);
+        const float w = v2.dot(x2_);
+        const float u = 1.f - v - w;
+
+        return {u, v, w};
+    }
+
+    bool is_point_inside_triangle(const Vec3f& p) const
+    {
+        const Vec3f barycentric_cords = calc(p);
+        return std::all_of(begin(barycentric_cords), end(barycentric_cords), [](float cord) { return 0.f <= cord && cord <= 1.0; });
+    }
+
+    static Vec3f calc(const Vec3f& pt, const Vec3f& p1, const Vec3f& p2, const Vec3f& p3)
+    {
+        const std::array<Vec3f, 3> vec = {p2 - p1, p3 - p1, pt - p1};
+        const float d00                = vec[0].dot(vec[0]);
+        const float d01                = vec[0].dot(vec[1]);
+        const float d11                = vec[1].dot(vec[1]);
+        const float d20                = vec[2].dot(vec[0]);
+        const float d21                = vec[2].dot(vec[1]);
+        const float denom              = d00 * d11 - d01 * d01;
+
+        const float v = (d11 * d20 - d01 * d21) / denom;
+        const float w = (d00 * d21 - d01 * d20) / denom;
+        const float u = 1.f - v - w;
+
+        return {u, v, w};
+    }
+
+private:
+    Vec3f a_;
+    Vec3f x1_;
+    Vec3f x2_;
+};
+
+static bool is_point_inside_triangle(const Vec3f &pt, const Vec3f &p1, const Vec3f &p2, const Vec3f &p3)
+{
+    Vec3f barycentric_cords = Barycentric::calc(pt, p1, p2, p3);
     return std::all_of(begin(barycentric_cords), end(barycentric_cords), [](float cord) { return 0.f <= cord && cord <= 1.0; });
 }
 
@@ -665,7 +714,7 @@ bool TriangleSelector::PrepareSelectionCursor(std::unique_ptr<Cursor> cursor)
     return true;
 }
 
-void TriangleSelector::select_patch(int facet_start, std::unique_ptr<Cursor> &&cursor, EnforcerBlockerType new_state, const Transform3d& trafo_no_translate, bool triangle_splitting, float highlight_by_angle_deg)
+void TriangleSelector::select_patch(int facet_start, std::unique_ptr<Cursor> &&cursor, EnforcerBlockerType new_state, const Transform3d& trafo_no_translate, bool triangle_splitting, float highlight_by_angle_deg, const bool select_partially)
 {
     assert(facet_start < m_orig_size_indices);
     const bool isHeightRange = dynamic_cast<HeightRange*>(cursor.get()) != nullptr;
@@ -698,7 +747,7 @@ void TriangleSelector::select_patch(int facet_start, std::unique_ptr<Cursor> &&c
         if (m_rootQueryStamp[facet] != queryGeneration &&
             (highlight_by_angle_deg == 0.f || worldNormalZ < highlight_angle_limit))
         {
-            if (select_triangle(facet, new_state, triangle_splitting))
+            if (select_triangle(facet, new_state, triangle_splitting, select_partially))
             {
                 // Add neighboring facets to the list to be processed later.
                 for (int neighborIndex : m_neighbors[facet])
@@ -1069,7 +1118,7 @@ void TriangleSelector::bucket_fill_select_triangles(const Vec3f& hit, int facet_
 // This is done by an actual recursive call. Returns false if the triangle is
 // outside the cursor.
 // Called by select_patch() and by itself.
-bool TriangleSelector::select_triangle(int facet_idx, EnforcerBlockerType type, bool triangle_splitting)
+bool TriangleSelector::select_triangle(int facet_idx, EnforcerBlockerType type, bool triangle_splitting, bool select_partially)
 {
     assert(facet_idx < int(m_triangles.size()));
 
@@ -1079,7 +1128,7 @@ bool TriangleSelector::select_triangle(int facet_idx, EnforcerBlockerType type, 
     Vec3i32 neighbors = m_neighbors[facet_idx];
     assert(this->verify_triangle_neighbors(m_triangles[facet_idx], neighbors));
 
-    if (! select_triangle_recursive(facet_idx, neighbors, type, triangle_splitting))
+    if (! select_triangle_recursive(facet_idx, neighbors, type, triangle_splitting, select_partially))
         return false;
 
     // In case that all children are leafs and have the same state now,
@@ -1419,7 +1468,7 @@ Vec3i32 TriangleSelector::child_neighbors_propagated(const Triangle &tr, const V
     return out;
 }
 
-bool TriangleSelector::select_triangle_recursive(int facet_idx, const Vec3i32 &neighbors, EnforcerBlockerType type, bool triangle_splitting)
+bool TriangleSelector::select_triangle_recursive(int facet_idx, const Vec3i32 &neighbors, EnforcerBlockerType type, bool triangle_splitting, bool select_partially)
 {
     assert(facet_idx < int(m_triangles.size()));
 
@@ -1451,8 +1500,15 @@ bool TriangleSelector::select_triangle_recursive(int facet_idx, const Vec3i32 &n
 
         if (triangle_splitting)
             split_triangle(facet_idx, neighbors);
-        else if (!m_triangles[facet_idx].is_split())
-            SetLeafStateWithoutCleanup(facet_idx, type);
+        if ((!triangle_splitting || select_partially) && !m_triangles[facet_idx].is_split()) {
+            // Preserve the remapped boundary while notifying the current selector caches.
+            // select_partially is only used by the paint remapping: there, a leaf at the
+            // subdivision limit must also cover a positive area of the source leaf -
+            // touching it by a shared edge or a single vertex must not assign a state.
+            if (!select_partially || m_cursor->covers_partial_leaf(m_triangles[facet_idx], m_vertices))
+                SetLeafStateWithoutCleanup(facet_idx, type);
+            return true;
+        }
         tr = &m_triangles[facet_idx]; // might have been invalidated by split_triangle().
 
         int num_of_children = tr->number_of_split_sides() + 1;
@@ -1462,7 +1518,7 @@ bool TriangleSelector::select_triangle_recursive(int facet_idx, const Vec3i32 &n
                 assert(tr->children[i] < int(m_triangles.size()));
                 // Recursion, deep first search over the children of this triangle.
                 // All children of this triangle were created by splitting a single source triangle of the original mesh.
-                select_triangle_recursive(tr->children[i], this->child_neighbors(*tr, neighbors, i), type, triangle_splitting);
+                select_triangle_recursive(tr->children[i], this->child_neighbors(*tr, neighbors, i), type, triangle_splitting, select_partially);
                 tr = &m_triangles[facet_idx]; // might have been invalidated
             }
         }
@@ -2951,6 +3007,1205 @@ bool TriangleSelector::Capsule2D::is_edge_inside_cursor(const Triangle &tr, cons
     }
 
     return false;
+}
+
+// ORCA: Helper to extract used states from serialized data
+std::vector<EnforcerBlockerType> TriangleSelector::extract_used_facet_states(const TriangleSplittingData &data)
+{
+    std::vector<EnforcerBlockerType> out;
+    for (size_t i = 0; i < data.used_states.size(); ++i) {
+        if (data.used_states[i])
+            out.push_back(static_cast<EnforcerBlockerType>(i));
+    }
+    return out;
+}
+
+static bool segments_intersect_proj(const Vec3f& p1, const Vec3f& p2, const Vec3f& p3, const Vec3f& p4, const std::pair<int, int>& proj)
+{
+    auto cross2d  = [](float ax, float ay, float bx, float by) -> float { return ax * by - ay * bx; };
+    const auto [u_axis, v_axis] = proj;
+    const auto u1 = p1(u_axis), v1 = p1(v_axis);
+    const auto u2 = p2(u_axis), v2 = p2(v_axis);
+    const auto u3 = p3(u_axis), v3 = p3(v_axis);
+    const auto u4 = p4(u_axis), v4 = p4(v_axis);
+    const float ru = u2 - u1, rv = v2 - v1;
+    const float su = u4 - u3, sv = v4 - v3;
+    const float denom = cross2d(ru, rv, su, sv);
+    if (std::abs(denom) < 1e-10f)
+        return false;
+    const float dpu = u3 - u1, dpv = v3 - v1;
+    const float t1 = cross2d(dpu, dpv, su, sv) / denom;
+    const float t2 = cross2d(dpu, dpv, ru, rv) / denom;
+    return 0.f <= t1 && t1 <= 1.0f && 0.f <= t2 && t2 <= 1.f;
+};
+
+// Planar helpers shared by the intersection remap (below) and the projection
+// remap (further down). Both triangles are given in the same 2D coordinate
+// system (orthogonally projected into the source leaf's plane).
+static bool point_in_tri2d(const Vec2f& p, const Vec2f& t0, const Vec2f& t1, const Vec2f& t2);
+static bool seg_intersect2d(const Vec2f& p1, const Vec2f& p2, const Vec2f& q1, const Vec2f& q2);
+static bool tri_overlap_2d(const Vec2f& a0, const Vec2f& a1, const Vec2f& a2,
+                           const Vec2f& b0, const Vec2f& b1, const Vec2f& b2);
+
+// Sutherland-Hodgman clip of a convex polygon (3D points) against the
+// half-space (p - origin) . normal <= limit when keep_below, or >= limit when
+// !keep_below. Used to cut a target triangle to the tolerance band around the
+// source leaf's plane.
+static std::vector<Vec3f> clip_polygon_halfspace(std::vector<Vec3f> poly, const Vec3f& origin, const Vec3f& normal,
+                                                 float limit, bool keep_below)
+{
+    if (poly.size() < 3)
+        return {};
+    std::vector<Vec3f> out;
+    out.reserve(poly.size() + 1);
+    const float sign = keep_below ? 1.f : -1.f;
+    for (size_t i = 0; i < poly.size(); ++i) {
+        const Vec3f& a = poly[i];
+        const Vec3f& b = poly[(i + 1) % poly.size()];
+        const float  da = sign * ((a - origin).dot(normal) - limit);
+        const float  db = sign * ((b - origin).dot(normal) - limit);
+        const bool   a_in = da <= 0.f;
+        const bool   b_in = db <= 0.f;
+        if (a_in)
+            out.push_back(a);
+        if (a_in != b_in) {
+            const float t = da / (da - db);
+            out.push_back(a + t * (b - a));
+        }
+    }
+    return out;
+}
+
+// Intersection polygon of a convex polygon with a CCW triangle in 2D.
+static std::vector<Vec2f> clip_polygon_by_triangle_2d(std::vector<Vec2f> poly, const Vec2f& t0, const Vec2f& t1, const Vec2f& t2)
+{
+    const std::array<Vec2f, 3> tri = { t0, t1, t2 };
+    for (int e = 0; e < 3 && poly.size() >= 3; ++e) {
+        const Vec2f& a = tri[e];
+        const Vec2f& b = tri[(e + 1) % 3];
+        const Vec2f  edge = b - a;
+        std::vector<Vec2f> out;
+        out.reserve(poly.size() + 1);
+        for (size_t i = 0; i < poly.size(); ++i) {
+            const Vec2f& p = poly[i];
+            const Vec2f& q = poly[(i + 1) % poly.size()];
+            // A CCW clip triangle keeps the left side of each directed edge.
+            const float  cp = edge.x() * (p - a).y() - edge.y() * (p - a).x();
+            const float  cq = edge.x() * (q - a).y() - edge.y() * (q - a).x();
+            const bool   p_in = cp >= 0.f;
+            const bool   q_in = cq >= 0.f;
+            if (p_in)
+                out.push_back(p);
+            if (p_in != q_in) {
+                const float t = cp / (cp - cq);
+                out.push_back(p + t * (q - p));
+            }
+        }
+        poly = std::move(out);
+    }
+    return poly;
+}
+
+static float polygon_area_2d(const std::vector<Vec2f>& poly)
+{
+    float area2 = 0.f;
+    for (size_t i = 0; i < poly.size(); ++i) {
+        const Vec2f& a = poly[i];
+        const Vec2f& b = poly[(i + 1) % poly.size()];
+        area2 += a.x() * b.y() - a.y() * b.x();
+    }
+    return 0.5f * std::abs(area2);
+}
+
+static bool point_in_convex_poly_2d(const Vec2f& p, const std::vector<Vec2f>& poly)
+{
+    bool neg = false, pos = false;
+    for (size_t i = 0; i < poly.size(); ++i) {
+        const Vec2f& a = poly[i];
+        const Vec2f& b = poly[(i + 1) % poly.size()];
+        const float  c = (b - a).x() * (p - a).y() - (b - a).y() * (p - a).x();
+        neg |= c < 0.f;
+        pos |= c > 0.f;
+    }
+    return !(neg && pos);
+}
+
+static bool poly_tri_overlap_2d(const std::vector<Vec2f>& poly, const Vec2f& t0, const Vec2f& t1, const Vec2f& t2)
+{
+    if (poly.size() < 3)
+        return false;
+    for (const Vec2f& p : poly)
+        if (point_in_tri2d(p, t0, t1, t2))
+            return true;
+    if (point_in_convex_poly_2d(t0, poly) || point_in_convex_poly_2d(t1, poly) || point_in_convex_poly_2d(t2, poly))
+        return true;
+    for (size_t i = 0; i < poly.size(); ++i)
+        if (seg_intersect2d(poly[i], poly[(i + 1) % poly.size()], t0, t1) || seg_intersect2d(poly[i], poly[(i + 1) % poly.size()], t1, t2) ||
+            seg_intersect2d(poly[i], poly[(i + 1) % poly.size()], t2, t0))
+            return true;
+    return false;
+}
+
+class TriangleCursor : public TriangleSelector::SinglePointCursor
+{
+public:
+    TriangleCursor() = delete;
+    explicit TriangleCursor(const Vec3f& center_,
+                            const Vec3f& source_,
+                            float radius_world,
+                            const Transform3d& trafo_,
+                            const TriangleSelector::ClippingPlane& clipping_plane_,
+                            const std::array<const Vec3f, 3>& vertices)
+        : TriangleSelector::SinglePointCursor(center_, source_, radius_world, trafo_, clipping_plane_)
+        , barycentric_(vertices[0], vertices[1], vertices[2])
+        , leaf_vertices_{vertices[0], vertices[1], vertices[2]}
+    {}
+    ~TriangleCursor() override = default;
+
+    static std::unique_ptr<Cursor> build_cursor(const Vec3f& pv0, const Vec3f& pv1, const Vec3f& pv2, const Vec3f& normal)
+    {
+        // Calculate the centroid of the triangle
+        const Vec3f center = (pv0 + pv1 + pv2) / 3.f;
+
+        // Derive remap precision from this decoded source leaf. A fixed
+        // mesh-unit floor makes a fine stroke on a small, enlarged mesh paint
+        // entire coarse target faces at the subdivision limit.
+        const float radius = std::min({point_to_line_dist(center, pv0, pv1),
+                                       point_to_line_dist(center, pv0, pv2),
+                                       point_to_line_dist(center, pv1, pv2)});
+
+        return std::make_unique<TriangleCursor>(center, center + normal, radius, Transform3d::Identity(), TriangleSelector::ClippingPlane(),
+                                                std::array<const Vec3f, 3>{pv0, pv1, pv2});
+    }
+
+    // A vertex counts as inside the leaf only when it is also within the
+    // tolerance band around the leaf plane: a point whose projection falls
+    // inside the leaf but which lies far off the plane (e.g. a raised corner of
+    // a tilted target face) must not trigger a whole-face assignment.
+    bool is_mesh_point_inside(const Vec3f& point) const override
+    {
+        if (std::abs((point - center).dot(dir)) > tolerance)
+            return false;
+        return barycentric_.is_point_inside_triangle(point);
+    }
+
+    // A target face is "hit" by the leaf when the leaf centroid lies on it,
+    // within the tolerance band: the centroid is projected onto the face plane
+    // and tested for containment. The distance gate keeps the rule consistent
+    // with the vertex and edge tests (a face passing through the band far from
+    // the leaf plane used to count as a hit via the raw pointer ray).
+    bool is_pointer_in_triangle(const Vec3f& p1, const Vec3f& p2, const Vec3f& p3) const override
+    {
+        const Vec3f n_t = (p2 - p1).cross(p3 - p1);
+        const float n_norm = n_t.norm();
+        if (n_norm <= 0.f)
+            return false;
+        const Vec3f n_tu = n_t / n_norm;
+        const float d = (center - p1).dot(n_tu);
+        if (std::abs(d) > tolerance)
+            return false;
+        const Vec3f q  = center - d * n_tu;
+        const Vec3f bc = Barycentric::calc(q, p1, p2, p3);
+        return 0.f <= bc.x() && bc.x() <= 1.f && 0.f <= bc.y() && bc.y() <= 1.f && 0.f <= bc.z() && bc.z() <= 1.f;
+    }
+
+    bool is_edge_inside_cursor(const TriangleSelector::Triangle& tr, const std::vector<TriangleSelector::Vertex>& vertices) const override
+    {
+        std::array<Vec3f, 3> pts_proj; // Projected point onto the plane
+        std::array<float, 3> pts_dist; // Distance to the plane, positive means above, negative means below the plane
+        for (int i = 0; i < 3; ++i) {
+            Vec3f p = vertices[tr.verts_idxs[i]].v;
+            if (!this->uniform_scaling)
+                p = this->trafo * p;
+
+            const Vec3f diff = p - center;
+            pts_dist[i]      = diff.dot(dir);
+            pts_proj[i]      = p - pts_dist[i] * dir;
+        }
+
+        for (int side = 0; side < 3; ++side) {
+            const int idx_a = side;
+            const int idx_b = side < 2 ? side + 1 : 0;
+
+            // If both ends at the same side and farther than tolerance, skip
+            const float dist_a = pts_dist[idx_a];
+            const float dist_b = pts_dist[idx_b];
+            if ((dist_a > tolerance && dist_b > tolerance) || (dist_a < -tolerance && dist_b < -tolerance)) {
+                continue;
+            }
+
+            // Find the projected line segment which has distance to the plane within the tolerance
+            Vec3f pt_a = pts_proj[idx_a];
+            Vec3f pt_b = pts_proj[idx_b];
+            if (std::abs(dist_a) > tolerance) {
+                pt_a = (tolerance - dist_b) / (dist_a - dist_b) * (pts_proj[idx_a] - pts_proj[idx_b]) + pts_proj[idx_b];
+            }
+            if (std::abs(dist_b) > tolerance) {
+                pt_b = (tolerance - dist_a) / (dist_b - dist_a) * (pts_proj[idx_b] - pts_proj[idx_a]) + pts_proj[idx_a];
+            }
+
+            // If any projected end is inside the triangle, then is in
+            if (barycentric_.is_point_inside_triangle(pt_a) ||
+                barycentric_.is_point_inside_triangle(pt_b)) {
+                return true;
+            }
+
+            // Otherwise see if the segment (pt_a, pt_b) intersects the triangle
+            {
+                const Vec3f uvw_a = barycentric_.calc(pt_a);
+                const Vec3f uvw_b = barycentric_.calc(pt_b);
+                const Vec3f uvw_0 {1.f,0.f,0.f};
+                const Vec3f uvw_1 {0.f,1.f,0.f};
+                const Vec3f uvw_2 {0.f,0.f,1.f};
+                constexpr std::pair<int, int> proj{0, 1};
+
+                if (segments_intersect_proj(uvw_a, uvw_b, uvw_0, uvw_1, proj)||
+                    segments_intersect_proj(uvw_a, uvw_b, uvw_0, uvw_2, proj)||
+                    segments_intersect_proj(uvw_a, uvw_b, uvw_1, uvw_2, proj)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Partial-leaf assignment at the subdivision limit needs positive-area
+    // coverage evidence: a leaf that only shares an edge or a single vertex
+    // with the source leaf (zero intersection area) must not get painted.
+    bool covers_partial_leaf(const TriangleSelector::Triangle& tr, const std::vector<TriangleSelector::Vertex>& vertices) const override
+    {
+        const Vec3f n = (leaf_vertices_[1] - leaf_vertices_[0]).cross(leaf_vertices_[2] - leaf_vertices_[0]);
+        if (n.squaredNorm() <= 0.f)
+            return false;
+        const Vec3f unit_n = n.normalized();
+        const Vec3f u     = (leaf_vertices_[1] - leaf_vertices_[0]).normalized();
+        const Vec3f v     = unit_n.cross(u);
+        auto to2d = [&](const Vec3f& p) {
+            const Vec3f d = p - leaf_vertices_[0];
+            return Vec2f(d.dot(u), d.dot(v));
+        };
+        std::vector<Vec2f> poly = { to2d(vertices[tr.verts_idxs[0]].v), to2d(vertices[tr.verts_idxs[1]].v), to2d(vertices[tr.verts_idxs[2]].v) };
+        const Vec2f        t0   = Vec2f::Zero();
+        const Vec2f        t1   = to2d(leaf_vertices_[1]);
+        const Vec2f        t2   = to2d(leaf_vertices_[2]);
+        poly = clip_polygon_by_triangle_2d(std::move(poly), t0, t1, t2);
+        if (poly.size() < 3)
+            return false;
+        const float overlap_area = polygon_area_2d(poly);
+        const float leaf_area    = 0.5f * n.norm();
+        // Guard against floating point noise only (exact zero for pure edge/vertex contact).
+        return overlap_area > leaf_area * 1e-9f;
+    }
+
+    bool is_facet_visible(int facet_idx, const std::vector<Vec3f>& face_normals) const override
+    {
+        const Vec3f& n = face_normals[facet_idx];
+
+        return check_normal(n, this->dir);
+    }
+
+    static bool check_normal(const Vec3f& facet_norm, const Vec3f& camera_dir)
+    {
+        const float a = -(facet_norm.dot(camera_dir));
+        return std::clamp(a, 0.f, 1.f) >= facet_angle_limit;
+    }
+
+    static constexpr float tolerance = 0.01f;
+
+private:
+    const Barycentric barycentric_;
+    std::array<Vec3f, 3> leaf_vertices_;
+    static const double facet_angle_limit;
+
+    static float point_to_line_dist(const Vec3f& p, const Vec3f& a, const Vec3f& b)
+    {
+        const Eigen::ParametrizedLine<float, 3> line = Eigen::ParametrizedLine<float, 3>::Through(a, b);
+        return line.distance(p);
+    }
+};
+const double TriangleCursor::facet_angle_limit = cos(Geometry::deg2rad(5.0));
+
+
+// Remap painting data from source mesh to target mesh using spatial mapping.
+// Contract: the source snapshot keeps its original vertex/corner order, and
+// `target_to_source` transforms the TARGET mesh into the source's coordinate
+// space. The painting tree is decoded in the original corner order; each
+// decoded leaf is then moved into the target space with its winding corrected
+// exactly once for a negative determinant of the composite transform (mirrored
+// boolean/cut, mirrored instance), so strokes never land on swapped corners
+// and the serialized result decodes directly on the stored target mesh.
+TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting(
+    const indexed_triangle_set& source_its,
+    const TriangleSplittingData& source_painting,
+    const indexed_triangle_set& target_its,
+    const Transform3d& target_to_source,
+    const std::optional<std::reference_wrapper<const TriangleSplittingData>>& existing_painting,
+    RemapStats* stats)
+{
+    TriangleSplittingData result;
+    if (source_painting.bitstream.empty())
+        return result;
+
+    const bool identical_roots = target_to_source.isApprox(Transform3d::Identity()) &&
+        source_its.vertices == target_its.vertices && source_its.indices == target_its.indices;
+
+    // Identical geometry and an identity transform can copy a replacement
+    // exactly. With existing painting, use the region overlay below instead:
+    // deserialize() replaces whole root subtrees, including NONE leaves, and
+    // therefore cannot merge disjoint strokes on the same root face. The
+    // generic path only writes non-NONE source leaves (new source wins overlaps).
+    if (!existing_painting && identical_roots) {
+        if (stats)
+            stats->identity_path = true;
+        return source_painting;
+    }
+
+    // 1. Deserialize source painting
+    TriangleMesh source_mesh(source_its);
+    TriangleSelector source_selector(source_mesh);
+    source_selector.deserialize(source_painting, false);
+
+    // 2. Extract painted geometry
+    std::vector<std::reference_wrapper<const Triangle>> painted_triangles;
+    painted_triangles.reserve(source_selector.m_triangles.size());
+    for (const Triangle& tr : source_selector.m_triangles) {
+        if (tr.valid() && !tr.is_split() && tr.get_state() != EnforcerBlockerType::NONE) {
+            painted_triangles.push_back(std::ref(tr));
+        }
+    }
+
+    if (painted_triangles.empty())
+        return result;
+
+    // 3. The target mesh keeps its STORED vertex/corner order (the serialized
+    // result must decode on exactly this mesh). Instead, every decoded source
+    // leaf is transformed into the target's coordinate space, with its winding
+    // corrected once for a negative determinant of the composite transform, and
+    // the leaf normal is taken from the transformed geometry.
+    TriangleMesh target_mesh(target_its);
+    AABBTreeIndirect::Tree3f target_tree = AABBTreeIndirect::build_aabb_tree_over_indexed_triangle_set(target_mesh.its.vertices, target_mesh.its.indices);
+    const Transform3d source_to_target = target_to_source.inverse();
+    const double      source_to_target_det = source_to_target.matrix().block(0, 0, 3, 3).determinant();
+
+    // Does the target face actually overlap the source leaf? Vertices may only
+    // count when they lie within the tolerance band around the leaf plane, and
+    // a face straddling the band is clipped to it before the overlap test.
+    auto check_overlap = [](const Vec3f& pv0, const Vec3f& pv1, const Vec3f& pv2,
+                            const Vec3f& ta, const Vec3f& tb, const Vec3f& tc,
+                            const Vec3f& leaf_normal) -> bool {
+        const float tol = TriangleCursor::tolerance; // 0.01 mesh units on each side of the leaf plane
+        const float d[3] = { (ta - pv0).dot(leaf_normal), (tb - pv0).dot(leaf_normal), (tc - pv0).dot(leaf_normal) };
+        if (std::abs(d[0]) <= tol && std::abs(d[1]) <= tol && std::abs(d[2]) <= tol) {
+            // Within the band: both triangles are coplanar up to the tolerance,
+            // project into the leaf plane and run the exact 2D overlap test.
+            const Vec3f u = (pv1 - pv0).normalized();
+            const Vec3f v = leaf_normal.cross(u);
+            auto to2d = [&pv0, &u, &v](const Vec3f& p) {
+                const Vec3f d = p - pv0;
+                return Vec2f(d.dot(u), d.dot(v));
+            };
+            return tri_overlap_2d(Vec2f::Zero(), to2d(pv1), to2d(pv2), to2d(ta), to2d(tb), to2d(tc));
+        }
+        if (d[0] > tol && d[1] > tol && d[2] > tol)
+            return false;
+        if (d[0] < -tol && d[1] < -tol && d[2] < -tol)
+            return false;
+        // Straddling: clip the target triangle to the tolerance band, then test
+        // the clipped polygon against the leaf in the leaf plane.
+        std::vector<Vec3f> poly = { ta, tb, tc };
+        poly = clip_polygon_halfspace(std::move(poly), pv0, leaf_normal, tol, true);
+        poly = clip_polygon_halfspace(std::move(poly), pv0, leaf_normal, -tol, false);
+        if (poly.size() < 3)
+            return false;
+        const Vec3f u = (pv1 - pv0).normalized();
+        const Vec3f v = leaf_normal.cross(u);
+        std::vector<Vec2f> poly2d;
+        poly2d.reserve(poly.size());
+        for (const Vec3f& p : poly) {
+            const Vec3f d = p - pv0;
+            poly2d.emplace_back(d.dot(u), d.dot(v));
+        }
+        const Vec3f d1 = pv1 - pv0;
+        const Vec3f d2 = pv2 - pv0;
+        return poly_tri_overlap_2d(poly2d, Vec2f::Zero(), Vec2f(d1.dot(u), d1.dot(v)), Vec2f(d2.dot(u), d2.dot(v)));
+    };
+
+    // 4. For each painted leaf, build its cursor exactly once, then walk the
+    // candidate faces enumerated by the spatial index and select each of them
+    // directly - no per-candidate connected-region traversal.
+    TriangleSelector target_selector(target_mesh);
+    if (existing_painting) {
+        // Restore existing painting first, if given
+        target_selector.deserialize(existing_painting->get(), false);
+    }
+    for (auto tri_ref : painted_triangles) {
+        const Triangle& tri = tri_ref.get();
+        const Vec3f& pv0    = source_selector.m_vertices[tri.verts_idxs[0]].v;
+        const Vec3f& pv1    = source_selector.m_vertices[tri.verts_idxs[1]].v;
+        const Vec3f& pv2    = source_selector.m_vertices[tri.verts_idxs[2]].v;
+
+        // Decoded in the ORIGINAL corner order, then moved into the target
+        // space; a negative determinant of the composite transform flips the
+        // decoded leaf winding exactly once, and the normal comes from the
+        // transformed geometry.
+        Vec3f w0 = (source_to_target * pv0.cast<double>()).cast<float>();
+        Vec3f w1 = (source_to_target * pv1.cast<double>()).cast<float>();
+        Vec3f w2 = (source_to_target * pv2.cast<double>()).cast<float>();
+        if (source_to_target_det < 0.)
+            std::swap(w1, w2);
+        const Vec3f leaf_normal = (w1 - w0).cross(w2 - w0).normalized();
+
+        // Find ALL target faces whose bounding boxes overlap with the paint
+        // triangle's bounding box, not just the nearest one.
+        Eigen::AlignedBox3f pt_bbox;
+        pt_bbox.extend(w0);
+        pt_bbox.extend(w1);
+        pt_bbox.extend(w2);
+        pt_bbox.min() -= Eigen::Vector3f::Constant(TriangleCursor::tolerance);
+        pt_bbox.max() += Eigen::Vector3f::Constant(TriangleCursor::tolerance);
+
+        std::unique_ptr<Cursor> cursor = TriangleCursor::build_cursor(w0, w1, w2, leaf_normal);
+        if (!target_selector.PrepareSelectionCursor(std::move(cursor)))
+            continue;
+        if (stats)
+            ++stats->painted_leaves;
+
+        AABBTreeIndirect::traverse(target_tree, AABBTreeIndirect::intersecting(pt_bbox), [&](const AABBTreeIndirect::Tree3f::Node& node) -> bool {
+            size_t face_idx = node.idx;
+            if (face_idx >= target_mesh.its.indices.size())
+                return true;
+            // An identical mesh already has exact root correspondence. Overlay
+            // non-NONE leaves only within that root's common parameter domain;
+            // nearby or coincident different roots must never be candidates.
+            if (identical_roots && face_idx != size_t(tri.source_triangle))
+                return true;
+
+            const Vec3f& norm_b = target_selector.m_face_normals[face_idx];
+
+            const Vec3i32& face = target_mesh.its.indices[face_idx];
+            const Vec3f& ta     = target_mesh.its.vertices[face(0)];
+            const Vec3f& tb     = target_mesh.its.vertices[face(1)];
+            const Vec3f& tc     = target_mesh.its.vertices[face(2)];
+
+            if (TriangleCursor::check_normal(norm_b, -leaf_normal) && check_overlap(w0, w1, w2, ta, tb, tc, leaf_normal)) {
+                if (stats)
+                    ++stats->candidate_faces;
+                // Select this single face (recursive in-face subdivision only).
+                if (target_selector.select_triangle(int(face_idx), tri.get_state(), true, true) && stats)
+                    ++stats->select_calls;
+            }
+            return true; // continue traversal
+        });
+    }
+
+    return target_selector.serialize();
+}
+
+// Copy painting through a topology-preserving component split. Positions are
+// deliberately unused: centering, instance scale and close/coincident shells
+// cannot change which source face owns a target face.
+TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_split(const indexed_triangle_set&          source_its,
+                                                                               const TriangleSplittingData&         source_painting,
+                                                                               const indexed_triangle_set&          target_its,
+                                                                               const TriangleMesh::SplitProvenance& provenance)
+{
+    if (provenance.source_faces.size() != target_its.indices.size())
+        throw std::invalid_argument("Split painting requires one source face per output face");
+    for (size_t source_face : provenance.source_faces)
+        if (source_face >= source_its.indices.size())
+            throw std::out_of_range("Split painting source face is out of range");
+    if (source_painting.bitstream.empty())
+        return {};
+
+    TriangleMesh     source_mesh(source_its), target_mesh(target_its);
+    TriangleSelector source(source_mesh), target(target_mesh);
+    source.deserialize(source_painting, false);
+
+    // Integer barycentric labels describe just ONE split. Reinitialize them at
+    // every recursion: no floating tolerance or depth-dependent rounding.
+    using Region           = std::array<Vec3i32, 3>;
+    const Region canonical = {Vec3i32(2, 0, 0), Vec3i32(0, 2, 0), Vec3i32(0, 0, 2)};
+    auto         children  = [](const Region& p, int count, int side) -> std::vector<Region> {
+        const Vec3i32 a = p[side], b = p[(side + 1) % 3], c = p[(side + 2) % 3];
+        const Vec3i32 ab = (a + b) / 2, bc = (b + c) / 2, ca = (c + a) / 2;
+        if (count == 1)
+            return {{a, b, bc}, {bc, c, a}};
+        if (count == 2)
+            return {{a, ab, ca}, {ab, b, ca}, {b, c, ca}};
+        return {{a, ab, ca}, {ab, b, bc}, {bc, c, ca}, {ab, bc, ca}};
+    };
+    auto split = [&](int node, int count, int side) {
+        target.PrepareForLeafIdentityChange();
+        const int root = target.m_triangles[node].source_triangle;
+        target.m_triangles[node].set_division(count, side);
+        target.perform_split(node, Vec3i32(-1, -1, -1), EnforcerBlockerType::NONE);
+        target.NotifyTopologyMutation(root);
+    };
+    auto permutation = [](const Region& from, const Region& to, std::array<int, 3>& map) {
+        for (int j = 0; j < 3; ++j) {
+            int k = 0;
+            while (k < 3 && from[k] != to[j])
+                ++k;
+            if (k == 3)
+                return false;
+            map[j] = k;
+        }
+        return true;
+    };
+    std::function<void(int, int, const std::array<int, 3>&)> copy = [&](int src, int dst, const std::array<int, 3>& map) {
+        const Triangle tr = source.m_triangles[src];
+        if (!tr.is_split()) {
+            target.CollapseSubtreeToState(dst, tr.get_state());
+            return;
+        }
+        const int    count = tr.number_of_split_sides(), side = tr.special_side();
+        const auto   src_regions = children(canonical, count, side);
+        const Region dst_region  = {canonical[map[0]], canonical[map[1]], canonical[map[2]]};
+        auto         corner      = [&](int src_corner) { return int(std::find(map.begin(), map.end(), src_corner) - map.begin()); };
+        std::vector<std::pair<int, Region>> dst_regions;
+        if (count == 2 && provenance.reversed) {
+            // A two-side split's quadrilateral diagonal is not reflection
+            // invariant. Express its exact three regions as two median splits
+            // instead; merely reversing special_side would move the stroke.
+            const int dst_side = corner((side + 1) % 3);
+            split(dst, 1, dst_side);
+            const auto    halves = children(dst_region, 1, dst_side);
+            const Vec3i32 ca     = (canonical[side] + canonical[(side + 2) % 3]) / 2;
+            for (int j = 0; j < 2; ++j) {
+                const int          child = target.m_triangles[dst].children[j];
+                std::array<int, 3> unused;
+                if (permutation(src_regions[2], halves[j], unused)) {
+                    dst_regions.emplace_back(child, halves[j]);
+                } else {
+                    int median = 0;
+                    while (halves[j][median] != ca)
+                        ++median;
+                    split(child, 1, median);
+                    const auto quarters = children(halves[j], 1, median);
+                    for (int k = 0; k < 2; ++k)
+                        dst_regions.emplace_back(target.m_triangles[child].children[k], quarters[k]);
+                }
+            }
+        } else {
+            const int dst_side = count == 3 ? 0 : corner(side);
+            split(dst, count, dst_side);
+            const auto regions = children(dst_region, count, dst_side);
+            for (int j = 0; j <= count; ++j)
+                dst_regions.emplace_back(target.m_triangles[dst].children[j], regions[j]);
+        }
+        for (const auto& child : dst_regions) {
+            std::array<int, 3> next_map;
+            int                j = 0;
+            while (j <= count && !permutation(src_regions[j], child.second, next_map))
+                ++j;
+            if (j > count)
+                throw std::logic_error("Split painting child correspondence is invalid");
+            copy(tr.children[j], child.first, next_map);
+        }
+    };
+    const std::array<int, 3> root_map = provenance.reversed ? std::array<int, 3>{0, 2, 1} : std::array<int, 3>{0, 1, 2};
+    for (size_t face = 0; face < provenance.source_faces.size(); ++face)
+        copy(int(provenance.source_faces[face]), int(face), root_map);
+    return target.serialize();
+}
+
+// Loop child regions in the PARENT face's barycentric domain, matching the
+// fixed output layout of deps_src/libigl/igl/loop.cpp: with parent corners
+// c0,c1,c2 and edge midpoints m01=(c0+c1)/2, m12=(c1+c2)/2, m20=(c2+c0)/2,
+//   child 0 = (c0, m01, m20), child 1 = (c1, m12, m01),
+//   child 2 = (m01, m12, m20), child 3 = (m12, c2, m20).
+// Expressed as (lambda0, lambda1) coordinates, in the SAME corner order as the
+// corresponding output face rows.
+static const std::array<Vec2f, 3>& smooth_child_region(int child)
+{
+    static const std::array<std::array<Vec2f, 3>, 4> regions = {{
+        { Vec2f(1.f, 0.f), Vec2f(0.5f, 0.5f), Vec2f(0.5f, 0.f) },  // child 0: (c0, m01, m20)
+        { Vec2f(0.f, 1.f), Vec2f(0.f, 0.5f), Vec2f(0.5f, 0.5f) },  // child 1: (c1, m12, m01)
+        { Vec2f(0.5f, 0.5f), Vec2f(0.f, 0.5f), Vec2f(0.5f, 0.f) }, // child 2: (m01, m12, m20)
+        { Vec2f(0.f, 0.5f), Vec2f(0.f, 0.f), Vec2f(0.5f, 0.f) },   // child 3: (m12, c2, m20)
+    }};
+    assert(child >= 0 && child < 4);
+    return regions[child];
+}
+
+TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_smooth(
+    const indexed_triangle_set& source_its,
+    const TriangleSplittingData& source_painting,
+    const indexed_triangle_set& target_its,
+    const std::vector<std::pair<int, int>>& target_origins,
+    const std::optional<std::reference_wrapper<const TriangleSplittingData>>& existing_painting)
+{
+    TriangleSplittingData result;
+    if (source_painting.bitstream.empty())
+        return result;
+    if (target_origins.size() != target_its.indices.size())
+        return result;
+
+    TriangleMesh source_mesh(source_its);
+    TriangleSelector source_selector(source_mesh);
+    source_selector.deserialize(source_painting, false);
+
+    TriangleMesh target_mesh(target_its);
+    TriangleSelector target_selector(target_mesh);
+    if (existing_painting)
+        target_selector.deserialize(existing_painting->get(), false);
+
+    // Painting leaves of one source face, expressed in its barycentric domain.
+    struct SourceLeaf
+    {
+        std::array<Vec2f, 3> lam;    // (lambda0, lambda1) corners
+        EnforcerBlockerType state;
+        float               scale;   // mean edge length in the parent barycentric domain
+    };
+    auto gather_leaves = [&source_selector](int parent) {
+        std::vector<SourceLeaf> leaves;
+        if (parent < 0 || parent >= int(source_selector.m_triangles.size()))
+            return leaves;
+        const Triangle& root = source_selector.m_triangles[parent];
+        if (!root.valid())
+            return leaves;
+        const Vec3f& a0 = source_selector.m_vertices[root.verts_idxs[0]].v;
+        const Vec3f& a1 = source_selector.m_vertices[root.verts_idxs[1]].v;
+        const Vec3f& a2 = source_selector.m_vertices[root.verts_idxs[2]].v;
+        const Barycentric parent_bary(a0, a1, a2);
+        auto to_lam = [&parent_bary](const Vec3f& p) {
+            const Vec3f bc = parent_bary.calc(p);
+            return Vec2f(bc.x(), bc.y());
+        };
+        std::function<void(int)> walk = [&](int idx) {
+            const Triangle& tr = source_selector.m_triangles[idx];
+            if (!tr.valid())
+                return;
+            if (tr.is_split()) {
+                for (int i = 0; i <= tr.number_of_split_sides(); ++i)
+                    walk(tr.children[i]);
+            } else {
+                const Vec3f& v0 = source_selector.m_vertices[tr.verts_idxs[0]].v;
+                const Vec3f& v1 = source_selector.m_vertices[tr.verts_idxs[1]].v;
+                const Vec3f& v2 = source_selector.m_vertices[tr.verts_idxs[2]].v;
+                SourceLeaf leaf;
+                leaf.lam   = { to_lam(v0), to_lam(v1), to_lam(v2) };
+                leaf.state = tr.get_state();
+                leaf.scale = ((leaf.lam[1] - leaf.lam[0]).norm() + (leaf.lam[2] - leaf.lam[1]).norm() + (leaf.lam[0] - leaf.lam[2]).norm()) / 3.f;
+                leaves.push_back(leaf);
+            }
+        };
+        walk(parent);
+        return leaves;
+    };
+    auto point_in_leaf = [](const SourceLeaf& leaf, const Vec2f& p) {
+        return point_in_tri2d(p, leaf.lam[0], leaf.lam[1], leaf.lam[2]);
+    };
+
+    // Subdivide a target face without a paint cursor: a representable median
+    // uses a one-side split; otherwise use full three-side subdivision.
+    // Both mirror split_triangle(): division + perform_split + topology notify.
+    // Neighbors are passed as -1 on purpose: the midpoint sharing through
+    // neighbor_child() assumes both adjacent faces subdivided to the SAME depth
+    // along the shared edge, which the independent per-face resolution below
+    // cannot guarantee - a mismatched lookup would return an unrelated vertex
+    // and corrupt the subtree geometry. The serialized painting data only
+    // stores the split structure (midpoint positions are re-derived from the
+    // mesh on deserialize), so unshared midpoints are safe here.
+    auto try_subdivide = [&target_selector](int facet_idx, int median_corner) -> bool {
+        Triangle& tr = target_selector.m_triangles[facet_idx];
+        if (tr.is_split())
+            return true;
+        target_selector.PrepareForLeafIdentityChange();
+        const int               source_triangle = tr.source_triangle;
+        const EnforcerBlockerType old_state     = tr.get_state();
+        tr.set_division(median_corner >= 0 ? 1 : 3, median_corner >= 0 ? median_corner : 0);
+        target_selector.perform_split(facet_idx, Vec3i32(-1, -1, -1), old_state);
+        target_selector.NotifyTopologyMutation(source_triangle);
+        return target_selector.m_triangles[facet_idx].is_split();
+    };
+
+    // Resolve one target sub-face against its parent's leaves: S is the
+    // sub-face's region in the parent's barycentric domain.
+    std::function<void(int, const std::array<Vec2f, 3>&, int, const std::vector<SourceLeaf>&)> resolve =
+        [&](int facet_idx, const std::array<Vec2f, 3>& S, int depth, const std::vector<SourceLeaf>& leaves) {
+        const Triangle tr = target_selector.m_triangles[facet_idx]; // copy: recursion invalidates references
+        if (!tr.valid())
+            return;
+
+        const Vec2f centroid = (S[0] + S[1] + S[2]) / 3.f;
+        int leaf_c = -1;
+        for (int i = 0; i < int(leaves.size()); ++i)
+            if (point_in_leaf(leaves[i], centroid)) {
+                leaf_c = i;
+                break;
+            }
+
+        // One leaf covering the whole region: exact inheritance, no subdivision.
+        for (int i = 0; i < int(leaves.size()); ++i)
+            if (point_in_leaf(leaves[i], S[0]) && point_in_leaf(leaves[i], S[1]) && point_in_leaf(leaves[i], S[2])) {
+                target_selector.CollapseSubtreeToState(facet_idx, leaves[i].state);
+                return;
+            }
+
+        // Uniform verdict: the centroid's leaf (plus possibly more same-colored
+        // leaves) covers S; any differently painted leaf touching S rejects it.
+        bool  conflict    = leaf_c < 0;
+        float local_scale = std::numeric_limits<float>::max();
+        for (int i = 0; i < int(leaves.size()); ++i) {
+            const SourceLeaf& L = leaves[i];
+            if (tri_overlap_2d(L.lam[0], L.lam[1], L.lam[2], S[0], S[1], S[2])) {
+                local_scale = std::min(local_scale, L.scale);
+                if (leaf_c >= 0 && L.state != leaves[leaf_c].state)
+                    conflict = true;
+            }
+        }
+        if (!conflict) {
+            target_selector.CollapseSubtreeToState(facet_idx, leaves[leaf_c].state);
+            return;
+        }
+
+        // Resolve the boundary in the SAME parameter domain as the source
+        // painting. A fixed mesh-unit floor loses world-sized strokes on small
+        // meshes displayed at a large scale. Two extra refinements relative to
+        // the source leaf scale bound boundary quantization independently of
+        // object placement and of the smoothed surface's geometric distortion.
+        const float longest = std::max({ (S[1] - S[0]).norm(), (S[2] - S[1]).norm(), (S[0] - S[2]).norm() });
+        // Prefer an EXACT representable boundary over a four-way approximation.
+        // A source edge through one corner and the opposite edge midpoint is
+        // directly encodable by the selector's one-side (two-child) split.
+        int median_corner = -1;
+        const auto cross2 = [](const Vec2f& a, const Vec2f& b) { return a.x()*b.y() - a.y()*b.x(); };
+        for (const SourceLeaf& leaf : leaves) {
+            for (int e = 0; e < 3 && median_corner < 0; ++e) {
+                const Vec2f edge = leaf.lam[(e+1)%3] - leaf.lam[e];
+                const float tol = 8.f * std::numeric_limits<float>::epsilon() * edge.norm() * longest;
+                for (int k = 0; k < 3; ++k) {
+                    const Vec2f middle = 0.5f * (S[(k+1)%3] + S[(k+2)%3]);
+                    const float d0 = cross2(edge, S[k] - leaf.lam[e]);
+                    const float dm = cross2(edge, middle - leaf.lam[e]);
+                    const float d1 = cross2(edge, S[(k+1)%3] - leaf.lam[e]);
+                    const float d2 = cross2(edge, S[(k+2)%3] - leaf.lam[e]);
+                    if (std::abs(d0) <= tol && std::abs(dm) <= tol && d1*d2 < 0.f) {
+                        median_corner = k;
+                        break;
+                    }
+                }
+            }
+            if (median_corner >= 0) break;
+        }
+        constexpr int max_depth = 16;
+        if (depth < max_depth && (median_corner >= 0 || longest > 0.25f * local_scale) &&
+            try_subdivide(facet_idx, median_corner)) {
+            const Triangle split_tr        = target_selector.m_triangles[facet_idx]; // copy: recursion may reallocate
+            const int       num_of_children = split_tr.number_of_split_sides() + 1;
+            // Child regions of a full split (perform_split case 3):
+            // (S0,m01,m20) (m01,S1,m12) (m12,S2,m20) (m01,m12,m20).
+            const Vec2f m01 = (S[0] + S[1]) / 2.f;
+            const Vec2f m12 = (S[1] + S[2]) / 2.f;
+            const Vec2f m20 = (S[2] + S[0]) / 2.f;
+            const std::array<Vec2f, 3> child_S[4] = {
+                { S[0], m01, m20 }, { m01, S[1], m12 }, { m12, S[2], m20 }, { m01, m12, m20 }
+            };
+            if (num_of_children == 2) {
+                const int k = split_tr.special_side();
+                const Vec2f mid = 0.5f * (S[(k+1)%3] + S[(k+2)%3]);
+                resolve(split_tr.children[0], {S[k], S[(k+1)%3], mid}, depth + 1, leaves);
+                resolve(split_tr.children[1], {mid, S[(k+2)%3], S[k]}, depth + 1, leaves);
+            } else {
+                for (int i = 0; i < num_of_children; ++i)
+                    resolve(split_tr.children[i], child_S[i], depth + 1, leaves);
+            }
+        } else {
+            // Non-representable terminal boundary: aggregate actual overlap by
+            // STATE (including NONE). A centroid on a shared edge cannot choose
+            // an arbitrary first leaf. Ordered state keys make exact ties stable,
+            // independent of source-child traversal order. Quantization remains
+            // bounded by this cell at the source-relative resolution above.
+            std::map<EnforcerBlockerType, double> coverage;
+            for (const SourceLeaf& leaf : leaves) {
+                const auto poly = clip_polygon_by_triangle_2d({S[0], S[1], S[2]},
+                                                              leaf.lam[0], leaf.lam[1], leaf.lam[2]);
+                coverage[leaf.state] += polygon_area_2d(poly);
+            }
+            double best_area = 0.;
+            EnforcerBlockerType best_state = EnforcerBlockerType::NONE;
+            const double area_eps = 8. * std::numeric_limits<float>::epsilon() *
+                std::abs(cross2(S[1]-S[0], S[2]-S[0]));
+            for (const auto& entry : coverage) {
+                if (entry.second > best_area + area_eps) {
+                    best_area = entry.second;
+                    best_state = entry.first;
+                }
+            }
+            target_selector.CollapseSubtreeToState(facet_idx, best_state);
+        }
+    };
+
+    // Gather each parent's leaves once, then resolve all of its children.
+    std::map<int, std::vector<SourceLeaf>> leaves_of_parent;
+    for (size_t f = 0; f < target_its.indices.size(); ++f) {
+        const auto [parent, child] = target_origins[f];
+        auto it = leaves_of_parent.find(parent);
+        if (it == leaves_of_parent.end())
+            it = leaves_of_parent.emplace(parent, gather_leaves(parent)).first;
+        if (it->second.empty())
+            continue;
+        resolve(int(f), smooth_child_region(child), 0, it->second);
+    }
+
+    return target_selector.serialize();
+}
+// 2D helpers for the planar paint-transfer test below. Both triangles are given
+// in the same 2D coordinate system (orthogonally projected into the face plane).
+static bool point_in_tri2d(const Vec2f& p, const Vec2f& t0, const Vec2f& t1, const Vec2f& t2)
+{
+    const auto cross2d = [](const Vec2f& o, const Vec2f& u, const Vec2f& v) {
+        return (u - o).x() * (v - o).y() - (u - o).y() * (v - o).x();
+    };
+    const float d1 = cross2d(p, t0, t1);
+    const float d2 = cross2d(p, t1, t2);
+    const float d3 = cross2d(p, t2, t0);
+    const bool negative = d1 < 0.f || d2 < 0.f || d3 < 0.f;
+    const bool positive = d1 > 0.f || d2 > 0.f || d3 > 0.f;
+    return ! (negative && positive); // points exactly on an edge count as inside
+}
+
+static bool seg_intersect2d(const Vec2f& p1, const Vec2f& p2, const Vec2f& q1, const Vec2f& q2)
+{
+    const auto cross2d = [](const Vec2f& o, const Vec2f& u, const Vec2f& v) {
+        return (u - o).x() * (v - o).y() - (u - o).y() * (v - o).x();
+    };
+    const float d1 = cross2d(q1, q2, p1);
+    const float d2 = cross2d(q1, q2, p2);
+    const float d3 = cross2d(p1, p2, q1);
+    const float d4 = cross2d(p1, p2, q2);
+    return ((d1 > 0.f && d2 < 0.f) || (d1 < 0.f && d2 > 0.f)) &&
+           ((d3 > 0.f && d4 < 0.f) || (d3 < 0.f && d4 > 0.f));
+}
+
+// Exact 2D triangle-triangle overlap: an edge pair crossing, or one triangle's
+// vertex inside the other. Collinear touching is covered by the vertex tests.
+static bool tri_overlap_2d(const Vec2f& a0, const Vec2f& a1, const Vec2f& a2,
+                           const Vec2f& b0, const Vec2f& b1, const Vec2f& b2)
+{
+    if (seg_intersect2d(a0, a1, b0, b1) || seg_intersect2d(a0, a1, b1, b2) || seg_intersect2d(a0, a1, b2, b0) ||
+        seg_intersect2d(a1, a2, b0, b1) || seg_intersect2d(a1, a2, b1, b2) || seg_intersect2d(a1, a2, b2, b0) ||
+        seg_intersect2d(a2, a0, b0, b1) || seg_intersect2d(a2, a0, b1, b2) || seg_intersect2d(a2, a0, b2, b0))
+        return true;
+    if (point_in_tri2d(a0, b0, b1, b2) || point_in_tri2d(a1, b0, b1, b2) || point_in_tri2d(a2, b0, b1, b2))
+        return true;
+    if (point_in_tri2d(b0, a0, a1, a2) || point_in_tri2d(b1, a0, a1, a2) || point_in_tri2d(b2, a0, a1, a2))
+        return true;
+    return false;
+}
+
+// Transfer painting from the source mesh onto a simplified target mesh: the
+// painting state under sample points of every target face is queried from the
+// deserialized source painting (closest leaf on the source surface), and target
+// faces are subdivided adaptively while trusted samples disagree or differently
+// painted geometry lies within the face's own reach - down to the LOCAL scale of
+// the painting around them. Colored regions and their boundaries are therefore
+// re-established as one continuous assignment over the whole target surface.
+// All lengths are in mesh units of the volume's own coordinate space (the space
+// the painting was made in), not world millimeters under volume scaling.
+// Unlike remap_painting() this does not require the two surfaces to geometrically
+// intersect, which a simplified surface cannot guarantee. See the declaration in
+// TriangleSelector.hpp for the rationale and limits.
+TriangleSelector::TriangleSplittingData TriangleSelector::remap_painting_by_projection(
+    const indexed_triangle_set& source_its,
+    const TriangleSplittingData& source_painting,
+    const indexed_triangle_set& target_its,
+    const Transform3d& target_transform,
+    const std::optional<std::reference_wrapper<const TriangleSplittingData>>& existing_painting)
+{
+    TriangleSplittingData result;
+    if (source_painting.bitstream.empty())
+        return result;
+
+    // 1. Deserialize the source painting; its subdivided leaves are the queryable
+    // truth. Resolution policy is LOCAL: every query reports the mean edge length
+    // of the leaf it hit, and a target face only subdivides down to the scale of
+    // the painting that actually surrounds it - fine near fine strokes, cheap
+    // where the painting itself is coarse. All lengths are in mesh units of the
+    // volume's own coordinate space (the space the painting was made in), not
+    // world mm under volume scaling.
+    TriangleMesh source_mesh(source_its);
+    TriangleSelector source_selector(source_mesh);
+    source_selector.deserialize(source_painting, false);
+
+    // Per-leaf data (index = filtered leaf index, see leaf_its below): mean edge
+    // length, painting state, and the source triangle for normal lookups.
+    std::vector<float>               leaf_scale;
+    std::vector<EnforcerBlockerType> leaf_states;
+    std::vector<int>                 leaf_source;
+    // Painting-wide mean leaf edge over PAINTED leaves: only the fallback
+    // resolution for faces whose queries were all untrusted.
+    double leaf_edge_sum   = 0.0;
+    size_t leaf_edge_count = 0;
+
+    indexed_triangle_set leaf_its; // one face per source leaf, tiling the source surface
+    leaf_its.vertices.reserve(source_selector.m_triangles.size() * 3);
+    leaf_states.reserve(source_selector.m_triangles.size());
+    leaf_source.reserve(source_selector.m_triangles.size());
+    leaf_scale.reserve(source_selector.m_triangles.size());
+    for (int i = 0; i < int(source_selector.m_triangles.size()); ++i) {
+        const Triangle& tr = source_selector.m_triangles[i];
+        if (!tr.valid() || tr.is_split())
+            continue;
+        const Vec3f& a = source_selector.m_vertices[tr.verts_idxs[0]].v;
+        const Vec3f& b = source_selector.m_vertices[tr.verts_idxs[1]].v;
+        const Vec3f& c = source_selector.m_vertices[tr.verts_idxs[2]].v;
+        leaf_states.push_back(tr.get_state());
+        leaf_source.push_back(tr.source_triangle);
+        leaf_scale.push_back(((b - a).norm() + (c - b).norm() + (a - c).norm()) / 3.f);
+        const unsigned base = unsigned(leaf_its.vertices.size());
+        leaf_its.vertices.push_back(a);
+        leaf_its.vertices.push_back(b);
+        leaf_its.vertices.push_back(c);
+        leaf_its.indices.emplace_back(base, base + 1, base + 2);
+        if (tr.get_state() != EnforcerBlockerType::NONE) {
+            leaf_edge_sum += double(leaf_scale.back()) * 3.0;
+            leaf_edge_count += 3;
+        }
+    }
+    if (leaf_states.empty())
+        return result;
+    const float fallback_resolution = std::max(0.05f, float(leaf_edge_sum / double(leaf_edge_count)));
+
+    // 2. Target selector that receives the transferred painting, and the spatial
+    // index over the source leaves for the state queries.
+    TriangleMesh target_mesh(target_its);
+    target_mesh.transform(target_transform);
+    TriangleSelector target_selector(target_mesh);
+    if (existing_painting)
+        target_selector.deserialize(existing_painting->get(), false);
+    AABBTreeIndirect::Tree3f leaf_tree = AABBTreeIndirect::build_aabb_tree_over_indexed_triangle_set(leaf_its.vertices, leaf_its.indices);
+
+    // 3. Query the painting state under a point of the target surface: the
+    // closest source leaf and its state. The outcomes are kept strictly apart: a
+    // hit on an unpainted leaf is a real NONE and takes part in the face
+    // resolution, while an untrusted query (no hit, or a closest leaf on the far
+    // side of a thin wall / oppositely oriented shell) is Unknown - unknowns
+    // never vote and never turn into NONE.
+    enum class QueryOutcome : unsigned char { Unpainted, Painted, Unknown };
+    auto query_state = [&leaf_its, &leaf_tree, &leaf_states, &leaf_source, &leaf_scale, &source_selector](const Vec3f& point, const Vec3f& face_normal, QueryOutcome& outcome, float& hit_scale) -> EnforcerBlockerType {
+        outcome = QueryOutcome::Unknown;
+        hit_scale = 0.f;
+        size_t hit_leaf = 0;
+        Vec3f  hit_point = Vec3f::Zero();
+        const float dist2 = AABBTreeIndirect::squared_distance_to_indexed_triangle_set(
+            leaf_its.vertices, leaf_its.indices, leaf_tree, point, hit_leaf, hit_point);
+        if (dist2 < 0.f)
+            return EnforcerBlockerType::NONE;
+        if (source_selector.m_face_normals[leaf_source[hit_leaf]].dot(face_normal) <= 0.f)
+            return EnforcerBlockerType::NONE;
+        outcome = leaf_states[hit_leaf] == EnforcerBlockerType::NONE ? QueryOutcome::Unpainted : QueryOutcome::Painted;
+        hit_scale = leaf_scale[hit_leaf];
+        return leaf_states[hit_leaf];
+    };
+
+    // Does any DIFFERENTLY painted source leaf overlap this face's region on the
+    // surface? This is what makes "the samples agree" mean "the face is one
+    // color": a stroke, an erased patch or a neighbor color that never touches a
+    // sample point still rejects the verdict. For faces whose neighborhood is
+    // planar (every candidate leaf vertex within plane_epsilon of the face
+    // plane) the test is exact - both triangles are projected into the face
+    // plane and compared in 2D. Otherwise the verdict is conservatively
+    // rejected and subdivision resolves the face at the local painting scale.
+    // Sidewalls and far-side leaves (normals outside the same hemisphere)
+    // never trigger it.
+    auto region_contains_other_color = [&leaf_tree, &leaf_states, &leaf_source, &source_selector](const Vec3f& a, const Vec3f& b, const Vec3f& c, const Vec3f& face_normal, EnforcerBlockerType state) -> bool {
+        constexpr float plane_epsilon = 0.05f; // mesh units
+        Eigen::AlignedBox3f bbox;
+        bbox.extend(a);
+        bbox.extend(b);
+        bbox.extend(c);
+        bbox.min() -= Eigen::Vector3f::Constant(plane_epsilon);
+        bbox.max() += Eigen::Vector3f::Constant(plane_epsilon);
+
+        // 2D frame of the face plane
+        const Vec3f u_axis = face_normal.cross(Vec3f::UnitZ());
+        const Vec3f uu = u_axis.norm() > 1e-6f ? u_axis.normalized() : face_normal.cross(Vec3f::UnitX()).normalized();
+        const Vec3f vv = face_normal.cross(uu).normalized();
+        auto to2d = [&a, &uu, &vv](const Vec3f& p) {
+            const Vec3f d = p - a;
+            return Vec2f(d.dot(uu), d.dot(vv));
+        };
+        const Vec2f f0 = Vec2f::Zero();
+        const Vec2f f1 = to2d(b);
+        const Vec2f f2 = to2d(c);
+
+        bool found = false;
+        AABBTreeIndirect::traverse(leaf_tree, AABBTreeIndirect::intersecting(bbox), [&](const AABBTreeIndirect::Tree3f::Node& node) -> bool {
+            if (found)
+                return false;
+            const size_t leaf = node.idx;
+            if (leaf >= leaf_states.size() || leaf_states[leaf] == state)
+                return true; // same painting cannot invalidate uniformity
+            const int src_tri = leaf_source[leaf];
+            const Vec3f& leaf_normal = source_selector.m_face_normals[src_tri];
+            if (leaf_normal.dot(face_normal) <= 0.f)
+                return true; // sidewall / far side of a thin wall
+            const Triangle& leaf_tri = source_selector.m_triangles[src_tri];
+            const Vec3f& l0 = source_selector.m_vertices[leaf_tri.verts_idxs[0]].v;
+            const Vec3f& l1 = source_selector.m_vertices[leaf_tri.verts_idxs[1]].v;
+            const Vec3f& l2 = source_selector.m_vertices[leaf_tri.verts_idxs[2]].v;
+            const float d0 = std::abs((l0 - a).dot(face_normal));
+            const float d1 = std::abs((l1 - a).dot(face_normal));
+            const float d2 = std::abs((l2 - a).dot(face_normal));
+            if (d0 <= plane_epsilon && d1 <= plane_epsilon && d2 <= plane_epsilon) {
+                // Planar neighborhood: exact overlap test in the face plane.
+                if (tri_overlap_2d(f0, f1, f2, to2d(l0), to2d(l1), to2d(l2)))
+                    found = true;
+            } else {
+                // Curved neighborhood: a differently painted leaf inside the
+                // face's reach means the verdict cannot be trusted; subdivision
+                // resolves the face at the local painting scale.
+                found = true;
+            }
+            return ! found;
+        });
+        return found;
+    };
+
+    // Subdivide a leaf face 4-way without a paint cursor (split_triangle() cannot
+    // be used here - it dereferences m_cursor). Mirrors split_triangle() mechanics:
+    // full division + perform_split() + topology notification, so the selector's
+    // caches and revision bookkeeping stay consistent.
+    auto try_subdivide = [&target_selector](int facet_idx, const Vec3i32& neighbors) -> bool {
+        Triangle& tr = target_selector.m_triangles[facet_idx];
+        if (tr.is_split())
+            return true;
+        target_selector.PrepareForLeafIdentityChange();
+        const int source_triangle = tr.source_triangle;
+        const EnforcerBlockerType old_state = tr.get_state();
+        tr.set_division(3, 0);
+        target_selector.perform_split(facet_idx, neighbors, old_state);
+        target_selector.NotifyTopologyMutation(source_triangle);
+        return target_selector.m_triangles[facet_idx].is_split();
+    };
+    // 4. Resolve every target face as part of one continuous assignment over the
+    // surface. Adaptive subdivision: a face is split while its trusted samples
+    // disagree (a color boundary crosses it), none of them could be trusted yet
+    // (deeper sample positions frequently resolve), or differently painted source
+    // geometry lies within its reach - down to the LOCAL painting scale around it
+    // (longest-edge test) or the safety limits, whichever stops first.
+    constexpr int       max_depth    = 8;        // backstop; the edge test below stops first in practice
+    constexpr long long max_splits   = 500000;   // hard resource bound, far above any real painting
+    long long           splits_done  = 0;
+    int                 unresolved_faces = 0;
+    int                 depth_stop_faces = 0;
+    int                 budget_blocked_faces = 0;
+
+    std::function<void(int, const Vec3i32&, int)> paint_face = [&](int facet_idx, const Vec3i32& neighbors, int depth) {
+        const Triangle tr = target_selector.m_triangles[facet_idx]; // copy: recursion invalidates references
+        if (!tr.valid())
+            return;
+
+        const Vec3f a = target_selector.m_vertices[tr.verts_idxs[0]].v;
+        const Vec3f b = target_selector.m_vertices[tr.verts_idxs[1]].v;
+        const Vec3f c = target_selector.m_vertices[tr.verts_idxs[2]].v;
+        const Vec3f face_normal = target_selector.m_face_normals[tr.source_triangle];
+        const Vec3f centroid = (a + b + c) / 3.f;
+        const float longest_edge = std::max({(b - a).norm(), (c - b).norm(), (a - c).norm()});
+
+        // Centroid + corners + edge midpoints. Deeper levels sample fresh
+        // positions, so a boundary or stroke missed at one level is caught at the
+        // next while the face is still larger than the local painting resolution.
+        const Vec3f samples[7] = {
+            centroid,
+            a, b, c,
+            (a + b) / 2.f, (b + c) / 2.f, (c + a) / 2.f
+        };
+        std::array<EnforcerBlockerType, 7> states;
+        std::array<QueryOutcome, 7>        outcomes;
+        std::array<float, 7>               scales;
+        int known_cnt = 0;
+        for (int i = 0; i < 7; ++i) {
+            states[i] = query_state(samples[i], face_normal, outcomes[i], scales[i]);
+            if (outcomes[i] != QueryOutcome::Unknown)
+                ++known_cnt;
+        }
+
+        // Local resolution: the finest scale among the leaves the trusted samples
+        // actually hit. Near a fine stroke the face subdivides down to that
+        // stroke's own scale; where the painting itself is coarse, subdivision
+        // stops early and the painting data stays small. Fallback: the painting-
+        // wide mean when nothing on this face could be trusted.
+        float local_limit = fallback_resolution;
+        for (int i = 0; i < 7; ++i)
+            if (outcomes[i] != QueryOutcome::Unknown && scales[i] >= 0.05f)
+                local_limit = std::min(local_limit, scales[i]);
+
+        // First trusted sample as the reference (the centroid may be unknown).
+        int ref = -1;
+        for (int i = 0; i < 7; ++i)
+            if (outcomes[i] != QueryOutcome::Unknown) {
+                ref = i;
+                break;
+            }
+
+        // Uniform among the trusted samples? Two agreeing samples, or the trusted
+        // centroid alone. The verdict is rejected when differently painted source
+        // geometry (another color, an erased region, a stroke inside blank space)
+        // lies within the face's own reach - sample luck must not hide it.
+        bool uniform = ref >= 0 && (known_cnt >= 2 || outcomes[0] != QueryOutcome::Unknown);
+        for (int i = ref + 1; uniform && i < 7; ++i)
+            if (outcomes[i] != QueryOutcome::Unknown && states[i] != states[ref])
+                uniform = false;
+        if (uniform && region_contains_other_color(a, b, c, face_normal, states[ref]))
+            uniform = false;
+        if (uniform) {
+            target_selector.CollapseSubtreeToState(facet_idx, states[ref]);
+            return;
+        }
+
+        // Disagreement, or nothing trusted yet: descend.
+        const bool may_subdivide = depth < max_depth && splits_done < max_splits && longest_edge > local_limit;
+        if (longest_edge > local_limit) {
+            if (depth >= max_depth)
+                ++depth_stop_faces;
+            if (splits_done >= max_splits)
+                ++budget_blocked_faces;
+        }
+
+        if (target_selector.m_triangles[facet_idx].is_split()) {
+            // Already subdivided (existing painting): descend into the current
+            // children without spending budget.
+            const Triangle split_tr = target_selector.m_triangles[facet_idx];
+            const int num_of_children = split_tr.number_of_split_sides() + 1;
+            for (int i = 0; i < num_of_children; ++i)
+                paint_face(split_tr.children[i], target_selector.child_neighbors(split_tr, neighbors, i), depth);
+        } else if (may_subdivide && try_subdivide(facet_idx, neighbors)) {
+            ++splits_done;
+            const Triangle split_tr = target_selector.m_triangles[facet_idx];
+            const int num_of_children = split_tr.number_of_split_sides() + 1;
+            for (int i = 0; i < num_of_children; ++i)
+                paint_face(split_tr.children[i], target_selector.child_neighbors(split_tr, neighbors, i), depth + 1);
+        } else if (ref >= 0) {
+            // At the local resolution limit with mixed trusted samples: the
+            // centroid sample decides when it is trusted, else the first trusted
+            // one. A majority vote is deliberately not used - it would erase a
+            // thin stroke that only clips a corner of the face.
+            target_selector.CollapseSubtreeToState(facet_idx, outcomes[0] != QueryOutcome::Unknown ? states[0] : states[ref]);
+        } else {
+            // Nothing on this face could be trusted at any scale. Leave it
+            // untouched rather than guessing a color, and count it for the log.
+            ++unresolved_faces;
+        }
+    };
+
+    for (int facet_idx = 0; facet_idx < int(target_mesh.its.indices.size()); ++facet_idx)
+        paint_face(facet_idx, target_selector.m_neighbors[facet_idx], 0);
+
+    size_t painting_leaves = 0;
+    for (const Triangle& t2 : target_selector.m_triangles)
+        painting_leaves += (t2.valid() && !t2.is_split()) ? 1 : 0;
+
+    BOOST_LOG_TRIVIAL(info) << "remap_painting_by_projection: geometry_faces=" << target_mesh.its.indices.size()
+                            << ", painting_leaves=" << painting_leaves
+                            << ", splits=" << splits_done
+                            << ", depth_stop_faces=" << depth_stop_faces
+                            << ", budget_blocked_faces=" << budget_blocked_faces
+                            << ", faces left unpainted (untrusted queries)=" << unresolved_faces;
+
+    return target_selector.serialize();
 }
 
 } // namespace Slic3r

@@ -2019,10 +2019,9 @@ void GLGizmoCut3D::render_clipper_cut()
         ::glEnable(GL_DEPTH_TEST);
 }
 
-void GLGizmoCut3D::PartSelection::add_object(const ModelObject* object)
+void GLGizmoCut3D::PartSelection::add_object(Model&& model)
 {
-    m_model = Model();
-    m_model.add_object(*object);
+    m_model = std::move(model);
 
     const double sla_shift_z = wxGetApp().plater()->canvas3D()->get_selection().get_first_volume()->get_sla_shift_z();
     if (!is_approx(sla_shift_z, 0.)) {
@@ -2032,19 +2031,25 @@ void GLGizmoCut3D::PartSelection::add_object(const ModelObject* object)
     }
 }
 
+void GLGizmoCut3D::PartSelection::add_object(const ModelObject* object)
+{
+    Model model;
+    model.add_object(*object);
+    add_object(std::move(model));
+}
+
 
 GLGizmoCut3D::PartSelection::PartSelection(const ModelObject* mo, const Transform3d& cut_matrix, int instance_idx_in, const Vec3d& center, const Vec3d& normal, const CommonGizmosDataObjects::ObjectClipper& oc)
     : m_instance_idx(instance_idx_in)
 {
-    Cut cut(mo, instance_idx_in, cut_matrix);
-    add_object(cut.perform_with_plane().front());
+    // Plane pre-cut + split into connected components, carrying every source
+    // volume's painting along regardless of the keep_painting preference: the
+    // preference is read again when the cut is performed, and it may change
+    // while this selection is alive. The final cut decides whether the
+    // painting is written back.
+    add_object(Cut::prepare_for_contour_cut(*mo, instance_idx_in, cut_matrix));
 
     const ModelVolumePtrs& volumes = model_object()->volumes;
-
-    // split to parts
-    for (int id = int(volumes.size())-1; id >= 0; id--)
-        if (volumes[id]->is_splittable())
-            volumes[id]->split(1);
 
     m_parts.clear();
     for (const ModelVolume* volume : volumes) {
@@ -3605,6 +3610,7 @@ void GLGizmoCut3D::perform_cut(const Selection& selection)
 
         wxBusyCursor wait;
 
+        const bool keep_painting = GUI::wxGetApp().app_config->get_bool("keep_painting");
         ModelObjectCutAttributes attributes = only_if(has_connectors ? true : m_keep_upper, ModelObjectCutAttribute::KeepUpper) |
                                               only_if(has_connectors ? true : m_keep_lower, ModelObjectCutAttribute::KeepLower) |
                                               only_if(has_connectors ? false : m_keep_as_parts, ModelObjectCutAttribute::KeepAsParts) |
@@ -3613,13 +3619,14 @@ void GLGizmoCut3D::perform_cut(const Selection& selection)
                                               only_if(m_rotate_upper, ModelObjectCutAttribute::FlipUpper) |
                                               only_if(m_rotate_lower, ModelObjectCutAttribute::FlipLower) |
                                               only_if(dowels_count > 0, ModelObjectCutAttribute::CreateDowels) |
-                                              only_if(!has_connectors && !cut_with_groove && cut_mo->cut_id.id().invalid(), ModelObjectCutAttribute::InvalidateCutInfo);
+                                              only_if(!has_connectors && !cut_with_groove && cut_mo->cut_id.id().invalid(), ModelObjectCutAttribute::InvalidateCutInfo) |
+                                              only_if(keep_painting, ModelObjectCutAttribute::KeepPaint);
 
         // update cut_id for the cut object in respect to the attributes
         update_object_cut_id(cut_mo->cut_id, attributes, dowels_count);
 
         Cut cut(cut_mo, instance_idx, get_cut_matrix(selection), attributes);
-        const ModelObjectPtrs& new_objects = cut_by_contour    ? cut.perform_by_contour(m_part_selection.get_cut_parts(), dowels_count):
+        const ModelObjectPtrs& new_objects = cut_by_contour    ? cut.perform_by_contour(mo, m_part_selection.get_cut_parts(), dowels_count):
                                              cut_with_groove   ? cut.perform_with_groove(m_groove, m_rotation_m, m_groove_count, m_groove_gap, static_cast<float>(m_radius)) :
                                                                  cut.perform_with_plane();
 
@@ -3647,12 +3654,12 @@ void GLGizmoCut3D::perform_cut(const Selection& selection)
                         // model_name     failing reason
                         std::vector<std::pair<std::string, std::string>> failed_models;
                         auto                                             plater = wxGetApp().plater();
-                        auto fix_and_update_progress = [this, plater](ModelObject *model_object, const int vol_idx, const string &model_name, ProgressDialog &progress_dlg,
+                        auto fix_and_update_progress = [this, plater, keep_painting](ModelObject *model_object, const int vol_idx, const string &model_name, ProgressDialog &progress_dlg,
                                                                       std::vector<std::string> &succes_models, std::vector<std::pair<std::string, std::string>> &failed_models) {
                             wxString msg = _L("Repairing model object");
                             msg += ": " + from_u8(model_name) + "\n";
                             std::string res;
-                            if (!fix_model_by_win10_sdk_gui(*model_object, vol_idx, progress_dlg, msg, res)) return false;
+                            if (!fix_model_by_win10_sdk_gui(*model_object, vol_idx, progress_dlg, msg, res, keep_painting)) return false;
                             return true;
                         };
                         ProgressDialog progress_dlg(_L("Repairing model object"), "", 100, find_toplevel_parent(plater), wxPD_AUTO_HIDE | wxPD_APP_MODAL | wxPD_CAN_ABORT, true);

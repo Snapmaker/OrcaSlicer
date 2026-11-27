@@ -1375,6 +1375,16 @@ bool SendToPrinterDialog::Show(bool show)
     if (show) {
         wxGetApp().reset_to_active();
         set_default();
+        // Fill the printer dropdown from the locally known machines right
+        // away, before the async cloud fetch returns. update_user_machine_list()
+        // only posts EVT_UPDATE_USER_MACHINE_LIST after the network request
+        // completes, so on first open the dropdown used to be empty until that
+        // fetch came back (#854 symptom 1). update_user_printer() rebuilds the
+        // list from the device manager's already-known machines (LAN-discovered
+        // and cached cloud printers) and selects the last-used one; the async
+        // fetch still refreshes the list again when it arrives, so a printer
+        // only known from the cloud still appears, just one refresh later.
+        update_user_printer();
         update_user_machine_list();
     }
 

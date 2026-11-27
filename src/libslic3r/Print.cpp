@@ -681,6 +681,9 @@ bool Print::invalidate_state_by_config_options(const ConfigOptionResolver & /* n
         "activate_air_filtration",
         "during_print_exhaust_fan_speed",
         "complete_print_exhaust_fan_speed",
+        // GH #864: only substituted into the U1 machine start G-code at
+        // export time (SET_PURIFIER_MODE FAN_SPEED), like the exhaust speeds.
+        "purifier_fan_speed",
         "activate_chamber_temp_control",
         "manual_filament_change",
         "disable_m73",

@@ -1624,6 +1624,24 @@ void PrintConfigDef::init_fff_params()
     def->mode = comSimple;
     def->set_default_value(new ConfigOptionInts{80});
 
+    // GH #864: Speed of the purifier / recirculation fan for the print.
+    // The U1 machine start G-code hard-coded SET_PURIFIER_MODE FAN_SPEED=0.6
+    // in all three chamber-cooling-mode branches, so the slicer had no way to
+    // set the recirculation fan speed the printer display shows — the
+    // exhaust-fan speeds above control a different fan (M106 P3). This option
+    // (default 60, the previous hard-coded value) is substituted into the U1
+    // start G-code as FAN_SPEED={purifier_fan_speed[initial_extruder] / 100.0}.
+    def = this->add("purifier_fan_speed", coInts);
+    def->label   = L("Recirculation fan speed");
+    def->tooltip=L("Speed of the purifier (recirculation) fan for the print, as a percentage. "
+                   "Used by the Snapmaker U1 start G-code (SET_PURIFIER_MODE FAN_SPEED) in all chamber-cooling modes. "
+                   "60% is the previous fixed value.");
+    def->sidetext = "%";
+    def->min=0;
+    def->max=100;
+    def->mode = comSimple;
+    def->set_default_value(new ConfigOptionInts{60});
+
     def = this->add("close_fan_the_first_x_layers", coInts);
     def->label = L("No cooling for the first");
     def->tooltip = L("Turn off all cooling fans for the first few layers. "

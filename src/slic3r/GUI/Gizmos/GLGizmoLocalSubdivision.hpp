@@ -140,6 +140,9 @@ private:
     // Skip the selector draw only for volumes replaced by a live preview, and for
     // parts outside a partial-volume selection (hidden for the session).
     bool render_selector_for_volume(const ModelVolume* mv) const override;
+    // Hidden parts must not swallow paint strokes aimed at the visible part behind
+    // them: the hit test skips them, so the ray passes through to the selection.
+    bool volume_is_raycast_target(const ModelVolume* mv) const override;
     // Failure notification text matching the recorded per-preview reasons: the
     // specific cause when all failed previews share one, the combined wording when
     // they mix. apply selects the "Subdivision failed" family, otherwise the

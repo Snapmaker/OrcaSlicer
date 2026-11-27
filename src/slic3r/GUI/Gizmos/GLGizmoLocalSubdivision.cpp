@@ -761,6 +761,13 @@ PreviewUpdateOutcome GLGizmoLocalSubdivision::update_preview(BudgetPromptMode pr
     return PreviewUpdateOutcome::Ready;
 }
 
+bool GLGizmoLocalSubdivision::volume_is_raycast_target(const ModelVolume* mv) const
+{
+    // Mirror of the per-volume draw gate: a part outside a partial-volume
+    // selection is hidden, so the paint hit test must pass through it.
+    return is_selected_volume(mv);
+}
+
 bool GLGizmoLocalSubdivision::render_selector_for_volume(const ModelVolume* mv) const
 {
     // A partial-volume selection isolates the session to the selected parts:

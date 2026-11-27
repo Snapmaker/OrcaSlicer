@@ -1416,8 +1416,20 @@ void GLGizmoPainterBase::update_raycast_cache(const Vec2d& mouse_position,
     size_t closest_facet = 0;
     int closest_hit_mesh_id = -1;
 
+    // Model parts in the same order as trafo_matrices / the raycaster list, so the
+    // per-volume hit gate below indexes them by mesh_id.
+    const ModelObject* mo = m_c->selection_info() ? m_c->selection_info()->model_object() : nullptr;
+    std::vector<const ModelVolume*> parts;
+    if (mo != nullptr)
+        for (const ModelVolume* mv : mo->volumes)
+            if (mv->is_model_part())
+                parts.push_back(mv);
+
     // Cast a ray on all meshes, pick the closest hit and save it for the respective mesh
     for (int mesh_id = 0; mesh_id < int(trafo_matrices.size()); ++mesh_id) {
+
+        if (mesh_id < int(parts.size()) && ! volume_is_raycast_target(parts[size_t(mesh_id)]))
+            continue; // this part is hidden for the session: the ray passes through it
 
         if (m_c->raycaster()->raycasters()[mesh_id]->unproject_on_mesh(
                    mouse_position,

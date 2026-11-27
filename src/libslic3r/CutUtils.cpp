@@ -685,12 +685,18 @@ const ModelObjectPtrs& Cut::perform_with_groove(const Groove&       groove,
             }
     };
 
-    // Nested cuts use plain upper/lower semantics plus the paint-keeping flag;
-    // each nested Cut then preserves its input volumes' painting per volume.
+    // The nested-cut consumer reads ONE object and routes its volumes by
+    // is_from_upper(). KeepAsParts is required even when the final operation
+    // produces separate objects: otherwise front() contains only the upper
+    // object and selecting the lower volumes empties the next cut's input.
     const ModelObjectCutAttributes nested_attributes = ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::KeepLower |
-                                                       (m_attributes.has(ModelObjectCutAttribute::KeepPaint) ? ModelObjectCutAttribute::KeepPaint : ModelObjectCutAttributes());
-    auto cut = [this, nested_attributes, add_volumes_from_cut]
-                (ModelObject* object, const Transform3d& cut_matrix, const ModelObjectCutAttribute add_volumes_attribute, Model& tmp_model_for_cut) {
+                                                       ModelObjectCutAttribute::KeepAsParts |
+                                                       (m_attributes.has(ModelObjectCutAttribute::KeepPaint) ?
+                                                            ModelObjectCutAttribute::KeepPaint :
+                                                            ModelObjectCutAttributes());
+    auto cut = [this, nested_attributes, add_volumes_from_cut](ModelObject* object, const Transform3d& cut_matrix,
+                                                               const ModelObjectCutAttribute add_volumes_attribute,
+                                                               Model&                        tmp_model_for_cut) {
         Cut cut(object, m_instance, cut_matrix, nested_attributes);
 
         tmp_model_for_cut = Model();

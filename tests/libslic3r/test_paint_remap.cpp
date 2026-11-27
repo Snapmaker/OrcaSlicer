@@ -2200,3 +2200,68 @@ TEST_CASE("Split subtree transfer preserves each split layout after winding corr
                 }
             }
 }
+
+TEST_CASE("Dovetail preview and final cut preserve both nested sides", "[PaintRemap][Dovetail]")
+{
+    const std::array<FacetsAnnotation ModelVolume::*, 4> channels = {&ModelVolume::supported_facets, &ModelVolume::seam_facets,
+                                                                     &ModelVolume::mmu_segmentation_facets,
+                                                                     &ModelVolume::fuzzy_skin_facets};
+    for (bool paint : {false, true})
+        for (bool keep_paint : {false, true})
+            for (int count : {1, 3})
+                for (bool preview : {true, false}) {
+                    INFO("paint=" << paint << " keep=" << keep_paint << " grooves=" << count << " preview=" << preview);
+                    Model model;
+                    auto* object = model.add_object();
+                    auto* volume = object->add_volume(TriangleMesh(box_mesh(0.f, 40.f, 40.f, 20.f)), false);
+                    object->add_instance();
+                    if (paint) {
+                        TriangleSelector selector(volume->mesh());
+                        selector.set_facet(2, EnforcerBlockerType::ENFORCER);
+                        selector.set_facet(3, EnforcerBlockerType::ENFORCER);
+                        selector.set_facet(0, EnforcerBlockerType::BLOCKER);
+                        selector.set_facet(1, EnforcerBlockerType::BLOCKER);
+                        for (auto channel : channels)
+                            (volume->*channel).set_data(TriangleSelector::TriangleSplittingData(selector.serialize()));
+                    }
+                    auto attributes = ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::KeepLower;
+                    if (keep_paint)
+                        attributes = attributes | ModelObjectCutAttribute::KeepPaint;
+                    Cut         cut(object, 0, Geometry::translation_transform(Vec3d(20., 20., 10.)), attributes);
+                    Cut::Groove groove;
+                    groove.depth        = 2.f;
+                    groove.width        = 8.f;
+                    groove.flaps_angle  = float(PI / 3.);
+                    groove.angle        = 0.f;
+                    const auto& results = cut.perform_with_groove(groove, Transform3d::Identity(), count, 2.f, 30.f, preview);
+                    REQUIRE(results.size() == 2);
+                    size_t                solid_count = 0;
+                    std::array<double, 4> top_area{}, bottom_area{};
+                    for (auto* result : results) {
+                        // Preview uses the first object; the second is retained for cleanup.
+                        if (preview && result != results.front())
+                            continue;
+                        for (auto* part : result->volumes) {
+                            if (!part->is_model_part())
+                                continue;
+                            ++solid_count;
+                            CHECK_FALSE(part->mesh().empty());
+                            TriangleMesh part_mesh = part->mesh();
+                            CHECK(part_mesh.volume() > 0.);
+                            for (size_t k = 0; k < channels.size(); ++k) {
+                                const auto& facets = part->*channels[k];
+                                top_area[k] += painted_area_and_centroid(facets.get_facets(*part, EnforcerBlockerType::ENFORCER)).first;
+                                bottom_area[k] += painted_area_and_centroid(facets.get_facets(*part, EnforcerBlockerType::BLOCKER)).first;
+                            }
+                        }
+                    }
+                    REQUIRE(solid_count >= 2);
+                    for (size_t k = 0; k < channels.size(); ++k) {
+                        CHECK_THAT(top_area[k], WithinAbs(paint && keep_paint ? 1600. : 0., 0.1));
+                        CHECK_THAT(bottom_area[k], WithinAbs(paint && keep_paint ? 1600. : 0., 0.1));
+                    }
+                    // The original scene is not changed while constructing the cut results.
+                    CHECK(object->volumes.size() == 1);
+                    CHECK(object->volumes.front()->mesh().facets_count() == 12);
+                }
+}

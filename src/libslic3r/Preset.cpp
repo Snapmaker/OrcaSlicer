@@ -1013,6 +1013,10 @@ static std::vector<std::string> s_Preset_filament_options {
     "filament_start_gcode", "filament_end_gcode",
     //exhaust fan control
     "activate_air_filtration","during_print_exhaust_fan_speed","complete_print_exhaust_fan_speed",
+    // GH #864: purifier / recirculation fan speed, shown next to the exhaust
+    // fan speeds in the filament Cooling settings and substituted into the
+    // U1 machine start G-code (SET_PURIFIER_MODE FAN_SPEED).
+    "purifier_fan_speed",
     // Retract overrides
     "filament_retraction_length", "filament_z_hop", "filament_z_hop_types", "filament_retract_lift_above", "filament_retract_lift_below", "filament_retract_lift_enforce", "filament_retraction_speed", "filament_deretraction_speed", "filament_retract_restart_extra", "filament_retraction_minimum_travel",
     "filament_retract_when_changing_layer", "filament_wipe", "filament_retract_before_wipe", "filament_retract_length_toolchange", "filament_retract_restart_extra_toolchange",

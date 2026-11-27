@@ -4418,6 +4418,16 @@ void TabFilament::build()
         line = {L("Complete print"), ""};
         line.append_option(optgroup->get_option("complete_print_exhaust_fan_speed"));
         optgroup->append_line(line);
+
+        // GH #864: Recirculation (purifier) fan speed for the Snapmaker U1.
+        // The U1 start G-code hard-coded SET_PURIFIER_MODE FAN_SPEED=0.6, so
+        // the display always showed recirculation 60% no matter what the
+        // exhaust-fan speeds above were set to (different fan, M106 P3).
+        optgroup = page->new_optgroup(L("Recirculation fan"), L"param_cooling_recirculation_fan");
+
+        line = {L("Fan speed"), ""};
+        line.append_option(optgroup->get_option("purifier_fan_speed"));
+        optgroup->append_line(line);
         //BBS
         const PageShp overrides_page = add_filament_overrides_page();
         const int gcode_field_height = 15; // 150

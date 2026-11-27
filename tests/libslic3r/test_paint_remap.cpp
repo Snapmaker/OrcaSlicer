@@ -2265,3 +2265,93 @@ TEST_CASE("Dovetail preview and final cut preserve both nested sides", "[PaintRe
                     CHECK(object->volumes.front()->mesh().facets_count() == 12);
                 }
 }
+
+TEST_CASE("Transformed dovetail preview matches final geometry and paint placement", "[PaintRemap][Dovetail][DovetailTransform]")
+{
+    Model        model;
+    ModelObject* object = model.add_object();
+    ModelVolume* source = object->add_volume(TriangleMesh(box_mesh(0.f, 40.f, 40.f, 20.f)));
+    object->add_instance();
+    source->set_scaling_factor(Vec3d(1.25, 0.75, 1.5));
+    source->set_rotation(Vec3d(0., 0., 0.4));
+    source->set_offset(Vec3d(45., -12., 18.));
+    TriangleSelector painting(source->mesh());
+    painting.set_facet(2, EnforcerBlockerType::Extruder3);
+    painting.set_facet(3, EnforcerBlockerType::Extruder3);
+    painting.set_facet(0, EnforcerBlockerType::Extruder4);
+    painting.set_facet(1, EnforcerBlockerType::Extruder4);
+    source->mmu_segmentation_facets.set_data(painting.serialize());
+    const auto        original_vertices  = source->mesh().its.vertices;
+    const auto        original_indices   = source->mesh().its.indices;
+    const auto        original_paint     = source->mmu_segmentation_facets.get_data();
+    const Transform3d original_transform = source->get_matrix();
+    const Transform3d rotation           = Geometry::rotation_transform(Vec3d(0., 0., 0.4));
+    const Transform3d cut_matrix         = Geometry::translation_transform(source->get_offset()) * rotation;
+    Cut::Groove       groove;
+    groove.depth       = 2.f;
+    groove.width       = 8.f;
+    groove.flaps_angle = float(PI / 3.);
+    groove.angle       = float(7. * PI / 180.);
+    struct Summary
+    {
+        double                volume = 0., surface = 0.;
+        size_t                faces = 0;
+        BoundingBoxf3         bounds;
+        std::array<double, 2> paint_area{};
+        std::array<Vec3d, 2>  paint_moment{Vec3d::Zero(), Vec3d::Zero()};
+    };
+    auto measure = [&](bool preview) {
+        Cut         cut(object, 0, cut_matrix,
+                        ModelObjectCutAttribute::KeepUpper | ModelObjectCutAttribute::KeepLower | ModelObjectCutAttribute::KeepPaint);
+        const auto& results = cut.perform_with_groove(groove, rotation, 2, 3.f, 30.f, preview);
+        REQUIRE(results.size() == 2);
+        Summary summary;
+        for (auto* result : results) {
+            if (preview && result != results.front())
+                continue;
+            for (auto* part : result->volumes) {
+                if (!part->is_model_part())
+                    continue;
+                const Transform3d to_world = result->instances.front()->get_matrix() * part->get_matrix();
+                TriangleMesh      mesh     = part->mesh();
+                mesh.transform(to_world);
+                summary.volume += mesh.volume();
+                summary.surface += painted_area_and_centroid(mesh.its).first;
+                summary.faces += mesh.facets_count();
+                summary.bounds.merge(mesh.bounding_box());
+                for (size_t k = 0; k < 2; ++k) {
+                    const auto   state = k == 0 ? EnforcerBlockerType::Extruder3 : EnforcerBlockerType::Extruder4;
+                    TriangleMesh painted(part->mmu_segmentation_facets.get_facets(*part, state));
+                    painted.transform(to_world);
+                    const auto [area, center] = painted_area_and_centroid(painted.its);
+                    summary.paint_area[k] += area;
+                    summary.paint_moment[k] += area * center.cast<double>();
+                }
+            }
+        }
+        return summary;
+    };
+    const Summary preview = measure(true);
+    const Summary applied = measure(false);
+    // Merging the preview parts must preserve the same physical surfaces.
+    REQUIRE(preview.faces > 0);
+    CHECK(applied.faces == preview.faces);
+    CHECK_THAT(applied.volume, WithinAbs(preview.volume, 0.02));
+    CHECK_THAT(applied.surface, WithinAbs(preview.surface, 0.02));
+    CHECK((applied.bounds.min - preview.bounds.min).norm() < 0.001);
+    CHECK((applied.bounds.max - preview.bounds.max).norm() < 0.001);
+    CHECK(applied.volume > 0.95 * 45000.);
+    CHECK(applied.volume <= 45000.01);
+    for (const Summary* result : {&preview, &applied})
+        for (size_t k = 0; k < 2; ++k) {
+            // 40*1.25 by 40*0.75: the transformed top and bottom each cover 1500 mm^2.
+            REQUIRE_THAT(result->paint_area[k], WithinAbs(1500., 0.05));
+            const Vec3d expected = original_transform * Vec3d(0., 0., k == 0 ? 10. : -10.);
+            CHECK((result->paint_moment[k] / result->paint_area[k] - expected).norm() < 0.001);
+        }
+    CHECK(source->mesh().its.vertices == original_vertices);
+    CHECK(source->mesh().its.indices == original_indices);
+    CHECK(source->get_matrix().isApprox(original_transform));
+    CHECK(source->mmu_segmentation_facets.get_data().bitstream == original_paint.bitstream);
+    CHECK(source->mmu_segmentation_facets.get_data().triangles_to_split == original_paint.triangles_to_split);
+}

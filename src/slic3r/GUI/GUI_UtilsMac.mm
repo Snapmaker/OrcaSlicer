@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <sys/sysctl.h>
 #import <wx/osx/cocoa/dataview.h>
+#import <wx/textctrl.h>
 #import "GUI_Utils.hpp"
 
 namespace Slic3r {
@@ -19,6 +20,12 @@ void staticbox_remove_margin(wxStaticBox* sb) {
     NSBox* nativeBox = (NSBox*)sb->GetHandle();
     [nativeBox setBoxType:NSBoxCustom];
     [nativeBox setBorderWidth:0];
+}
+
+void textctrl_disable_text_replacement(wxTextCtrl* ctrl) {
+    NSScrollView* scrollview = (NSScrollView*) ctrl->GetHandle();
+    if ([scrollview isKindOfClass:[NSScrollView class]])
+        [(NSTextView*) scrollview.documentView setAutomaticTextReplacementEnabled:NO];
 }
 
 bool is_debugger_present()

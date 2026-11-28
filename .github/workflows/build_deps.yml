@@ -102,13 +102,14 @@ jobs:
         run: |
             brew install automake texinfo libtool
             brew list
-            brew uninstall --ignore-dependencies zstd
+            # unlink, not uninstall: brewed curl loads libzstd via opt/zstd, which uninstall deletes
+            brew unlink zstd
             ./build_release_macos.sh -dx -a universal -t 10.15 -1
             for arch in arm64 x86_64; do
                 (cd "${{ github.workspace }}/deps/build/${arch}" && \
                 find . -mindepth 1 -maxdepth 1 ! -name 'OrcaSlicer_dep' -exec rm -rf {} +)
             done
-            brew install zstd
+            brew link zstd
 
 
       - name: Install Ubuntu Build Dependencies

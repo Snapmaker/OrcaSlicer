@@ -1408,9 +1408,9 @@ void GLGizmoMmuSegmentation::remap_filament_assignments()
         if (src_state == 0 || dst_state == 0 || src_state == dst_state)
             continue;
 
+        // State 0 (never painted) is left alone: those faces take their part's filament,
+        // which is remapped below, not filament 1's destination (#1279).
         state_map[src_state] = static_cast<EnforcerBlockerType>(dst_state);
-        if (src_state == 1)
-            state_map[0] = static_cast<EnforcerBlockerType>(dst_state);
 
         any_change = true;
     }
@@ -1426,7 +1426,11 @@ void GLGizmoMmuSegmentation::remap_filament_assignments()
     ModelObject* mo = m_c->selection_info()->model_object();
     if (!mo) return;
 
-    for (ModelVolume* mv : mo->volumes) {
+    const ModelObjectPtrs &mos     = wxGetApp().model().objects;
+    const int              obj_idx = int(std::find(mos.begin(), mos.end(), mo) - mos.begin());
+    bool                   part_filament_changed = false;
+    for (size_t vol_idx = 0; vol_idx < mo->volumes.size(); ++vol_idx) {
+        ModelVolume* mv = mo->volumes[vol_idx];
         if (!mv->is_model_part()) continue;
         ++idx;
         TriangleSelectorGUI* ts = m_triangle_selectors[idx].get();
@@ -1434,6 +1438,26 @@ void GLGizmoMmuSegmentation::remap_filament_assignments()
         ts->remap_triangle_state(state_map);
         ts->request_update_render_data(true);
         updated = true;
+
+        // Parts colored by their own filament (most multi-part 3MF projects) have no paint to remap.
+        const int part_filament = std::max(mv->extruder_id(), 1);
+        if (size_t(part_filament) > MAX_EBT)
+            continue;
+        const int new_filament = int(state_map[part_filament]);
+        if (new_filament == part_filament)
+            continue;
+        if (mv->config.has("extruder"))
+            mv->config.set("extruder", new_filament);
+        else
+            mv->config.set_key_value("extruder", new ConfigOptionInt(new_filament));
+        const wxDataViewItem item = wxGetApp().obj_list()->GetModel()->GetItemByVolumeId(obj_idx, int(vol_idx));
+        if (item.IsOk())
+            wxGetApp().obj_list()->GetModel()->SetExtruder(wxString::Format("%d", new_filament), item);
+        part_filament_changed = true;
+    }
+    if (part_filament_changed) {
+        wxGetApp().obj_list()->Refresh();
+        wxGetApp().plater()->update();
     }
 
     if (updated) {

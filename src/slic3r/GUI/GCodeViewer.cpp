@@ -6171,6 +6171,25 @@ void GCodeViewer::render_legend(float &legend_height, int canvas_width, int canv
         append_headers({ {_u8L("Options"), offsets[0] }, { _u8L("Display"), offsets[1]} });
         for (auto item : options_items)
             append_option_item(item, offsets);
+
+        // Supports wrap the model in this view; let them be hidden without re-slicing.
+        // The role flags are already honoured by every view, only the toggle was missing.
+        const unsigned int support_mask = (1u << erSupportMaterial) | (1u << erSupportMaterialInterface) | (1u << erSupportTransition);
+        unsigned int printed_support = 0;
+        for (ExtrusionRole role : m_roles)
+            if (role < erCount && ((1u << role) & support_mask))
+                printed_support |= 1u << role;
+        if (printed_support != 0) {
+            const bool support_visible = (m_extrusions.role_visibility_flags & printed_support) != 0;
+            append_item(EItemType::Rect, Extrusion_Role_Colors[static_cast<unsigned int>(erSupportMaterial)], { { _u8L("Support"), offsets[0] } },
+                true, offsets.back(), support_visible, [this, support_mask, support_visible]() {
+                    set_toolpath_role_visibility_flags(support_visible ? m_extrusions.role_visibility_flags & ~support_mask :
+                                                                         m_extrusions.role_visibility_flags | support_mask);
+                    refresh_render_paths(false, false);
+                    update_moves_slider();
+                    wxGetApp().plater()->get_current_canvas3D()->set_as_dirty();
+                });
+        }
     }
 
     legend_height = ImGui::GetCurrentWindow()->Size.y;

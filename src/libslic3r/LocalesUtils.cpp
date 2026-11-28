@@ -62,6 +62,19 @@ double string_to_double_decimal_point(const std::string_view str, size_t* pos /*
     return out;
 }
 
+double strtod_decimal_point(const char *str, char **endptr)
+{
+    const char *begin = str;
+    while (*begin == ' ' || (*begin >= '\t' && *begin <= '\r'))
+        ++begin;
+    if (*begin == '+' && begin[1] != '-')
+        ++begin;
+    size_t parsed = 0;
+    const double out = string_to_double_decimal_point(begin, &parsed);
+    *endptr = const_cast<char*>(parsed == 0 ? str : begin + parsed);
+    return out;
+}
+
 std::string float_to_string_decimal_point(double value, int precision/* = -1*/)
 {
     // Our Windows build server fully supports C++17 std::to_chars. Let's use it.

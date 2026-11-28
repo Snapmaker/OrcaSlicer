@@ -38,14 +38,14 @@ static bool obj_parseline(const char *line, ObjData &data)
 				return false;
 			EATWS();
 			char *endptr = 0;
-			double u = strtod(line, &endptr);
+			double u = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t'))
 				return false;
 			line = endptr;
 			EATWS();
 			double v = 0;
 			if (*line != 0) {
-				v = strtod(line, &endptr);
+				v = Slic3r::strtod_decimal_point(line, &endptr);
 				if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
 					return false;
 				line = endptr;
@@ -53,7 +53,7 @@ static bool obj_parseline(const char *line, ObjData &data)
 			}
 			/*double w = 0;
 			if (*line != 0) {
-				w = strtod(line, &endptr);
+				w = Slic3r::strtod_decimal_point(line, &endptr);
 				if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
 					return false;
 				line = endptr;
@@ -75,17 +75,17 @@ static bool obj_parseline(const char *line, ObjData &data)
 				return false;
 			EATWS();
 			char *endptr = 0;
-			double x = strtod(line, &endptr);
+			double x = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t'))
 				return false;
 			line = endptr;
 			EATWS();
-			double y = strtod(line, &endptr);
+			double y = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t'))
 				return false;
 			line = endptr;
 			EATWS();
-			double z = strtod(line, &endptr);
+			double z = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
 				return false;
 			line = endptr;
@@ -105,19 +105,19 @@ static bool obj_parseline(const char *line, ObjData &data)
 				return false;
 			EATWS();
 			char *endptr = 0;
-			double u = strtod(line, &endptr);
+			double u = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
 				return false;
 			line = endptr;
 			EATWS();
-			double v = strtod(line, &endptr);
+			double v = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
 				return false;
 			line = endptr;
 			EATWS();
 			double w = 0;
 			if (*line != 0) {
-				w = strtod(line, &endptr);
+				w = Slic3r::strtod_decimal_point(line, &endptr);
 				if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
 					return false;
 				line = endptr;
@@ -137,17 +137,17 @@ static bool obj_parseline(const char *line, ObjData &data)
 				return false;
 			EATWS();
 			char *endptr = 0;
-			double x = strtod(line, &endptr);
+			double x = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t'))
 				return false;
 			line = endptr;
 			EATWS();
-			double y = strtod(line, &endptr);
+			double y = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t'))
 				return false;
 			line = endptr;
 			EATWS();
-			double z = strtod(line, &endptr);
+			double z = Slic3r::strtod_decimal_point(line, &endptr);
 			if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
 				return false;
 			line = endptr;
@@ -157,24 +157,24 @@ static bool obj_parseline(const char *line, ObjData &data)
                 if (!data.has_vertex_color) {
                     data.has_vertex_color = true;
                 }
-                color_x = strtod(line, &endptr);
+                color_x = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
                     return false;
                 line = endptr;
                 EATWS();
-                color_y = strtod(line, &endptr);
+                color_y = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
                      return false;
                 line = endptr;
                 EATWS();
-                color_z = strtod(line, &endptr);
+                color_z = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0))
                     return false;
                 line = endptr;
                 EATWS();
                 color_w = 1.0;//default define alpha = 1.0
                 if (*line != 0) {
-                    color_w = strtod(line, &endptr);
+                    color_w = Slic3r::strtod_decimal_point(line, &endptr);
                     if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0)) return false;
                     line = endptr;
                     EATWS();
@@ -409,14 +409,14 @@ static bool        mtl_parseline(const char *line, MtlData &data)
             if (cur_char == 's') {
                 EATWS();
                 char * endptr = 0;
-                double ns     = strtod(line, &endptr);
+                double ns     = Slic3r::strtod_decimal_point(line, &endptr);
                 if (data.new_mtl_unmap.find(cur_mtl_name) != data.new_mtl_unmap.end()) {
 					data.new_mtl_unmap[cur_mtl_name]->Ns = (float) ns;
 				}
             } else if (cur_char == 'i') {
                 EATWS();
                 char * endptr = 0;
-                double ni    = strtod(line, &endptr);
+                double ni    = Slic3r::strtod_decimal_point(line, &endptr);
                 if (data.new_mtl_unmap.find(cur_mtl_name) != data.new_mtl_unmap.end()) {
 					data.new_mtl_unmap[cur_mtl_name]->Ni = (float) ni;
 				}
@@ -428,15 +428,15 @@ static bool        mtl_parseline(const char *line, MtlData &data)
             if (cur_char == 'a') {
                 EATWS();
                 char * endptr = 0;
-                double x      = strtod(line, &endptr);
+                double x      = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double y = strtod(line, &endptr);
+                double y = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double z = strtod(line, &endptr);
+                double z = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0)) return false;
                 line = endptr;
                 EATWS();
@@ -448,15 +448,15 @@ static bool        mtl_parseline(const char *line, MtlData &data)
             } else if (cur_char == 'd') {
                 EATWS();
                 char * endptr = 0;
-                double x      = strtod(line, &endptr);
+                double x      = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double y = strtod(line, &endptr);
+                double y = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double z = strtod(line, &endptr);
+                double z = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0)) return false;
                 line = endptr;
                 EATWS();
@@ -468,15 +468,15 @@ static bool        mtl_parseline(const char *line, MtlData &data)
             } else if (cur_char == 's') {
                 EATWS();
                 char * endptr = 0;
-                double x      = strtod(line, &endptr);
+                double x      = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double y = strtod(line, &endptr);
+                double y = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double z = strtod(line, &endptr);
+                double z = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0)) return false;
                 line = endptr;
                 EATWS();
@@ -488,15 +488,15 @@ static bool        mtl_parseline(const char *line, MtlData &data)
             } else if (cur_char == 'e') {
                 EATWS();
                 char * endptr = 0;
-                double x      = strtod(line, &endptr);
+                double x      = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double y = strtod(line, &endptr);
+                double y = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double z = strtod(line, &endptr);
+                double z = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0)) return false;
                 line = endptr;
                 EATWS();
@@ -513,7 +513,7 @@ static bool        mtl_parseline(const char *line, MtlData &data)
 				return false;
             EATWS();
             char * endptr = 0;
-            double illum  = strtod(line, &endptr);
+            double illum  = Slic3r::strtod_decimal_point(line, &endptr);
             if (data.new_mtl_unmap.find(cur_mtl_name) != data.new_mtl_unmap.end()) {
 				data.new_mtl_unmap[cur_mtl_name]->illum = (float) illum;
 			}
@@ -522,7 +522,7 @@ static bool        mtl_parseline(const char *line, MtlData &data)
         case 'd': {
             EATWS();
             char * endptr = 0;
-            double d  = strtod(line, &endptr);
+            double d  = Slic3r::strtod_decimal_point(line, &endptr);
             if (data.new_mtl_unmap.find(cur_mtl_name) != data.new_mtl_unmap.end()) {
 				data.new_mtl_unmap[cur_mtl_name]->d = (float) d;
 			}
@@ -533,7 +533,7 @@ static bool        mtl_parseline(const char *line, MtlData &data)
             if (cur_char == 'r') {
                 EATWS();
                 char * endptr = 0;
-                double tr     = strtod(line, &endptr);
+                double tr     = Slic3r::strtod_decimal_point(line, &endptr);
                 if (data.new_mtl_unmap.find(cur_mtl_name) != data.new_mtl_unmap.end()) {
                     data.new_mtl_unmap[cur_mtl_name]->Tr = (float) tr;
                 }
@@ -541,15 +541,15 @@ static bool        mtl_parseline(const char *line, MtlData &data)
             } else if (cur_char == 'f') {
                 EATWS();
                 char * endptr = 0;
-                double x      = strtod(line, &endptr);
+                double x      = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double y = strtod(line, &endptr);
+                double y = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t')) return false;
                 line = endptr;
                 EATWS();
-                double z = strtod(line, &endptr);
+                double z = Slic3r::strtod_decimal_point(line, &endptr);
                 if (endptr == 0 || (*endptr != ' ' && *endptr != '\t' && *endptr != 0)) return false;
                 line = endptr;
                 EATWS();

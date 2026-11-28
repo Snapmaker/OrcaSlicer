@@ -27,6 +27,7 @@
 
 
 class wxCheckBox;
+class wxTextCtrl;
 class wxTopLevelWindow;
 class wxRect;
 
@@ -501,6 +502,7 @@ int get_dpi_for_window(const wxWindow *window);
 #ifdef __WXOSX__
 void dataview_remove_insets(wxDataViewCtrl* dv);
 void staticbox_remove_margin(wxStaticBox* sb);
+void textctrl_disable_text_replacement(wxTextCtrl* ctrl);
 #endif
 
 #if defined(__WXOSX__) || defined(__linux__)

@@ -395,7 +395,6 @@ class GLCanvas3D
         ObjectClashed,
         GCodeConflict,
         ToolHeightOutside,
-        SpiralLiftNearBoundary,
         MixUsePLAAndPETG
     };
 
@@ -1543,8 +1542,6 @@ private:
     void _update_pla_petg_mix_warning();
 
     bool _is_any_volume_outside() const;
-    // Snapmaker: 检查是否有任何 volume 靠近边界（螺旋抬升风险）
-    bool _is_any_volume_near_boundary_for_spiral_lift() const;
 
     // updates the selection from the content of m_hover_volume_idxs
     void _update_selection_from_hover();

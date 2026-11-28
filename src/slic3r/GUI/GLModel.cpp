@@ -648,12 +648,9 @@ static GLenum get_index_type(const GLModel::Geometry& data)
     }
 }
 
-void GLModel::render()
-{
-    render(std::make_pair<size_t, size_t>(0, indices_count()));
-}
+void GLModel::render(GLShaderProgram* shader) { render(std::make_pair<size_t, size_t>(0, indices_count()), shader); }
 
-void GLModel::render(const std::pair<size_t, size_t>& range)
+void GLModel::render(const std::pair<size_t, size_t>& range, GLShaderProgram* shader)
 {
     if (m_render_disabled)
         return;
@@ -661,7 +658,8 @@ void GLModel::render(const std::pair<size_t, size_t>& range)
     if (range.second == range.first)
         return;
 
-    GLShaderProgram* shader = wxGetApp().get_current_shader();
+    if (shader == nullptr && wxTheApp != nullptr)
+        shader = wxGetApp().get_current_shader();
     if (shader == nullptr)
         return;
 
@@ -825,7 +823,7 @@ void GLModel::render_instanced(unsigned int instances_vbo, unsigned int instance
     if (instances_vbo == 0 || instances_count == 0)
         return;
 
-    GLShaderProgram* shader = wxGetApp().get_current_shader();
+    GLShaderProgram* shader = wxTheApp != nullptr ? wxGetApp().get_current_shader() : nullptr;
     if (shader == nullptr || !boost::algorithm::iends_with(shader->get_name(), "_instanced"))
         return;
 

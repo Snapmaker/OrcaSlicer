@@ -42,6 +42,7 @@ add_executable(${_TEST_NAME}_tests
 	test_tesselate.cpp
 	test_arc_fitter.cpp
 	test_wipe_tower2.cpp
+	test_wipe_tower_clearance.cpp
 	test_calib.cpp
 	test_variable_width.cpp
 	test_arachne.cpp

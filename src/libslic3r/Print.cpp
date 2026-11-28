@@ -16,6 +16,7 @@
 #include "GCode/WipeTower.hpp"
 #include "GCode/WipeTower2.hpp"
 #include "GCode/WipeTowerHelper.hpp"
+#include "WipeTowerClearance.hpp"
 #include "Utils.hpp"
 #include "PrintConfig.hpp"
 #include "FilamentHotBedNozzleRules.hpp"
@@ -1513,6 +1514,17 @@ static StringObjectException layered_print_cleareance_valid(const Print &print, 
         if (warning) {
             warning->string += L("Prime Tower") + L(" is too close to others, and collisions may be caused.\n");
         }
+    }
+    else if (warning && config.wipe_tower_no_sparse_layers.value && !convex_hulls_temp.empty()) {
+        const int idx = no_sparse_layers_tower_conflict(convex_hulls_temp.front(), convex_hulls_other,
+                                                        scale_(config.extruder_clearance_radius.value));
+        if (idx >= 0)
+            warning->string += Slic3r::format(_u8L("With \"No sparse layers\" enabled, the nozzle returns to the prime tower only on tool-change "
+                                        "layers, after nearby parts may already be taller than the tower. %1% is closer to the prime "
+                                        "tower than the extruder clearance radius (%2% mm), so the print head may hit it. Move the prime "
+                                        "tower or the object farther apart.\n"),
+                                      print_instances_ordered[idx]->model_instance->get_object()->name,
+                                      config.extruder_clearance_radius.value);
     }
     if (!intersection(exclude_polys, convex_hulls_temp).empty()) {
         /*if (warning) {
